@@ -1,0 +1,3 @@
+# 仓库里统一存 LF；bat 在 Windows 上必须是 CRLF（只有 LF 的话 goto / 标签会出错）
+* text=auto
+*.bat text eol=crlf

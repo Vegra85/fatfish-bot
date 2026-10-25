@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼控制台</title>
+<style>
+:root{
+  --bg:#f4f6fb; --panel:#fff; --panel2:#f8f9fc; --ink:#1b2130; --muted:#69718a; --line:#e3e6ee;
+  --accent:#4d6bfe; --accent-ink:#fff; --soft:#eef1ff; --good:#119c55; --good-soft:#e7f7ef;
+  --warn:#c77700; --warn-soft:#fff4e0; --bad:#e0454b; --bad-soft:#fdecec; --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.07);
+  --c1:#4d6bfe; --c2:#18a59a; --c3:#e8913a; --c4:#b05bdc; --c5:#e0454b;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0e1117; --panel:#161a22; --panel2:#1b202a; --ink:#e6e9f0; --muted:#98a1b3; --line:#272d39;
+  --accent:#7d93ff; --accent-ink:#0e1117; --soft:#1d2440; --good:#3fc77f; --good-soft:#12291d;
+  --warn:#f0a840; --warn-soft:#2c2213; --bad:#ff6b70; --bad-soft:#2d1618; --shadow:none;
+  --c1:#7d93ff; --c2:#36c2b4; --c3:#f0a54f; --c4:#c582ea; --c5:#ff6b70;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.55 "Microsoft YaHei UI","PingFang SC","Segoe UI",system-ui,sans-serif}
+a{color:var(--accent)}
+.app{display:flex;min-height:100vh}
+nav{width:200px;flex:none;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{padding:18px 18px 12px;font-weight:700;font-size:16px;letter-spacing:.5px}
+.brand small{display:block;font-weight:400;color:var(--muted);font-size:12px;letter-spacing:0}
+nav button{all:unset;cursor:pointer;display:block;padding:9px 18px;margin:1px 8px;border-radius:8px;color:var(--ink)}
+nav button:hover{background:var(--panel2)}
+nav button.on{background:var(--soft);color:var(--accent);font-weight:600}
+.navfoot{margin-top:auto;padding:14px 18px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+main{flex:1;min-width:0;padding:22px 26px 60px;max-width:1180px}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 18px}
+h2{font-size:15px;margin:0 0 10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;box-shadow:var(--shadow);margin-bottom:14px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:14px}
+.card.alert{border-color:color-mix(in srgb,var(--bad) 55%,var(--line));background:color-mix(in srgb,var(--bad-soft) 55%,var(--panel))}
+.qq{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.qq .qr{width:232px;height:232px;flex:none;image-rendering:pixelated;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)}
+.qq ol li{margin:3px 0}
+.navfoot a.badge{text-decoration:none}
+.cols{display:grid;gap:14px;grid-template-columns:1fr 1fr}
+@media (max-width:900px){.cols{grid-template-columns:1fr}nav{width:150px}}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}
+.stat b{display:block;font-size:24px;font-weight:650;line-height:1.25}
+.stat span{color:var(--muted);font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.spacer{flex:1}
+.btn{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:13px;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.07);color:var(--accent-ink)}
+.btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line))}
+.btn.small{padding:3px 9px;font-size:12px}
+.btn[disabled]{opacity:.45;pointer-events:none}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+.badge.good{background:var(--good-soft);color:var(--good);border-color:transparent}
+.badge.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.badge.bad{background:var(--bad-soft);color:var(--bad);border-color:transparent}
+.badge.acc{background:var(--soft);color:var(--accent);border-color:transparent}
+.muted{color:var(--muted)}
+.small{font-size:12px}
+input[type=text],input[type=number],input[type=password],select,textarea{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 9px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+textarea{width:100%;resize:vertical}
+input[type=number]{width:92px}
+.sw{position:relative;width:38px;height:22px;flex:none}
+.sw input{opacity:0;width:0;height:0}
+.sw span{position:absolute;inset:0;background:var(--line);border-radius:99px;transition:.15s;cursor:pointer}
+.sw span:before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.sw input:checked+span{background:var(--accent)}
+.sw input:checked+span:before{transform:translateX(16px)}
+.set{display:flex;gap:14px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.set:first-of-type{border-top:0}
+.set .lab{flex:1;min-width:0}
+.set .lab b{font-weight:600}
+.set .lab div{color:var(--muted);font-size:12px}
+.set.changed .lab b:after{content:" ·改了";color:var(--warn);font-weight:400;font-size:12px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px 8px;border-top:1px solid var(--line);vertical-align:middle}
+th{color:var(--muted);font-weight:500;font-size:12px;border-top:0}
+.list{max-height:70vh;overflow:auto}
+.item{padding:9px 10px;border-radius:8px;cursor:pointer}
+.item:hover{background:var(--panel2)}
+.item.on{background:var(--soft)}
+.fact{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--line)}
+.fact:first-child{border-top:0}
+.fact .t{flex:1}
+.chat{font-size:13px;max-height:420px;overflow:auto;background:var(--panel2);border-radius:8px;padding:8px 10px}
+.chat div{padding:2px 0}
+.chat .me{color:var(--accent)}
+.logbox{font:12px/1.6 Consolas,"Cascadia Mono",monospace;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;height:66vh;overflow:auto;white-space:pre-wrap;word-break:break-all}
+.logbox .tag{color:var(--accent);font-weight:600}
+.logbox .err{color:var(--bad)}
+.logbox .t{color:var(--muted)}
+.chip{all:unset;cursor:pointer;padding:3px 10px;border-radius:99px;border:1px solid var(--line);font-size:12px;background:var(--panel)}
+.chip.on{background:var(--soft);color:var(--accent);border-color:transparent}
+.stk{display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:8px}
+.stk .s{border:1px solid var(--line);border-radius:10px;padding:6px;background:var(--panel);cursor:pointer;text-align:center;position:relative}
+.stk .s.off{opacity:.38}
+.stk .s.pick{outline:2px solid var(--accent)}
+.stk img{width:100%;height:88px;object-fit:contain;display:block;border-radius:6px;background:var(--panel2)}
+.stk .n{font-size:12px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stk .e{font-size:11px;color:var(--muted)}
+#toast{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:9}
+#toast div{background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:9px;max-width:420px;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+#toast div.bad{background:var(--bad);color:#fff}
+.savebar{position:sticky;bottom:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;display:flex;gap:8px;align-items:center;box-shadow:0 -2px 10px rgba(0,0,0,.05)}
+svg text{fill:var(--muted);font-size:11px}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);margin:2px 0 6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.emo{display:flex;flex-wrap:wrap;gap:6px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:13px}
+.kv span:nth-child(odd){color:var(--muted)}
+.empty{color:var(--muted);padding:18px 0;text-align:center}
+.secret{display:flex;gap:6px;align-items:center}
+.fpcard.on{border-color:color-mix(in srgb,var(--warn) 60%,var(--line));background:color-mix(in srgb,var(--warn-soft) 40%,var(--panel))}
+.fpbar{position:relative;margin:16px 2px 30px}
+.fpbar input[type=range]{width:100%;margin:0;accent-color:var(--accent);cursor:pointer;height:22px}
+.fpbar input[type=range]:disabled{cursor:not-allowed;opacity:.5}
+.fpticks{position:absolute;left:8px;right:8px;top:26px;height:16px;font-size:11px;color:var(--muted);pointer-events:none}
+.fpticks span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+.fpticks span:first-child{transform:none}
+.fpticks span:last-child{transform:translateX(-100%)}
+.fpticks span::before{content:"";position:absolute;left:50%;top:-6px;width:1px;height:4px;background:var(--line)}
+.fpticks span:first-child::before{left:0}
+.fpticks span:last-child::before{left:100%}
+@media (max-width:700px){.fpticks span.minor{display:none}}
+.fpst{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line)}
+.fpcard.on .fpst{background:var(--warn-soft);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}
+.fpst .big{font-size:15px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none;opacity:.45}
+.dot.on{background:var(--warn);opacity:1;box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 22%,transparent)}
+.fpwarn{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--ink);font-size:13px}
+.upbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:13px;background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
+.upbar.info{background:var(--soft);border-color:transparent}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="brand">大肥鱼控制台<small>只有这台电脑能打开</small></div>
+    <div id="nav"></div>
+    <div class="navfoot" id="navfoot">连接中…</div>
+  </nav>
+  <main id="main"></main>
+</div>
+<div id="toast"></div>
+<script>
+"use strict";
+const PAGES = [
+  ["overview", "总览"], ["settings", "功能开关"], ["people", "群和人"], ["send", "代发消息"],
+  ["memory", "记忆和好感"], ["stickers", "表情包"], ["sing", "唱歌"], ["stats", "统计"], ["usage", "用量和余额"], ["logs", "日志"],
+  ["persona", "人设"], ["tools", "工具"],
+];
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+async function api(path, body) {
+  const opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json", "X-Panel": "1"}, body: JSON.stringify(body)};
+  try { const r = await fetch(path, opt); return await r.json(); }
+  catch (e) { return {ok: false, error: "控制台没响应（黑窗口关了？）"}; }
+}
+async function wipeFlow(uid, name) {
+  const pv = await api(`/api/wipe/preview?uid=${encodeURIComponent(uid)}`);
+  if (!pv.ok) { toast(pv.error || "读不到", true); return false; }
+  if (!confirm(`真的删掉「${name || uid}」的所有数据？\n\n会删：${pv.text}\n群里别人提到他的地方会换成「某人」；共享印象会清掉重新提炼。\n\n真删 不留备份 找不回来。`)) return false;
+  const r = await api("/api/wipe", {uid});
+  toast(r.ok ? "删好了：" + (r.text || "") + (r.offline ? "（机器人没开 直接删的文件）" : "") : (r.error || "没删成"), !r.ok);
+  return r.ok;
+}
+function toast(msg, bad = false) {
+  const d = document.createElement("div"); d.textContent = msg; if (bad) d.className = "bad";
+  $("#toast").appendChild(d); setTimeout(() => d.remove(), bad ? 6000 : 3500);
+}
+function ago(ts) {
+  if (!ts) return "—";
+  const d = Date.now() / 1000 - ts;
+  if (d < 60) return "刚刚"; if (d < 3600) return Math.floor(d / 60) + " 分钟前";
+  if (d < 86400) return Math.floor(d / 3600) + " 小时前"; if (d < 172800) return "昨天";
+  const t = new Date(ts * 1000); return `${t.getMonth() + 1}-${t.getDate()}`;
+}
+function hm(ts) { const t = new Date(ts * 1000); return `${t.getMonth() + 1}-${t.getDate()} ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`; }
+function dur(sec) { sec = Math.max(0, Math.floor(sec)); if (sec < 3600) return Math.floor(sec / 60) + " 分钟"; if (sec < 86400) return (sec / 3600).toFixed(1) + " 小时"; return (sec / 86400).toFixed(1) + " 天"; }
+const money = v => "$" + (v || 0).toFixed(v >= 1 ? 2 : 3);
+const num = v => (v || 0).toLocaleString();
+let timers = [], RENDER = 0;   // RENDER：第几次换页（换页后 上一页还没跑完的那些不再动页面）
+function every(ms, fn) {
+  const my = RENDER;
+  const id = setInterval(() => { if (my !== RENDER) { clearInterval(id); return; } fn(); }, ms);
+  timers.push(id);
+}
+function clearTimers() { timers.forEach(clearInterval); timers = []; }
+
+/* ───────── 导航 ───────── */
+function nav() {
+  const cur = location.hash.slice(1) || "overview";
+  $("#nav").innerHTML = PAGES.map(([k, n]) => `<button class="${k === cur ? "on" : ""}" data-p="${k}">${n}</button>`).join("");
+  $("#nav").onclick = e => { const p = e.target.dataset.p; if (p) { location.hash = p; } };
+}
+window.addEventListener("hashchange", render);
+async function render() {
+  const my = ++RENDER;
+  clearTimers(); nav();
+  const cur = location.hash.slice(1) || "overview";
+  const fn = VIEWS[cur] || VIEWS.overview;
+  $("#main").onclick = null;
+  $("#main").innerHTML = '<div class="empty">加载中…</div>';
+  try { await fn($("#main")); if (my === RENDER) upBanner(); } catch (e) {
+    if (my !== RENDER) return;          // 页面还没加载完就点了别的页：上一页剩下的不管了（以前会报「Cannot set properties of null」）
+    console.error(e);
+    $("#main").innerHTML = `<div class="card">出错了：${esc(e)}<div class="small muted" style="margin-top:6px">刷新一下页面再试；还这样就把这句话发给 Claude</div></div>`;
+  }
+}
+let BOT = {bot: "offline"};
+async function pollFoot() {
+  const o = await api("/api/overview");
+  if (!o || o.ok === false && !o.bot) { $("#navfoot").innerHTML = '<span class="badge bad">控制台没响应</span>'; return; }
+  BOT = o;
+  const m = {online: ["good", "机器人运行中"], offline: ["", "机器人没在运行"], stuck: ["warn", "进程在 但没响应"], error: ["bad", "接口出错"]}[o.bot] || ["", o.bot];
+  const q = QQS[(o.qq || {}).state] || ["", "QQ 状态不明"];
+  const fs = fpState(o).full, fon = fs && fs.on && (fs.until < 0 || fs.until > Date.now() / 1000);
+  $("#navfoot").innerHTML = `<span class="badge ${m[0]}">${m[1]}</span><div style="margin-top:6px"><a href="#overview" class="badge ${q[0]}">${q[1]}</a></div>` +
+    (fon ? `<div style="margin-top:6px"><a href="#overview" class="badge warn" title="点这里去总览页关掉">火力全开中 · ${fs.until < 0 ? "一直开" : "还剩 " + fpShort(fs.until - Date.now() / 1000)}</a></div>` : "");
+  checkVersion();
+  document.title = (o.qq || {}).state === "scan" ? "⚠ QQ 要扫码 · 大肥鱼控制台" : "大肥鱼控制台";
+  return o;
+}
+const QQS = {ok: ["good", "QQ 在线"], scan: ["bad", "QQ 掉线了 要扫码"], off: ["bad", "QQ 没开"], starting: ["warn", "QQ 启动 / 登录中"]};
+const EMO = {happy: "开心", calm: "安心", sweet: "甜", hurt: "委屈", worry: "担心", sad: "低落", jealous: "吃醋"};
+const EMO_GOOD = new Set(["happy", "calm", "sweet"]);
+
+/* ───────── 小图表 ───────── */
+function niceStep(raw) {           // 刻度取 1 / 2 / 2.5 / 5 × 10ⁿ
+  if (!(raw > 0)) return 0;
+  const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+}
+const stepDec = s => { for (let d = 0; d < 7; d++) { const x = s * 10 ** d; if (Math.abs(Math.round(x) - x) < 1e-6 * Math.max(1, x)) return d; } return 6; };
+function short(v, d) {
+  if (Math.abs(v) >= 1000) { const k = v / 1000; return (Number.isInteger(k) ? k : +k.toFixed(2)) + "k"; }
+  return v.toFixed(d);
+}
+function bars(el, labels, series, {stacked = false, h = 190, money = false} = {}) {
+  const W = 760, H = h, L = 52, B = 24, T = 8;
+  const totals = labels.map((_, i) => stacked ? series.reduce((a, s) => a + (s.values[i] || 0), 0) : Math.max(...series.map(s => s.values[i] || 0)));
+  const minStep = money ? 0.001 : 1;
+  const step = Math.max(minStep, niceStep(Math.max(0, ...totals) / 4));
+  const max = step * 4, dec = stepDec(step);
+  const fmt = v => (money ? "$" : "") + short(v, dec);
+  const tip = v => money ? "$" + (v || 0).toFixed(v >= 1 ? 2 : 4) : num(v);
+  const bw = (W - L - 8) / labels.length;
+  let g = "";
+  for (let k = 0; k <= 4; k++) {
+    const y = T + (H - T - B) * (1 - k / 4);
+    g += `<line x1="${L}" x2="${W}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${L - 6}" y="${y + 4}" text-anchor="end">${esc(fmt(step * k))}</text>`;
+  }
+  labels.forEach((lab, i) => {
+    let y0 = H - B;
+    const inner = stacked ? bw * .62 : bw * .8 / series.length;
+    series.forEach((s, j) => {
+      const v = s.values[i] || 0, hh = (H - T - B) * v / max;
+      const x = L + 4 + i * bw + (stacked ? bw * .19 : bw * .1 + j * inner);
+      const y = stacked ? y0 - hh : H - B - hh;
+      g += `<rect x="${x}" y="${y}" width="${Math.max(1, inner - 1)}" height="${Math.max(0, hh)}" rx="2" fill="${s.color}"><title>${esc(lab)} ${esc(s.name)}：${esc(tip(v))}</title></rect>`;
+      if (stacked) y0 -= hh;
+    });
+    if (labels.length <= 16 || i % Math.ceil(labels.length / 14) === 0) g += `<text x="${L + 4 + i * bw + bw / 2}" y="${H - 7}" text-anchor="middle">${esc(lab)}</text>`;
+  });
+  el.innerHTML = `<div class="legend">${series.map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("")}</div><svg viewBox="0 0 ${W} ${H}" width="100%">${g}</svg>`;
+}
+function curvechart(el, b, {h = 200} = {}) {
+  /* 省 token 曲线：横轴 = 最近花的钱 纵轴 = 回不回的概率；竖线 = 现在 */
+  if (!b) { el.innerHTML = ""; return; }
+  const W = 760, H = h, L = 46, B = 24, T = 8;
+  const w = u => b.floor + (1 - b.floor) / (1 + Math.pow(Math.max(0, u) / b.half_usd, b.shape));
+  const umax = Math.max(b.half_usd * 6, b.spent * 1.3, 0.05);
+  const X = u => L + (W - L - 8) * u / umax, Y = p => T + (H - T - B) * (1 - p);
+  const lines = [["私聊", "private", "var(--c2)"], ["被 @/叫名字", "direct", "var(--c1)"], ["没 @ 的接话", "follow", "var(--c3)"],
+    ["自己插话", "chat", "var(--c4)"], ["冒泡/主动找人", "extra", "var(--c5)"]];
+  let g = "";
+  [0, .25, .5, .75, 1].forEach(p => { g += `<line x1="${L}" x2="${W}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--line)"/><text x="${L - 6}" y="${Y(p) + 4}" text-anchor="end">${Math.round(p * 100)}%</text>`; });
+  const step = niceStep(umax / 5), dec = stepDec(step);
+  for (let u = 0; u <= umax + 1e-9; u += step) g += `<text x="${X(u)}" y="${H - 7}" text-anchor="middle">$${short(u, dec)}</text>`;
+  lines.forEach(([, k, c]) => {
+    const e = (b.powers || {})[k] ?? 1, pts = [];
+    for (let i = 0; i <= 80; i++) { const u = umax * i / 80; pts.push(`${X(u)},${Y(Math.pow(w(u), e))}`); }
+    g += `<polyline fill="none" stroke="${c}" stroke-width="2" points="${pts.join(" ")}"/>`;
+  });
+  g += `<line x1="${X(b.spent)}" x2="${X(b.spent)}" y1="${T}" y2="${H - B}" stroke="var(--ink)" stroke-dasharray="4 3"/><text x="${X(b.spent) + 4}" y="${T + 12}" style="fill:var(--ink)">现在 $${b.spent.toFixed(3)}</text>`;
+  el.innerHTML = `<div class="legend">${lines.map(([n, k, c]) => `<span><i style="background:${c}"></i>${n}（w^${(b.powers || {})[k] ?? 1}）</span>`).join("")}</div><svg viewBox="0 0 ${W} ${H}" width="100%">${g}</svg>`;
+}
+function linechart(el, pts, {h = 170, lo = 0, hi = 100} = {}) {
+  if (!pts.length) { el.innerHTML = '<div class="empty">还没有数据（机器人跑一阵子就有了）</div>'; return; }
+  const W = 760, H = h, L = 34, B = 22, T = 8;
+  const t0 = pts[0][0], t1 = pts[pts.length - 1][0] || t0 + 1;
+  const X = t => L + (W - L - 8) * (t1 === t0 ? .5 : (t - t0) / (t1 - t0));
+  const Y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  let g = "";
+  [lo, (lo + hi) / 2, hi].forEach(v => { g += `<line x1="${L}" x2="${W}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`; });
+  g += `<polyline fill="none" stroke="var(--c1)" stroke-width="2" points="${pts.map(p => X(p[0]) + "," + Y(p[1])).join(" ")}"/>`;
+  pts.forEach(p => { g += `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="2.5" fill="var(--c1)"><title>${esc(hm(p[0]))}：${p[1]}${p[2] ? " " + esc(p[2]) : ""}</title></circle>`; });
+  g += `<text x="${L}" y="${H - 5}">${esc(hm(t0))}</text><text x="${W}" y="${H - 5}" text-anchor="end">${esc(hm(t1))}</text>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%">${g}</svg>`;
+}
+
+/* ───────── 总览 ───────── */
+const VIEWS = {};
+function bootCard(b) {
+  if (!b || !(b.steps || []).length) return "";
+  const ic = {ok: ["good", "✓"], warn: ["warn", "!"], fail: ["bad", "✗"], running: ["", "…"]};
+  const sw = b.sweep && b.sweep.last ? `<div class="small muted" style="margin-top:8px">之后每 ${Math.round((b.sweep.every || 180) / 60)} 分钟看一次私聊里有没有没回的 · 上次 ${hm(b.sweep.last)}：${esc(b.sweep.text || "")}</div>` : "";
+  return `<div class="card"><div class="row"><h2 style="margin:0">开机流程</h2><span class="small muted">这次启动 ${hm(b.t)}</span></div>
+    ${b.steps.map(s => `<div class="row small" style="padding:5px 0;border-top:1px solid var(--line)"><span class="badge ${(ic[s.status] || ic.running)[0]}">${(ic[s.status] || ic.running)[1]}</span><b>${esc(s.title)}</b><span class="muted">${esc(s.detail || "")}</span><span class="spacer"></span><span class="muted">${hm(s.t)}</span></div>`).join("")}${sw}</div>`;
+}
+/* ───────── 火力全开 ───────── */
+// 拖动条的刻度：短的时候细（5 分钟一格）长了粗一点；最右边 = 一直开
+const FP_STEPS = (() => { const a = [], seg = (x, y, st) => { for (let m = x; m <= y; m += st) a.push(m); };
+  seg(5, 60, 5); seg(70, 180, 10); seg(195, 360, 15); seg(390, 720, 30); seg(780, 1440, 60); a.push(-1); return a; })();
+const FP_TICKS = [[5, "5分钟"], [60, "1小时", 1], [180, "3小时"], [360, "6小时", 1], [720, "12小时", 1], [-1, "一直开"]];   // 24 小时就在「一直开」左边一格（标出来会叠在一起）
+const FP = {pick: null, state: null, old: false, will: null, key: ""};
+function fmtMin(m) { if (m < 0) return "一直开"; const h = Math.floor(m / 60), r = m % 60; return h ? (r ? `${h} 小时 ${r} 分钟` : `${h} 小时`) : `${r} 分钟`; }
+function clock(ts) {
+  const t = new Date(ts * 1000), n = new Date(), hh = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  if (t.toDateString() === n.toDateString()) return hh;
+  const tm = new Date(n); tm.setDate(n.getDate() + 1);
+  return (t.toDateString() === tm.toDateString() ? "明天 " : `${t.getMonth() + 1}-${t.getDate()} `) + hh;
+}
+function fpLeft(sec) { sec = Math.max(0, Math.floor(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), x = sec % 60; return (h ? `${h} 小时 ` : "") + `${m} 分 ${String(x).padStart(2, "0")} 秒`; }
+function fpShort(sec) { sec = Math.max(0, Math.floor(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60); return h ? `${h}小时${m}分` : `${Math.max(1, m)}分钟`; }
+function fpState(o) {          // 新后台：o.budget.full；旧后台没有 就看机器人那边报的（o.info.budget.full）
+  const b = (o && o.budget) || {}, ib = ((o && o.info) || {}).budget || {};
+  return {full: b.full || ib.full || null, old: !!(o && o.budget) && !("full" in b), def: b.full_default_hours || 3,
+          will: b.enabled === false ? null : (typeof b.will === "number" ? b.will : null)};
+}
+function fpIdx(min) { let best = 0; FP_STEPS.forEach((m, i) => { if (m > 0 && Math.abs(m - min) < Math.abs(FP_STEPS[best] - min)) best = i; }); return best; }
+function fpOn() { const f = FP.state; return !!(f && f.on && (f.until < 0 || f.until > Date.now() / 1000)); }
+function fpRender(o) {
+  const box = $("#fp"); if (!box) return;
+  const st = fpState(o);
+  FP.state = st.full; FP.old = st.old; FP.will = st.will;
+  if (FP.pick === null) FP.pick = fpIdx(st.def * 60);
+  if (!box.dataset.ready) {      // 拖动条只画一次（总览每 6 秒刷新 不能把正在拖的条重置掉）
+    box.dataset.ready = "1";
+    const last = FP_STEPS.length - 1;
+    box.innerHTML = `<div class="card fpcard"><div class="row"><h2 style="margin:0">火力全开</h2>
+        <span class="small muted">暂时不省 token：群里 @她、跟她对聊、接她话的都回；她自己也更爱插嘴</span></div>
+      <div class="fpbar"><input type="range" id="fpr" min="0" max="${last}" step="1" value="${FP.pick}" aria-label="火力全开开多久">
+        <div class="fpticks">${FP_TICKS.map(([m, t, minor]) => `<span${minor ? ' class="minor"' : ""} style="left:${(FP_STEPS.indexOf(m) / last * 100).toFixed(2)}%">${t}</span>`).join("")}</div></div>
+      <div class="row"><span>开多久：<b id="fpval"></b> <span class="small muted" id="fpend"></span></span><span class="spacer"></span>
+        <button class="btn primary" id="fpgo" data-fp="pick"></button></div>
+      <div id="fpst" class="fpst"></div>
+      <div id="fpnote"></div></div>`;
+    $("#fpr").oninput = () => { FP.pick = +$("#fpr").value; fpLabel(); };
+    box.onclick = async e => {
+      const btn = e.target.closest("[data-fp]"); if (!btn || btn.hasAttribute("disabled")) return;
+      const m = FP_STEPS[FP.pick], h = btn.dataset.fp === "pick" ? (m < 0 ? -1 : m / 60) : Number(btn.dataset.fp);
+      btn.setAttribute("disabled", "");
+      const r = await api("/api/control", {kind: "full", hours: h});
+      btn.removeAttribute("disabled");
+      if (!r.ok) {
+        if (r.error === "不认识的设置") { FP.old = true; fpTick(); }
+        toast(r.error === "不认识的设置" ? "控制台后台还是旧版本：双击 C:\\QQBot\\控制台.bat 换成新的（卡片里有说明）" : (r.error || "没设置成"), true);
+        return;
+      }
+      FP.state = r.full; fpLabel(); fpTick();
+      toast(h === 0 ? "火力全开关了 回到省 token" : "火力全开：" + (r.text || "开了"));
+      pollFoot();
+    };
+  }
+  fpLabel(); fpTick();
+}
+function fpLabel() {
+  const go = $("#fpgo"); if (!go) return;
+  const m = FP_STEPS[FP.pick], on = fpOn();
+  $("#fpval").textContent = m < 0 ? "一直开（要手动关）" : fmtMin(m);
+  $("#fpend").textContent = m < 0 ? "" : `（从现在开 ${clock(Date.now() / 1000 + m * 60)} 自动关）`;
+  go.textContent = on ? (m < 0 ? "改成一直开" : `改成从现在起 ${fmtMin(m)}`) : (m < 0 ? "开火力全开（一直开）" : `开火力全开 ${fmtMin(m)}`);
+  go.className = on ? "btn" : "btn primary";
+  go.toggleAttribute("disabled", FP.old);
+  $("#fpr").disabled = FP.old;
+}
+function fpTick() {             // 每秒：倒计时；开/关变了才重画（不然按钮一秒换一次 点不中）
+  const el = $("#fpst"); if (!el) return;
+  const f = FP.state, on = fpOn();
+  const key = JSON.stringify([!!f, on, f && f.until, f && f.by, f && f.since, FP.old, FP.will == null ? null : Math.round(FP.will * 100)]);
+  if (key !== FP.key) {
+    FP.key = key;
+    el.closest(".fpcard").classList.toggle("on", on);
+    el.innerHTML = !f ? `<span class="dot"></span><span class="muted">读不到火力全开的状态（机器人和控制台都没报上来）</span>` : on ?
+      `<span class="dot on"></span><b class="big">现在：火力全开中</b>
+       <span>${f.until < 0 ? "一直开着 要手动关" : `还剩 <b id="fpleft"></b> · ${clock(f.until)} 自动关`}</span>
+       <span class="small muted">${[f.by ? esc(f.by) + "开的" : "", f.since ? clock(f.since) + " 开始" : ""].filter(Boolean).join(" · ")}</span>
+       <span class="spacer"></span><button class="btn danger" data-fp="0"${FP.old ? " disabled" : ""}>关掉火力全开</button>` :
+      `<span class="dot"></span><b class="big">现在：没开</b><span class="muted">在省 token${FP.will != null ? `（现在的回复意愿 ${Math.round(FP.will * 100)}%）` : ""}</span>`;
+    $("#fpnote").innerHTML = FP.old ?
+      `<div class="fpwarn"><b>控制台后台还是旧版本，这里的开关用不了（点了会显示「不认识的设置」）。</b>上面的状态是从机器人那边读的，是准的。<br>
+        换成新版本：双击 <b>C:\\QQBot\\控制台.bat</b>，它会自己把旧的换掉（旧的黑窗口会显示 Control panel stopped，关掉就行）。换过一次以后，控制台更新了会自己换，不用再管。<br>
+        等不及的话：私聊她发「省着点」就能关，发「火力全开 2小时」就能开。</div>` :
+      `<div class="small muted" style="margin-top:8px">开着时：群里 @她 / 叫她 / 引用她、跟她对聊、没 @ 但在接她话的，都不过省 token 那一关；别人插进来更容易被认出是在跟她说；她自己也更爱插嘴（但不是每条都回）。私聊本来就每条都回；冒泡和主动私聊找人照旧。到点自动回到省 token。也可以私聊她发「火力全开」「火力全开 2小时」「省着点」「火力全开状态」。</div>`;
+  }
+  const lf = $("#fpleft"); if (lf && f && f.until > 0) lf.textContent = fpLeft(f.until - Date.now() / 1000);
+  const wb = $("#willb"); if (wb) wb.textContent = on ? "火力全开" : FP.will != null ? Math.round(FP.will * 100) + "%" : "不限";
+}
+VIEWS.overview = async main => {
+  main.innerHTML = `<h1>总览</h1><p class="sub">她现在怎么样、今天干了多少活</p><div id="ovw"><div id="ovtop"></div><div id="fp"></div><div id="ov"></div></div>`;
+  FP.key = "";
+  const draw = async () => {
+    const o = await pollFoot(); if (!o || !$("#ovtop")) return;
+    const i = o.info || {}, t = o.today || {}, q = o.qq || {};
+    const stateTxt = {online: `<span class="badge good">运行中</span> 已运行 ${dur(Date.now() / 1000 - (i.started || 0))}` +
+        (i.connected === false ? ` <span class="badge bad">连不上 QQ${i.down_since ? " " + dur(Date.now() / 1000 - i.down_since) : ""}</span>` : ""),
+      offline: '<span class="badge">没在运行</span>', stuck: '<span class="badge warn">在运行 但接口没响应</span> <span class="small muted">可能还是旧版本 / 卡住了：点下面的「强制重启机器人」</span>',
+      error: `<span class="badge bad">接口出错</span> ${esc(o.error || "")}`}[o.bot];
+    const emos = Object.entries(o.mood.emos || {}).filter(([, v]) => v >= 1).sort((a, b) => b[1] - a[1]);
+    const since = q.since ? `从 ${hm(q.since)} 开始（${dur(Date.now() / 1000 - q.since)}了）` : "";
+    const qqCard = q.state === "scan" ? `<div class="card alert"><div class="qq">
+        <img class="qr" src="/qrcode?t=${q.qr_t}" alt="登录二维码">
+        <div style="flex:1;min-width:260px"><h2 style="margin:0 0 4px;color:var(--bad)">QQ 掉线了：要扫码重新登录</h2>
+          <div class="small">${since}${q.reason ? `${since ? " · " : ""}QQ 说「${esc(q.reason)}」` : ""}</div>
+          <ol class="small" style="margin:10px 0 0;padding-left:18px">
+            <li>用<b>登着机器人号${q.account ? " " + esc(q.account) : ""} 的手机 QQ</b> 扫左边的码，手机上点「登录」</li>
+            <li>码每 2 分钟换一次，这里会自动换成最新的（扫了没反应就等它换新的再扫）</li>
+            <li>登上以后机器人自己会连上，下线期间的私聊和 @她 的消息会补着回</li></ol>
+          <div class="small muted" style="margin-top:8px">少用「停止全部 / 启动全部」：每次都会让 QQ 重新登录，太频繁容易被 QQ 踢下线。改设置用「重启机器人」就行（QQ 不动）</div>
+        </div></div></div>` :
+      q.state === "off" ? `<div class="card alert"><div class="row"><h2 style="margin:0;color:var(--bad)">QQ 没在运行</h2><span class="small muted">她现在收不到也发不了消息</span><span class="spacer"></span><button class="btn primary" data-a="start_all">启动全部（含 QQ）</button></div></div>` :
+      q.state === "starting" ? `<div class="card"><div class="row"><span class="badge warn">QQ 开着 但还没登好</span><span class="small muted">刚启动的话等半分钟；好几分钟都这样 就点「停止全部」再「启动全部」</span></div></div>` : "";
+    $("#ovtop").innerHTML = qqCard + `
+      <div class="card"><div class="row"><h2 style="margin:0">机器人</h2>${stateTxt}<span class="spacer"></span>
+        <button class="btn primary" data-a="start" ${o.bot === "online" ? "disabled" : ""}>启动机器人</button>
+        <button class="btn" data-a="restart" ${o.bot !== "online" ? "disabled" : ""}>重启机器人</button>
+        <button class="btn" data-a="shutdown" ${o.bot !== "online" ? "disabled" : ""}>停止机器人</button></div>
+        <div class="row small muted" style="margin-top:10px;gap:18px">
+          <span>QQ 号：${esc(i.self_id ? (i.nick || "") + " " + i.self_id : q.account || "—")}</span>
+          <span>QQ 登录：<span class="badge ${(QQS[q.state] || [""])[0]}">${(QQS[q.state] || ["", "不明"])[1]}</span></span>
+          <span>模型：${esc(i.model || "—")}</span>
+          <span class="spacer"></span>
+          <button class="btn small" data-a="restart_hard" title="机器人卡住 / 接口没响应时用：只重启机器人 QQ 不动（会弹管理员确认）">强制重启机器人</button>
+          <button class="btn small" data-a="start_all">启动全部（含 QQ）</button>
+          <button class="btn small danger" data-a="stop_all">停止全部（会弹管理员确认）</button></div>
+        ${o.has_token ? "" : '<div class="small" style="color:var(--warn);margin-top:8px">控制台口令刚生成：重启一次机器人 这里的按钮才能用</div>'}
+      </div>`;
+    fpRender(o);
+    $("#ov").innerHTML = `
+      ${bootCard(o.boot)}
+      <div class="grid">
+        <div class="stat"><b>${num((t.recv_private || 0) + (t.recv_group || 0))}</b><span>今天收到（私聊 ${num(t.recv_private)} / 群 ${num(t.recv_group)}）</span></div>
+        <div class="stat"><b>${num((t.replies_private || 0) + (t.replies_group || 0))}</b><span>今天回了几轮</span></div>
+        <div class="stat"><b>${num(t.voice)}</b><span>语音条数（${num(t.voice_chars)} 字）</span></div>
+        <div class="stat"><b>${num(t.stickers)}</b><span>表情包</span></div>
+        <div class="stat"><b>${num(t.followups)}</b><span>没@她也接上的话</span></div>
+        <div class="stat"><b>${money((t.cost || {}).total)}</b><span>今天大概花了</span></div>
+        ${balStat(o.ds_balance)}
+        ${o.budget ? `<div class="stat" title="花得越多回得越少：最近 ${o.budget.window_hours} 小时花了 $${o.budget.spent.toFixed(3)}（在「统计」里看曲线 在「功能开关 → 省 token」里调）"><b id="willb">${fpOn() ? "火力全开" : o.budget.enabled ? Math.round(o.budget.will * 100) + "%" : "不限"}</b><span>回复意愿（最近 ${o.budget.window_hours} 小时 ${money(o.budget.spent)}）</span></div>` : ""}
+      </div>
+      <div class="cols">
+        <div class="card"><h2>心情</h2>
+          <div class="row"><b style="font-size:28px">${o.mood.value != null ? Math.round(o.mood.value) : "—"}</b><span class="muted">/100 ${esc(o.mood.label || "")}</span></div>
+          <div class="emo" style="margin:8px 0">${emos.map(([k, v]) => `<span class="badge ${EMO_GOOD.has(k) ? "acc" : "warn"}" title="这种情绪现在有多浓（0~100）">${esc(EMO[k] || k)} ${Math.round(v)}</span>`).join("") || '<span class="muted small">情绪平稳</span>'}</div>
+          <div class="small muted">签名：${esc(o.mood.note || "—")}</div>
+          <div id="moodline" style="margin-top:8px"></div></div>
+        <div class="card"><h2>最近动态</h2><div class="logbox" id="recent" style="height:260px">${o.recent.map(fmtLog).join("\n") || "（还没有）"}</div></div>
+      </div>`;
+    $("#recent").scrollTop = 1e6;
+    linechart($("#moodline"), (o.mood.timeline || []).map(x => [x.t, x.mood, x.why]), {h: 120});
+    $("#ovtop").onclick = async e => {
+      const a = e.target.dataset.a; if (!a) return;
+      if (a === "stop_all" && !confirm("停止全部会把 QQ 也关掉 她会掉线。确定？")) return;
+      if (a === "shutdown" && !confirm("停止机器人：QQ 还在线 但她不会说话了。确定？")) return;
+      e.target.setAttribute("disabled", "");
+      const r = await api("/api/bot", {action: a});
+      toast(r.msg || r.error || (r.ok ? "好了" : "失败"), !r.ok);
+      setTimeout(draw, 2500);
+    };
+  };
+  await draw(); every(6000, draw); every(1000, () => { fpTick(); if (!$("#fpr") || document.activeElement !== $("#fpr")) fpLabel(); });
+};
+
+/* ───────── 控制台后台的版本：旧版本 → 提示换；页面改了 → 提示刷新 ───────── */
+const VER = {html: null, old: false, changed: false, busy: false};
+async function checkVersion() {
+  if (VER.busy) return;
+  VER.busy = true;
+  try {
+    const v = await api("/api/version");
+    if (v && v.version) {
+      VER.old = false;
+      if (VER.html === null) VER.html = v.html;
+      VER.changed = !!v.html && v.html !== VER.html;
+    } else if (v && v.error === "没有这个页面") VER.old = true;
+  } finally { VER.busy = false; }
+  upBanner();
+}
+function upBanner() {
+  const main = $("#main"); if (!main) return;
+  let el = $("#upbar");
+  const html = VER.old ? `<span><b>控制台后台还是旧版本</b>，有的按钮会显示「不认识的设置」。双击 <b>C:\\QQBot\\控制台.bat</b> 换成新版本（它会自己把旧的关掉；旧的黑窗口显示 Control panel stopped 时关掉就行）。换过一次以后会自己更新。</span>` :
+    VER.changed ? `<span>控制台更新了</span><button class="btn small primary" onclick="location.reload()">刷新页面</button>` : "";
+  if (!html) { if (el) el.remove(); return; }
+  if (!el) { el = document.createElement("div"); el.id = "upbar"; main.prepend(el); }
+  el.className = "upbar" + (VER.old ? "" : " info");
+  el.innerHTML = html;
+}
+
+/* ───────── 功能开关 ───────── */
+const SETTINGS = [
+  ["群聊", [
+    ["group_card", "她在群里的名字（群名片）", "群里有好几个「大肥鱼」时用来区分：那种群里只有叫这个名字、@她、引用她才算找她；名片 6 小时自动改一次。空着 = 不改", "text"],
+    ["followup.enabled", "接话", "没 @ 她、但其实在接她话的消息也接上", "bool"],
+    ["followup.max_turns", "不 @ 她最多连着接几轮", "防止跟别的机器人对聊停不下来", "num", 1, 20, 1],
+    ["followup.window_sec", "她说完多少秒内算「接话」", "", "num", 30, 600, 10],
+    ["rhythm.enabled", "群聊节奏", "说上话后在线聊一阵 冷场会试探 到点收尾", "bool"],
+    ["rhythm.reply_prob", "在线时 没点名的话接的概率", "0~1", "num", 0, 1, .05],
+    ["behavior.group_reply_prob", "平时随便插一嘴的概率", "0~1，没人找她时", "num", 0, 1, .01],
+    ["behavior.group_max_per_hour", "每个群每小时最多说几次", "", "num", 1, 100, 1],
+    ["behavior.group_cooldown_sec", "两次插话至少隔几秒", "", "num", 0, 3600, 10],
+    ["behavior.group_max_segments", "群里一次最多发几条", "", "num", 1, 6, 1],
+    ["behavior.group_context_messages", "群里回话时带多少条聊天记录", "越多越能分清谁在跟谁说话。至少带这么多条：新消息接在后面 多攒 30 条才一起往前挪（前面不变 DeepSeek 按缓存价算 便宜 50 倍）", "num", 20, 150, 5],
+    ["memory2.distill_every_group", "群里攒多少条才提炼一次记忆", "别人家 AI 的消息不算；越大越省（私聊是 25 条）", "num", 10, 200, 5],
+    ["speakup.enabled", "冷场冒泡", "群里安静很久时自己冒个泡", "bool"],
+    ["speakup.dry_run", "冒泡只试运行", "开着 = 只在日志里写本来会说什么 不真发", "bool"],
+    ["speakup.daily_max", "每个群每天最多冒几次泡", "", "num", 0, 30, 1],
+    ["group_admin.enabled", "群管说话算数", "群主/管理员在群里让鱼们安静（少说两句/关一关/闭嘴/放出来）→ 这个群自动降档（少说/只回@/静音），点个表情表示收到；群友只能管自己（别接我的话）。花钱的功能群管和普通群友一样", "bool"],
+    ["group_admin.default_hours", "群管没说多久时 几小时后恢复", "", "num", 0.5, 72, 0.5],
+    ["group_admin.self_hours", "群友说「别接我的话」管几小时", "只对他本人 他 @她 照样回", "num", 1, 72, 1],
+  ]],
+  ["群里群外", [
+    ["continuity.private_in_group", "私聊里的事 在群里", "她记得私聊里聊过的 这里定群里怎么办（病、感情、钱、家里这类永远不带进群）", "select", [["discreet", "记得 但不说（他自己在群里提起才接）"], ["relation", "只知道私下聊过、怎么称呼 不带内容"], ["off", "群里完全不带私聊的东西"]]],
+    ["continuity.max_private_facts", "群里最多带几条私聊里的事", "只给她看 防说漏：群里冒出私聊里才有的词会让她重写", "num", 0, 8, 1],
+    ["continuity.group_in_private", "群里的事带进私聊", "私聊时她记得这个人最近在群里跟她说过的（群里大家都看得到的）", "bool"],
+    ["continuity.group_days", "带最近几天群里的事", "", "num", 1, 14, 1],
+  ]],
+  ["私聊", [
+    ["behavior.proactive_private", "主动找人聊天", "好久没聊会主动找人", "bool"],
+    ["behavior.proactive_prob", "主动找人的概率", "0~1", "num", 0, 1, .05],
+    ["behavior.proactive_min_hours", "多久没聊才主动找", "小时", "num", 1, 240, 1],
+    ["behavior.quiet_hours", "她的睡觉时间", "这段时间不主动找人、不冒泡（几点到几点）", "pair", 0, 24, 1],
+    ["behavior.context_messages", "私聊回话时带多少条聊天记录", "至少带这么多条：多攒 20 条才一起往前挪（命中缓存 省钱）", "num", 10, 150, 5],
+  ]],
+  ["语音", [
+    ["voice.enabled", "发语音", "MiniMax 合成她的声音", "bool"],
+    ["voice.private_auto", "私聊里自己决定发语音", "关掉 = 只有别人要求时才发", "bool"],
+    ["voice.private_every", "大概几句话发一条语音", "", "num", 1, 50, 1],
+    ["voice.daily_max", "每天最多几条语音", "", "num", 0, 500, 5],
+    ["voice.minimax.speed", "语速", "0.5~2", "num", .5, 2, .05],
+    ["voice.minimax.pitch", "音调", "-12~12", "num", -12, 12, 1],
+    ["voice.minimax.voice_id", "音色", "MiniMax 的音色 ID", "text"],
+    ["voice.stt", "听语音", "别人发的语音要不要听写", "select", [["sensevoice", "听（本地 SenseVoice）"], ["off", "不听"]]],
+  ]],
+  ["唱歌", [
+    ["sing.enabled", "唱歌", "有人让她唱（「唱首歌」「唱个试试」「来首歌」）她就从「唱歌」页的歌里挑一首 放一段当语音发", "bool"],
+    ["sing.max_sec", "一次最多唱几秒", "歌比这个长就只唱前面这么长（或者在「唱歌」页给每首歌设唱哪一段）", "num", 10, 600, 10],
+    ["sing.gap_sec", "同一个聊天里隔多久才能再唱", "秒", "num", 0, 3600, 10],
+    ["sing.daily_max", "每天最多唱几次", "", "num", 0, 500, 5],
+    ["sing.online", "没学过的歌上网找", "点了歌单里没有的歌：先找网易云 不行再找 B站 要歌名（和歌手）完全对得上的原唱 唱十来秒高潮；找不到就说没找着 不拿别的歌顶替（VIP/版权限制的歌唱不了）", "bool"],
+    ["sing.online_sec", "网上找的歌唱几秒", "", "num", 5, 30, 1],
+  ]],
+  ["表情包", [
+    ["behavior.sticker_gap_sec", "两张表情包至少隔几秒", "同一个聊天里", "num", 0, 3600, 10],
+  ]],
+  ["动画", [
+    ["anim.enabled", "做动画", "火山方舟 Seedance：有人让她做、或者她自己想做时 做 5 秒的小动画发出来", "bool"],
+    ["anim.proactive", "她每天最多主动做几条", "发到她正聊着的群；0 = 只在有人要时做", "num", 0, 10, 1],
+    ["anim.friend_favor", "熟人门槛（好感）", "好感到这么多 才给做", "num", 0, 100, 5],
+    ["anim.friend_daily", "熟人每人每天几条", "", "num", 0, 10, 1],
+    ["anim.others_daily", "除你以外 所有人每天合计几条", "", "num", 0, 100, 1],
+    ["anim.owner_daily", "你每天最多几条", "防止出错时一直做", "num", 0, 200, 1],
+    ["anim.budget_cny", "一共最多花多少元", "按火山返回的 token 估的 花到就停", "num", 0, 100000, 10],
+    ["anim.resolution", "清晰度", "", "select", [["480p", "480p（约 ¥1.1 一条）"], ["720p", "720p（约 ¥2.5 一条）"]]],
+    ["anim.watermark", "加「AI生成」水印", "AI 生成的视频按规定要标出来", "bool"],
+    ["anim.generate_audio", "带声音", "Seedance 2.0 mini 默认就有声音 不多花钱", "bool"],
+    ["anim.self_mode", "主角是她自己时", "", "select", [["reference", "拿头像当参考（长得像 场景随便换）"], ["first_frame", "从头像这张图开始动"]]],
+    ["anim.self_desc", "她长什么样（告诉做视频的模型）", "", "text"],
+  ]],
+  ["省 token", [
+    ["full_power.default_hours", "火力全开：默认开几小时", "私聊她发「火力全开」不带时长时用（总览页上有开关）", "num", 0.5, 72, 0.5],
+    ["full_power.interject_mult", "火力全开：插嘴概率 ×几", "平时随便插一嘴的概率乘这个", "num", 1, 10, 0.5],
+    ["full_power.follow_window_sec", "火力全开：叫过她之后几秒内都算对她说", "平时用「群聊」里的设置（120 秒）", "num", 60, 1800, 30],
+    ["full_power.rhythm_reply_prob", "火力全开：在线时没点名的话接的概率", "0~1", "num", 0, 1, .05],
+    ["full_power.max_per_hour", "火力全开：每个群每小时最多说几次", "", "num", 1, 200, 1],
+    ["budget.enabled", "花得越多 回得越少（只管群里）", "按最近花的钱算回复意愿：一开始掉得快 很快到一半 之后越来越慢地往下掉。私聊每条都回、老板的消息永远回、补回不算", "bool"],
+    ["budget.half_usd", "花到多少美元 意愿降到一半", "越小越省（0.45 = 最近 24 小时花 $0.45 时 意愿降到一半；10-26 价格按峰谷算准了 从 0.3 调到 0.45 回复量不变）", "num", 0.01, 50, 0.05],
+    ["budget.shape", "曲线形状 k", "小于 1：前面掉得快 后面拖得长（0.6 比较合适）；越接近 1 越像普通的 S 形", "num", 0.2, 2, 0.05],
+    ["budget.floor", "最低意愿", "再怎么花也保留的回复意愿 0~1", "num", 0, 0.9, 0.05],
+    ["budget.window_hours", "按最近几小时的花费算", "", "num", 1, 72, 1],
+    ["budget.powers.direct", "被 @/叫名字/引用：次方", "越小越不受省 token 影响（0.1：意愿 63% 时 95% 会回 掉到底线也有 79%）", "num", 0, 5, 0.05],
+    ["budget.powers.follow", "没 @ 的接话：次方", "越大越省（要先判断是不是在跟她说 也花 token）", "num", 0, 5, 0.1],
+    ["budget.powers.chat", "自己插话：次方", "", "num", 0, 5, 0.1],
+    ["budget.powers.extra", "冒泡/主动找人：次方", "", "num", 0, 5, 0.1],
+    ["peak.defer", "DeepSeek 高峰时段：群里的后台活先攒着", "北京时间 周一到周五 9-12、14-18 价格翻倍：这时候群里的记忆提炼、前情提要、学梗先不做 过了高峰再做（私聊照常 群里攒太多也会先提炼一批）", "bool"],
+  ]],
+  ["其他", [
+    ["catchup.enabled", "上线补回", "重启后把下线期间漏掉的消息补看一遍 该回的回", "bool"],
+    ["catchup.max_people_per_group", "补回：每个群最多回几个人", "下线期间找过她的人各回一条", "num", 1, 20, 1],
+    ["catchup.max_replies", "补回：一次最多回几条", "私聊优先", "num", 1, 60, 1],
+    ["catchup.max_private_hours", "补回：私聊往回补几小时", "电脑关了几天也补（默认一周）", "num", 1, 720, 1],
+    ["catchup.sweep_private", "私聊没回的都回", "开机时和之后每隔几分钟 看一遍私聊里有没有她没回的（重启时正在攒的、没发出去的…）都回", "bool"],
+    ["catchup.sweep_every_sec", "多久看一次私聊有没有没回的", "秒", "num", 30, 3600, 30],
+    ["behavior.web_search", "上网搜索", "不认识的梗、新闻会先查一下", "bool"],
+    ["memewiki.enabled", "梗百科（cnmeme.wiki 词库）", "遇到梗先查本地词库（6600 多条）没有再查 cnmeme.wiki 在线 最后才上网学", "bool"],
+    ["memewiki.hints", "梗百科：认出聊天里的梗", "对方的话里有词库里的梗（三个字以上）就把词条给她看一眼 一次最多两条", "bool"],
+    ["memewiki.online", "梗百科：本地没有时在线查", "查到的会存进本地", "bool"],
+    ["memewiki.sync", "梗百科：每天同步新梗", "每天凌晨 3~8 点从 cnmeme.wiki 补新出的词条（慢慢翻 不占多少流量）", "bool"],
+    ["bili.enabled", "刷 B 站", "每天刷几轮视频 当聊天素材", "bool"],
+    ["bili.sessions_per_day", "每天刷几轮", "", "num", 0, 24, 1],
+    ["mood2.enabled", "心情系统", "聊完一轮判断一下心情变化", "bool"],
+    ["llm.temperature", "说话的随机性", "越大越跳脱 0.6~1.1 比较合适", "num", 0, 1.5, .05],
+    ["behavior.typing_speed_cps", "打字速度", "每秒几个字（越小越像慢慢打）", "num", 1, 50, 1],
+    ["soul.timezone", "时区", "她按这个时间作息。聊天的人在国内就选北京时间（电脑要装 tzdata）", "select", [["", "跟电脑一样"], ["Asia/Shanghai", "北京时间"], ["Europe/London", "英国时间"]]],
+  ]],
+  ["密钥", [
+    ["llm.deepseek.api_key", "DeepSeek key", "聊天用", "secret"],
+    ["voice.minimax.api_key", "MiniMax key", "语音用", "secret"],
+    ["anim.api_key", "火山方舟 key", "做动画用", "secret"],
+    ["vision.fallback.api_key", "智谱 key", "本地识图不行时用", "secret"],
+    ["bili.sessdata", "B 站 SESSDATA", "登录后能读字幕", "secret"],
+  ]],
+];
+const getp = (o, p) => p.split(".").reduce((a, k) => (a == null ? a : a[k]), o);
+VIEWS.settings = async main => {
+  const r = await api("/api/config"); const C = r.config || {};
+  const changed = {};
+  main.innerHTML = `<h1>功能开关</h1><p class="sub">改完点下面的「保存」。大部分设置要重启机器人才生效（重启只要十几秒 QQ 不会掉线）</p><div id="sets"></div>
+    <div class="savebar"><span id="chg" class="muted">没有改动</span><span class="spacer"></span><button class="btn" id="save">保存</button><button class="btn primary" id="saverestart">保存并重启机器人</button></div>`;
+  $("#sets").innerHTML = SETTINGS.map(([sec, rows]) => `<div class="card"><h2>${sec}</h2>${rows.map(([p, lab, desc, type, a, b, c]) => {
+    const v = getp(C, p); let ctl = "";
+    if (type === "bool") ctl = `<label class="sw"><input type="checkbox" data-p="${p}" ${v ? "checked" : ""}><span></span></label>`;
+    else if (type === "num") ctl = `<input type="number" data-p="${p}" value="${v ?? ""}" min="${a}" max="${b}" step="${c}">`;
+    else if (type === "text") ctl = `<input type="text" data-p="${p}" value="${esc(v ?? "")}" style="width:260px">`;
+    else if (type === "select") ctl = `<select data-p="${p}">${a.map(([k, n]) => `<option value="${esc(k)}" ${String(v ?? "") === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>`;
+    else if (type === "pair") ctl = `<span class="row"><input type="number" data-p="${p}" data-i="0" value="${(v || [])[0] ?? ""}" min="${a}" max="${b}" step="${c}"> 点到 <input type="number" data-p="${p}" data-i="1" value="${(v || [])[1] ?? ""}" min="${a}" max="${b}" step="${c}"> 点</span>`;
+    else if (type === "secret") ctl = `<span class="secret">${v && v.set ? '<span class="badge good">已填</span>' : '<span class="badge warn">没填</span>'}<input type="password" data-p="${p}" placeholder="要换就填新的" style="width:220px"></span>`;
+    return `<div class="set" data-row="${p}"><div class="lab"><b>${esc(lab)}</b>${desc ? `<div>${esc(desc)}</div>` : ""}</div>${v === undefined && type !== "secret" ? '<span class="badge">配置里没有</span>' : ctl}</div>`;
+  }).join("")}</div>`).join("");
+  const mark = () => { const n = Object.keys(changed).length; $("#chg").textContent = n ? `改了 ${n} 项还没保存` : "没有改动"; document.querySelectorAll(".set").forEach(el => el.classList.toggle("changed", el.dataset.row in changed)); };
+  $("#sets").addEventListener("input", e => {
+    const el = e.target, p = el.dataset.p; if (!p) return;
+    let v;
+    if (el.type === "checkbox") v = el.checked;
+    else if (el.type === "number") {
+      if (el.dataset.i !== undefined) { const both = [...document.querySelectorAll(`[data-p="${p}"]`)].map(x => Number(x.value)); v = both; }
+      else v = Number(el.value);
+    } else v = el.value;
+    if (el.type === "password" && !v) delete changed[p]; else changed[p] = v;
+    mark();
+  });
+  const save = async restart => {
+    const changes = Object.entries(changed).map(([path, value]) => ({path, value}));
+    if (!changes.length) { toast("没有改动"); return; }
+    const r = await api("/api/config", {changes});
+    if (r.bad && r.bad.length) toast("这些没存上：" + r.bad.join("、"), true);
+    if (r.done && r.done.length) { toast(`存好了 ${r.done.length} 项`); Object.keys(changed).forEach(k => delete changed[k]); mark(); }
+    if (restart) { const x = await api("/api/bot", {action: "restart"}); toast(x.msg || x.error, !x.ok); }
+  };
+  $("#save").onclick = () => save(false); $("#saverestart").onclick = () => save(true);
+};
+
+/* ───────── 群和人 ───────── */
+VIEWS.people = async main => {
+  main.innerHTML = `<h1>群和人</h1><p class="sub">哪些群她说话、哪些人不理。这里改了马上生效 不用重启。群主/管理员在群里让鱼们安静（少说两句 / 关一关 / 闭嘴）她会自己降档，到点自动恢复，这里能看到也能撤销</p><div id="pp"><div class="empty">读取群列表…</div></div>`;
+  const draw = async () => {
+    const d = await api("/api/people");
+    const MODES = [["normal", "正常"], ["quiet", "少说（不主动插话）"], ["at_only", "只在被@时说话"], ["mute", "静音（完全不说）"]];
+    const LV = {normal: "正常", quiet: "少说", at_only: "只回@", mute: "静音"};
+    const gadm = g => {
+      const out = [];
+      if (g.admin) out.push(`<span class="badge warn" title="原话：${esc(g.admin.said || "")}">${LV[g.admin.level] || g.admin.level} · ${esc(g.admin.role || "")}「${esc(g.admin.name || "")}」${ago(g.admin.t)}设的 · ${g.admin.until < 0 ? "要有人放开" : "到 " + hm(g.admin.until)}</span> <button class="btn small" data-ca="${g.id}">撤销</button>`);
+      if (g.ban) out.push(`<span class="badge warn">${g.ban.whole ? "全员禁言中" : "QQ 禁言中"}${g.ban.until > 0 ? " 到 " + hm(g.ban.until) : ""}</span> <button class="btn small" data-cb="${g.id}" title="已经解了但没收到通知时用">清掉</button>`);
+      if (g.eff && g.eff !== g.mode && !g.mute_until) out.push(`<span class="small muted">实际：${LV[g.eff] || g.eff}</span>`);
+      return out.join(" ") || '<span class="muted">—</span>';
+    };
+    $("#pp").innerHTML = `
+      <div class="card"><div class="row"><h2 style="margin:0">群</h2><span class="spacer"></span><span class="small muted">${d.online ? "群名是刚从 QQ 读的" : "机器人没开 群名用的是上次存的"}</span></div>
+      <table><tr><th>群</th><th>人数</th><th>最近有人说话</th><th>她在这个群</th><th>临时静音</th><th>群管 / QQ 禁言</th></tr>
+      ${d.groups.map(g => `<tr><td><b>${esc(g.name || "（没读到群名）")}</b><div class="small muted">${g.id}</div></td><td>${g.members ?? "—"}</td><td>${ago(g.last)}</td>
+        <td><select data-g="${g.id}">${MODES.map(([k, n]) => `<option value="${k}" ${g.mode === k ? "selected" : ""}>${n}</option>`).join("")}</select></td>
+        <td>${g.mute_until ? `<span class="badge warn">静音到 ${hm(g.mute_until)}</span> <button class="btn small" data-m="${g.id}" data-min="0">取消</button>` :
+          `<button class="btn small" data-m="${g.id}" data-min="60">1 小时</button> <button class="btn small" data-m="${g.id}" data-min="480">8 小时</button>`}</td>
+        <td>${gadm(g)}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">还没有群</td></tr>'}
+      </table>
+      <p class="small muted">群管 = 群主/管理员（只认 QQ 上的身份）在群里说的：少说 = 不主动插话、有人跟她说照常回；只回@ = 只有 @她/叫她/引用她才回；静音 = 一句不说。只能往紧了调、放不开这里设的；没说多久 ${esc(String(d.gadm_hours ?? 3))} 小时后恢复。动画/语音/唱歌这些花钱的 群管和普通群友一样</p></div>
+      <div class="card"><h2>让她别接话的人</h2><p class="small muted" style="margin-top:-4px">群友自己说「别接我的话 / 别理我」：到点前她不主动接这个人的话、不主动私聊他；他 @她 照样回</p>
+        ${Object.entries(d.self_off || {}).map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · ${ago(e.t)}说「${esc((e.said || "").slice(0, 30))}」· 到 ${hm(e.until)}</span><span class="spacer"></span><button class="btn small" data-so="${uid}">放开</button></div>`).join("") || '<div class="muted small">（没有）</div>'}
+      </div>
+      <div class="cols">
+        ${["blocked", "bots"].map(kind => `<div class="card"><h2>${kind === "blocked" ? "不理的人" : "别的机器人"}</h2>
+          <p class="small muted" style="margin-top:-4px">${kind === "blocked" ? "他们发的消息她完全看不见 也不会记" : "只有 @她 / 叫她名字 / 引用她 才回，10 分钟最多回 3 次，不算「接话」（防两个机器人聊停不下来）。群里认出来的别人家的 AI 会自动加进来（备注里写着理由）；认错了点「移除」= 告诉她这是真人 以后不再自动标"}</p>
+          ${Object.entries(d[kind]).map(([uid, note]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${uid}</b><span class="muted">${esc(note)}</span><span class="spacer"></span><button class="btn small danger" data-rm="${kind}" data-id="${uid}">移除</button></div>`).join("") || '<div class="muted small">（空的）</div>'}
+          <div class="row" style="margin-top:10px"><input type="text" placeholder="QQ 号" id="${kind}_id" style="width:130px"><input type="text" placeholder="备注（谁）" id="${kind}_note" style="width:150px"><button class="btn" data-add="${kind}">添加</button></div></div>`).join("")}
+      </div>`;
+  };
+  await draw();
+  $("#pp").addEventListener("change", async e => {
+    const g = e.target.dataset.g; if (!g) return;
+    const r = await api("/api/control", {kind: "group", id: g, mode: e.target.value}); toast(r.ok ? "改好了" : r.error, !r.ok);
+  });
+  $("#pp").addEventListener("click", async e => {
+    const t = e.target.dataset;
+    if (t.m) { const r = await api("/api/control", {kind: "group", id: t.m, mute_min: Number(t.min)}); toast(r.ok ? (Number(t.min) ? "静音了" : "取消静音了") : r.error, !r.ok); draw(); }
+    if (t.rm) { const r = await api("/api/control", {kind: t.rm, id: t.id, remove: true}); toast(r.ok ? "移除了" : r.error, !r.ok); draw(); }
+    if (t.ca) { const r = await api("/api/control", {kind: "group", id: t.ca, clear_admin: true}); toast(r.ok ? "撤销了 群管设的档位" : r.error, !r.ok); draw(); }
+    if (t.cb) { const r = await api("/api/control", {kind: "group", id: t.cb, clear_ban: true}); toast(r.ok ? "清掉了" : r.error, !r.ok); draw(); }
+    if (t.so) { const r = await api("/api/control", {kind: "self_off", id: t.so}); toast(r.ok ? "放开了" : r.error, !r.ok); draw(); }
+    if (t.add) { const id = $(`#${t.add}_id`).value.trim(), note = $(`#${t.add}_note`).value.trim(); const r = await api("/api/control", {kind: t.add, id, note}); toast(r.ok ? "加好了" : r.error, !r.ok); if (r.ok) draw(); }
+  });
+};
+
+/* ───────── 代发消息 ───────── */
+let STK = null;
+async function stickers() { if (!STK) { const r = await api("/api/stickers"); STK = r.data || []; } return STK; }
+VIEWS.send = async main => {
+  main.innerHTML = `<h1>代发消息</h1><p class="sub">用她的号发一句话 / 一条语音 / 一张表情包（不受频率限制）</p>
+    <div class="cols"><div class="card">
+      <div class="row" style="margin-bottom:10px"><label><input type="radio" name="sc" value="group" checked> 群</label><label><input type="radio" name="sc" value="private"> 私聊</label>
+        <select id="tgt" style="flex:1;min-width:200px"></select></div>
+      <div class="row" style="margin-bottom:10px"><span class="small muted">或者直接填号：</span><input type="text" id="tgt2" placeholder="群号 / QQ 号" style="width:160px"></div>
+      <textarea id="txt" rows="4" placeholder="要说的话（可以只发表情包）"></textarea>
+      <div class="row" style="margin:10px 0"><label class="row"><span class="sw"><input type="checkbox" id="asvoice"><span></span></span>用语音发</label>
+        <select id="emo"><option value="">自动语气</option>${["开心", "撒娇", "难过", "生气", "惊讶", "平静", "困"].map(x => `<option>${x}</option>`).join("")}</select>
+        <label class="row"><span class="sw"><input type="checkbox" id="remember" checked><span></span></span>记进她的聊天记录</label></div>
+      <div class="row"><span id="picked" class="muted small">没选表情包</span><span class="spacer"></span><button class="btn primary" id="go">发送</button></div>
+      <h2 style="margin-top:16px">这个聊天最近说了什么</h2><div class="chat" id="ctx"><div class="muted">选个群或者人</div></div>
+    </div><div class="card"><div class="row" style="margin-bottom:8px"><h2 style="margin:0">挑表情包</h2><span class="spacer"></span><input type="text" id="sq" placeholder="搜：开心 / 饿 / 拿捏…" style="width:180px"></div><div class="stk list" id="sg"></div></div></div>`;
+  const P = await api("/api/people"); let picked = "";
+  const fill = () => {
+    const sc = document.querySelector("[name=sc]:checked").value;
+    const opts = sc === "group" ? P.groups.map(g => [g.id, (g.name || "群") + " · " + g.id]) : P.friends.map(f => [f.id, (f.name || "QQ") + " · " + f.id]);
+    $("#tgt").innerHTML = opts.map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join("") || "<option value=''>（没有）</option>";
+    loadCtx();
+  };
+  const target = () => ($("#tgt2").value.trim() || $("#tgt").value);
+  const loadCtx = async () => {
+    const sc = document.querySelector("[name=sc]:checked").value, t = target(); if (!t) return;
+    const r = await api(`/api/memory/detail?key=${sc}_${t}&n=15`);
+    $("#ctx").innerHTML = r.ok ? r.data.history.map(h => `<div class="${h.role === "assistant" ? "me" : ""}"><span class="muted small">${hm(h.ts)}</span> <b>${esc(h.role === "assistant" ? "她" : h.name)}</b>：${esc(h.text)}</div>`).join("") : '<div class="muted">这个聊天还没有记录</div>';
+    $("#ctx").scrollTop = 1e6;
+  };
+  document.querySelectorAll("[name=sc]").forEach(x => x.onchange = fill);
+  $("#tgt").onchange = loadCtx; $("#tgt2").onchange = loadCtx;
+  fill();
+  const S = await stickers();
+  const showStk = () => {
+    const q = $("#sq").value.trim();
+    const list = S.filter(s => !s.off && (!q || (s.name + s.emo + s.scene + s.text).includes(q))).slice(0, 80);
+    $("#sg").innerHTML = list.map(s => `<div class="s ${s.name === picked ? "pick" : ""}" data-n="${esc(s.name)}" title="${esc(s.scene)}"><img loading="lazy" src="/sticker?f=${encodeURIComponent(s.file)}"><div class="n">${esc(s.name)}</div><div class="e">${esc(s.emo)}</div></div>`).join("") || '<div class="empty">没搜到</div>';
+  };
+  $("#sq").oninput = showStk; showStk();
+  $("#sg").onclick = e => { const el = e.target.closest(".s"); if (!el) return; picked = picked === el.dataset.n ? "" : el.dataset.n; $("#picked").textContent = picked ? "表情包：" + picked : "没选表情包"; showStk(); };
+  $("#go").onclick = async () => {
+    const body = {scene: document.querySelector("[name=sc]:checked").value, target: target(), text: $("#txt").value, sticker: picked,
+      voice: $("#asvoice").checked, emo: $("#emo").value, remember: $("#remember").checked};
+    if (!body.target) { toast("选一个发给谁", true); return; }
+    $("#go").setAttribute("disabled", ""); const r = await api("/api/send", body); $("#go").removeAttribute("disabled");
+    toast(r.ok ? "发出去了" + (r.error ? "（" + r.error + "）" : "") : (r.error || "没发出去"), !r.ok);
+    if (r.ok) { $("#txt").value = ""; picked = ""; $("#picked").textContent = "没选表情包"; showStk(); setTimeout(loadCtx, 800); }
+  };
+};
+
+/* ───────── 记忆和好感 ───────── */
+VIEWS.memory = async main => {
+  main.innerHTML = `<h1>记忆和好感</h1><p class="sub">她记住了每个人什么、心里挂着什么事、对谁有多少好感。删掉记错的 她以后也不会再记回来</p>
+    <div class="row" style="margin-bottom:12px"><button class="chip on" data-t="mem">记忆</button><button class="chip" data-t="fav">好感度</button></div><div id="mm"></div>`;
+  let tab = "mem", sel = null;
+  const drawMem = async () => {
+    const L = (await api("/api/memory")).data || [];
+    if (!sel && L.length) sel = L[0].key;
+    $("#mm").innerHTML = `<div class="cols" style="grid-template-columns:300px 1fr"><div class="card list" id="ml">${L.map(x => `<div class="item ${x.key === sel ? "on" : ""}" data-k="${x.key}"><b>${esc(x.name || x.key)}</b> <span class="badge">${x.type === "group" ? "群" : "私聊"}</span><div class="small muted">${x.facts} 条记忆 · ${ago(x.last)}</div></div>`).join("") || '<div class="empty">还没有</div>'}</div><div id="md"></div></div>`;
+    $("#ml").onclick = e => { const it = e.target.closest(".item"); if (it) { sel = it.dataset.k; drawMem(); } };
+    if (sel) drawDetail();
+  };
+  const drawDetail = async () => {
+    const r = await api(`/api/memory/detail?key=${sel}&n=40`); if (!r.ok) { $("#md").innerHTML = '<div class="card">读不到</div>'; return; }
+    const d = r.data, rel = d.rel || {};
+    $("#md").innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">${esc(d.name || d.key)}</h2><span class="badge">${d.key}</span><span class="spacer"></span>${rel.closeness != null ? `<span class="badge acc">亲近度 ${rel.closeness}</span>` : ""}${d.key.startsWith("private_") ? ` <button class="btn small danger" id="wipe1" title="私聊、群里说过的话、记下的关于他的事、好感度 全删">删除这个人的所有数据</button>` : ""}</div>
+      ${rel.topic ? `<div class="small muted" style="margin-top:6px">最近在聊：${esc(rel.topic)}</div>` : ""}</div>
+      <div class="card"><h2>她记得的事（${d.facts.length}）</h2>${d.facts.map(f => `<div class="fact"><span class="badge">${esc({fact: "事实", recent: "近况", episode: "经历"}[f.kind] || f.kind || "事实")}</span><span class="t">${esc(f.text)}${f.manual ? ' <span class="badge acc">手动加的</span>' : ""}<div class="small muted">${esc(f.date || "")} · 重要度 ${f.imp ?? "—"} · 想起过 ${f.hits ?? 0} 次</div></span><button class="btn small danger" data-f="${esc(f.id)}">忘掉</button></div>`).join("") || '<div class="muted">还没记什么</div>'}
+        <div class="row" style="margin-top:10px"><input type="text" id="nf" placeholder="让她记住一件事（60 字内）" style="flex:1"><button class="btn" id="addf">记住</button></div>
+        ${d.old_facts ? `<div class="small muted" style="margin-top:6px">另外还有 ${d.old_facts} 条旧的（被新的取代 / 归档了）</div>` : ""}</div>
+      ${(rel.loops || []).length ? `<div class="card"><h2>心里挂着的事</h2>${rel.loops.map(l => `<div class="fact"><span class="t">${esc(l.text)}<div class="small muted">${l.due ? "打算 " + hm(l.due) + " 以后问" : ""}</div></span></div>`).join("")}</div>` : ""}
+      ${d.summary ? `<div class="card"><h2>前情提要</h2><div class="small" style="white-space:pre-wrap">${esc(d.summary)}</div></div>` : ""}
+      <div class="card"><h2>最近聊天</h2><div class="chat">${d.history.map(h => `<div class="${h.role === "assistant" ? "me" : ""}"><span class="muted small">${hm(h.ts)}</span> <b>${esc(h.role === "assistant" ? "她" : h.name)}</b>：${esc(h.text)}</div>`).join("")}</div></div>`;
+    $("#md").querySelector(".chat").scrollTop = 1e6;
+    $("#md").onclick = async e => {
+      const f = e.target.dataset.f;
+      if (f) { if (!confirm("忘掉这条？以后她也不会再记回来")) return; const r = await api("/api/memory/forget", {key: sel, id: f}); toast(r.ok ? "忘掉了" + (r.offline ? "（机器人没开 直接改的文件）" : "") : (r.error || "没成功"), !r.ok); drawDetail(); }
+      if (e.target.id === "wipe1") { if (await wipeFlow(sel.slice(8), d.name)) { sel = null; drawMem(); } return; }
+      if (e.target.id === "addf") { const t = $("#nf").value.trim(); if (!t) return; const r = await api("/api/memory/add", {key: sel, text: t}); toast(r.ok ? "记住了" : (r.error || "没记上（可能已经有了）"), !r.ok); drawDetail(); }
+    };
+  };
+  const drawFav = async () => {
+    const L = (await api("/api/favor")).data || [];
+    $("#mm").innerHTML = `<div class="card"><p class="small muted" style="margin-top:0">好感度 0~100：0 陌生人 · 20 认识的人 · 40 熟人（可以互骂了）· 60 好朋友 · 80 特别的人。每跨过一档 她会做一件那一档才做的小事</p>
+      <table><tr><th>谁</th><th>现在</th><th>好感度</th><th>聊过</th><th>认识多久</th><th></th></tr>${L.map(u => `<tr><td><b>${esc(u.name || "—")}</b><div class="small muted">${u.uid}</div></td><td><span class="badge acc">${u.stage}</span></td>
+      <td><input type="range" min="0" max="100" value="${u.favor}" data-u="${u.uid}" style="width:180px"> <b data-v="${u.uid}">${u.favor}</b></td><td>${u.chats} 次</td><td>${ago(u.first)}</td><td><button class="btn small" data-s="${u.uid}">保存</button> <button class="btn small danger" data-w="${u.uid}" data-wn="${esc(u.name || "")}" title="私聊、群里说过的话、记下的关于他的事、好感度 全删">删数据</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">还没有</td></tr>'}</table></div>`;
+    $("#mm").oninput = e => { const u = e.target.dataset.u; if (u) $(`[data-v="${u}"]`).textContent = e.target.value; };
+    $("#mm").onclick = async e => { if (e.target.dataset.w) { if (await wipeFlow(e.target.dataset.w, e.target.dataset.wn)) drawFav(); return; } const u = e.target.dataset.s; if (!u) return; const v = $(`[data-u="${u}"]`).value; const r = await api("/api/favor", {uid: u, favor: Number(v)}); toast(r.ok ? `好感度改成 ${r.favor}` : (r.error || "没成功"), !r.ok); };
+  };
+  main.querySelector(".row").onclick = e => { const t = e.target.dataset.t; if (!t) return; tab = t; main.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.t === t)); tab === "mem" ? drawMem() : drawFav(); };
+  drawMem();
+};
+
+/* ───────── 唱歌 ───────── */
+function mmss(sec) { sec = Math.max(0, Math.round(sec || 0)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`; }
+VIEWS.sing = async main => {
+  main.innerHTML = `<h1>唱歌</h1><p class="sub">她唱的是这里的歌：录好的歌放一段，当 QQ 语音发出去（不是合成的 不花 MiniMax 的钱）。有人说「唱首歌」「唱个试试」「来首歌」她就挑一首唱，点名要的歌没有她会说还不会</p><div id="sg2"></div>`;
+  const draw = async () => {
+    const d = await api("/api/songs");
+    const box = $("#sg2"); if (!box) return;
+    if (!d.ok) { box.innerHTML = `<div class="card">读不到歌单：${esc(d.error || "")}</div>`; return; }
+    const c = d.cfg || {};
+    box.innerHTML = `
+      ${d.ffmpeg ? "" : '<div class="card alert"><b>没装 ffmpeg：剪不了歌 她唱不出来。</b> 双击 C:\\QQBot\\安装视频支持.bat 装上</div>'}
+      ${c.enabled === false ? '<div class="card alert">唱歌现在关着（功能开关 → 唱歌）</div>' : ""}
+      <div class="card"><h2>加歌</h2>
+        <div class="row"><b style="width:86px">从 B站 加</b><input type="text" id="sgl" placeholder="粘贴视频链接 / BV 号 / av 号" style="flex:1;min-width:240px"><button class="btn primary" data-sg="import">导入</button></div>
+        <div class="small muted" style="margin:6px 0 0 94px">用机器人登录的 B站 号拿视频的音轨，存成 m4a；出处（UP 主、视频名）自动记上，有人问她这歌是谁做的她会照实说</div>
+        ${(d.suggest || []).map(x => `<div class="row small" style="margin:8px 0 0 94px"><span class="badge acc">推荐</span><b>${esc(x.name)}</b><span class="muted">${esc(x.note || "")}</span>
+          <a href="${esc(x.link)}" target="_blank" rel="noopener">先去 B站 听听</a><button class="btn small" data-sg="import" data-link="${esc(x.link)}">导入这首</button></div>`).join("")}
+        <div class="row" style="margin-top:14px"><b style="width:86px">上传音频</b><input type="file" id="sgf" accept="audio/*,.m4a,.flac,.ogg,.opus">
+          <input type="text" id="sgn" placeholder="歌名（空着就用文件名）" style="width:180px"><input type="text" id="sgc" placeholder="出处（谁唱的/谁做的）" style="width:200px">
+          <button class="btn" data-sg="upload">上传</button></div>
+        <div class="row small muted" style="margin-top:12px">也可以直接把 mp3 / m4a / wav 放进 <b>${esc(d.dir)}</b>（文件名就是歌名）<button class="btn small" data-sg="open">打开歌文件夹</button><button class="btn small" data-sg="refresh">刷新</button></div>
+      </div>
+      <div class="card"><h2>她会唱的歌（${d.songs.filter(x => x.exists && x.enabled !== false).length}）</h2>
+        ${d.songs.length ? d.songs.map(x => `<div class="sgitem" data-id="${esc(x.id)}" style="border-top:1px solid var(--line);padding:12px 0">
+          <div class="row"><b style="font-size:15px">《${esc(x.name)}》</b>${x.default ? '<span class="badge good">默认唱这首</span>' : ""}${x.enabled === false ? '<span class="badge">停用</span>' : ""}${x.exists ? "" : '<span class="badge bad">文件没了</span>'}
+            <span class="small muted">${x.secs ? "全长 " + mmss(x.secs) : ""} · ${esc(x.file || "")}${x.added ? " · " + esc(x.added) + " 加的" : ""}</span>
+            ${x.source ? `<a class="small" href="${esc(x.source)}" target="_blank" rel="noopener">B站原视频</a>` : ""}</div>
+          <div class="row small" style="margin-top:8px">
+            <span>歌名</span><input type="text" data-k="name" value="${esc(x.name)}" style="width:150px">
+            <span>别名</span><input type="text" data-k="aliases" value="${esc((x.aliases || []).join("，"))}" placeholder="逗号隔开" style="width:150px">
+            <span>出处</span><input type="text" data-k="credit" value="${esc(x.credit || "")}" placeholder="谁唱的 / 谁做的" style="width:240px"></div>
+          <div class="row small" style="margin-top:6px">
+            <span>唱哪一段</span><input type="number" data-k="start" value="${x.start || ""}" placeholder="0" min="0" step="1" style="width:76px"><span>秒 到</span>
+            <input type="number" data-k="end" value="${x.end || ""}" placeholder="${Math.min(x.secs || c.max_sec || 150, c.max_sec || 150) | 0}" min="0" step="1" style="width:76px"><span>秒</span>
+            <span class="muted">空着 = 从头唱（最多 ${c.max_sec || 150} 秒）</span><span class="spacer"></span>
+            <button class="btn small" data-sg="preview">试听这段</button><button class="btn small primary" data-sg="save">保存</button>
+            ${x.default ? "" : '<button class="btn small" data-sg="default">设为默认</button>'}
+            <button class="btn small" data-sg="toggle">${x.enabled === false ? "启用" : "停用"}</button><button class="btn small danger" data-sg="delete">删除</button></div>
+          <div class="sgplay" style="margin-top:6px"></div></div>`).join("") : '<div class="empty">还没有歌：从上面加一首</div>'}
+        <div class="small muted" style="margin-top:10px">群里只有有人要她唱才唱；同一个聊天 ${c.gap_sec || 120} 秒内只唱一次；每天最多 ${c.daily_max || 30} 次（功能开关 → 唱歌）。QQ 不收太长的语音会自动剪成 ${c.short_sec || 60} 秒再发。</div>
+      </div>`;
+  };
+  const vals = it => { const o = {id: it.dataset.id}; it.querySelectorAll("[data-k]").forEach(i => o[i.dataset.k] = i.value); return o; };
+  $("#sg2").onclick = async e => {
+    const b = e.target.closest("[data-sg]"); if (!b || b.hasAttribute("disabled")) return;
+    const a = b.dataset.sg, it = b.closest(".sgitem");
+    if (a === "open") { const r = await api("/api/tool", {name: "open_songs"}); toast(r.msg || r.error, !r.ok); return; }
+    if (a === "refresh") return draw();
+    if (a === "import") {
+      const link = b.dataset.link || $("#sgl").value.trim();
+      if (!link) { toast("先粘贴 B站 视频链接", true); return; }
+      b.setAttribute("disabled", ""); const old = b.textContent; b.textContent = "导入中…（几十秒）";
+      const r = await api("/api/songs/import", {link});
+      b.removeAttribute("disabled"); b.textContent = old;
+      toast(r.ok ? `加好了：《${r.song.name}》` : (r.error || "没导入成"), !r.ok);
+      if (r.ok) { $("#sgl") && ($("#sgl").value = ""); draw(); }
+      return;
+    }
+    if (a === "upload") {
+      const f = $("#sgf").files[0]; if (!f) { toast("先选一个音频文件", true); return; }
+      if (f.size > 80 * 1024 * 1024) { toast("文件太大了（80MB 以内）", true); return; }
+      b.setAttribute("disabled", ""); b.textContent = "上传中…";
+      const data = await new Promise((ok, bad) => { const rd = new FileReader(); rd.onload = () => ok(rd.result); rd.onerror = bad; rd.readAsDataURL(f); });
+      const r = await api("/api/songs/upload", {name: $("#sgn").value.trim(), credit: $("#sgc").value.trim(), filename: f.name, data});
+      b.removeAttribute("disabled"); b.textContent = "上传";
+      toast(r.ok ? `加好了：《${r.song.name}》` : (r.error || "没传上去"), !r.ok);
+      if (r.ok) draw();
+      return;
+    }
+    if (!it) return;
+    if (a === "preview") {
+      b.setAttribute("disabled", ""); const old = b.textContent; b.textContent = "剪一下…";
+      const v = vals(it), r = await api("/api/songs/preview", v);
+      b.removeAttribute("disabled"); b.textContent = old;
+      if (!r.ok) { toast(r.error || "试听不了", true); return; }
+      it.querySelector(".sgplay").innerHTML = `<audio controls autoplay src="${r.url}&t=${Date.now()}"></audio> <span class="small muted">她会唱 ${mmss(r.start)} ~ ${mmss(r.end)} 这段</span>`;
+      return;
+    }
+    let body = vals(it);
+    if (a === "default") body = {id: it.dataset.id, default: true};
+    if (a === "toggle") body = {id: it.dataset.id, enabled: b.textContent.trim() === "启用"};
+    if (a === "delete") {
+      if (!confirm("删掉这首？（文件挪到 songs\\_删掉的 里 找得回来）")) return;
+      const r = await api("/api/songs/delete", {id: it.dataset.id}); toast(r.ok ? "删了" : (r.error || "没删成"), !r.ok); if (r.ok) draw(); return;
+    }
+    const r = await api("/api/songs/save", body);
+    toast(r.ok ? "存好了（下一句就按这个唱）" : (r.error || "没存上"), !r.ok);
+    if (r.ok) draw();
+  };
+  await draw();
+};
+
+/* ───────── 表情包 ───────── */
+VIEWS.stickers = async main => {
+  STK = null; const S = await stickers();
+  const emos = [...new Set(S.map(s => s.emo).filter(Boolean))];
+  main.innerHTML = `<h1>表情包</h1><p class="sub">一共 ${S.length} 张（关掉的 ${S.filter(s => s.off).length} 张）。点一下开关 关掉的她就不会发了（马上生效）</p>
+    <div class="card"><div class="row" style="margin-bottom:10px"><input type="text" id="q" placeholder="搜名字 / 场景 / 图上的字" style="width:240px"><select id="emo"><option value="">全部情绪</option>${emos.map(e => `<option>${esc(e)}</option>`).join("")}</select>
+    <select id="st"><option value="">全部</option><option value="on">开着的</option><option value="off">关掉的</option></select><span class="spacer"></span><span class="small muted" id="cnt"></span></div><div class="stk" id="g"></div></div>`;
+  const draw = () => {
+    const q = $("#q").value.trim(), em = $("#emo").value, st = $("#st").value;
+    const L = S.filter(s => (!q || (s.name + s.scene + s.text).includes(q)) && (!em || s.emo === em) && (!st || (st === "off") === s.off));
+    $("#cnt").textContent = `${L.length} 张` + (L.length > 200 ? "（只显示前 200 张 搜一下更快）" : "");
+    $("#g").innerHTML = L.slice(0, 200).map(s => `<div class="s ${s.off ? "off" : ""}" data-n="${esc(s.name)}" title="${esc(s.scene)}${s.note ? "\n⚠ " + esc(s.note) : ""}"><img loading="lazy" src="/sticker?f=${encodeURIComponent(s.file)}"><div class="n">${esc(s.name)}</div><div class="e">${esc(s.emo)}${s.off ? " · 关" : ""}</div></div>`).join("") || '<div class="empty">没有</div>';
+  };
+  ["q", "emo", "st"].forEach(id => $("#" + id).oninput = draw); draw();
+  $("#g").onclick = async e => {
+    const el = e.target.closest(".s"); if (!el) return; const s = S.find(x => x.name === el.dataset.n);
+    const r = await api("/api/stickers/toggle", {name: s.name, off: !s.off}); if (r.ok) { s.off = !s.off; draw(); toast(s.off ? `关掉了「${s.name}」` : `打开了「${s.name}」`); } else toast("没改成", true);
+  };
+};
+
+/* ───────── 统计 ───────── */
+VIEWS.stats = async main => {
+  main.innerHTML = `<h1>统计</h1><p class="sub">花费是按下面的价格估的 只是个大概</p><div class="row" style="margin-bottom:12px">${[7, 14, 30, 90].map(d => `<button class="chip ${d === 14 ? "on" : ""}" data-d="${d}">${d} 天</button>`).join("")}</div><div id="sv"></div>`;
+  const draw = async days => {
+    const s = await api(`/api/stats?days=${days}`), T = s.total || {}, c = T.cost || {};
+    const lab = s.days.map(d => d.day.slice(5));
+    $("#sv").innerHTML = `<div class="grid">
+      <div class="stat"><b>${num((T.recv_private || 0) + (T.recv_group || 0))}</b><span>收到的消息</span></div>
+      <div class="stat"><b>${num((T.replies_private || 0) + (T.replies_group || 0))}</b><span>回复轮数</span></div>
+      <div class="stat"><b>${num(T.voice)}</b><span>语音（${num(T.voice_chars)} 字）</span></div>
+      <div class="stat"><b>${num(T.stickers)}</b><span>表情包</span></div>
+      <div class="stat"><b>${num(T.searches)}</b><span>上网搜索</span></div>
+      <div class="stat"><b>${num(T.llm_calls)}</b><span>调用模型次数</span></div>
+      <div class="stat"><b>${money(c.total)}</b><span>一共大概花了（约 ¥${((c.total || 0) * (s.prices.usd_cny || 7.1)).toFixed(2)}）</span></div></div>
+      <div class="card"><h2>每天收到 / 回复</h2><div id="c1"></div></div>
+      <div class="card"><h2>每天花费（美元）</h2><div id="c2"></div><div class="small muted">DeepSeek ${money(c.deepseek)}${c.peak ? `（其中高峰时段 ${money(c.peak)}）` : ""} · 语音 ${money(c.voice)} · 搜索${T.fetches ? "/读网页" : ""} ${money(c.search)} · token：没命中缓存 ${num(T.tok_miss)} / 命中 ${num(T.tok_hit)} / 输出 ${num(T.tok_out)}</div></div>
+      <div class="card"><h2>省 token：花得越多 回得越少</h2><div class="small muted" style="margin:-4px 0 6px">
+        回复意愿 w(u) = 底线 + (1 − 底线) / (1 + (u / u半)<sup>k</sup>)，u = 最近 ${s.budget.window_hours} 小时花的钱。不同场合用 w 的不同次方（次方越大越容易不回）；老板不限。
+        现在：花了 ${money(s.budget.spent)} → 意愿 ${Math.round(s.budget.will * 100)}%${s.budget.enabled ? "" : "（没开）"}</div><div id="c4"></div></div>
+      <div class="card"><h2>心情曲线（每小时）</h2><div id="c3"></div></div>
+      <div class="card"><h2>价格</h2><p class="small muted" style="margin-top:-4px">${esc(s.prices._说明 || "")}</p>${peakLine(s.peak)}<div class="row">${[["cny_miss", "DeepSeek 输入（没命中缓存）¥/百万"], ["cny_hit", "输入（命中缓存）¥/百万"], ["cny_out", "输出 ¥/百万"], ["peak_mult", "高峰时段 ×几"], ["search_cny_per_k", "搜索 ¥/千次"], ["fetch_cny_per_k", "读网页 ¥/千次"], ["tts_per_m_chars", "MiniMax 语音 $/百万字"], ["usd_cny", "美元换人民币"]].map(([k, n]) => `<label class="small">${n}<br><input type="number" step="any" data-k="${k}" value="${s.prices[k] ?? ""}"></label>`).join("")}<button class="btn" id="sp">保存价格</button></div></div>`;
+    bars($("#c1"), lab, [{name: "收到", color: "var(--c1)", values: s.days.map(d => (d.recv_private || 0) + (d.recv_group || 0))}, {name: "回复", color: "var(--c2)", values: s.days.map(d => (d.replies_private || 0) + (d.replies_group || 0))}]);
+    bars($("#c2"), lab, [{name: "DeepSeek", color: "var(--c1)", values: s.days.map(d => d.cost.deepseek)}, {name: "语音", color: "var(--c3)", values: s.days.map(d => d.cost.voice)}, {name: "搜索", color: "var(--c4)", values: s.days.map(d => d.cost.search)}], {stacked: true, money: true});
+    curvechart($("#c4"), s.budget);
+    const pts = (s.mood || []).map(([k, v]) => [new Date(k.replace(" ", "T") + ":00:00").getTime() / 1000, v]);
+    linechart($("#c3"), pts.length ? pts : (s.timeline || []).map(x => [x.t, x.mood, x.why]));
+    $("#sp").onclick = async () => { const p = {}; document.querySelectorAll("[data-k]").forEach(x => p[x.dataset.k] = x.value); const r = await api("/api/prices", {prices: p}); toast(r.ok ? "价格存好了" : "没存上", !r.ok); draw(days); };
+  };
+  main.querySelector(".row").onclick = e => { const d = e.target.dataset.d; if (!d) return; main.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.d === d)); draw(Number(d)); };
+  draw(14);
+};
+
+/* ───────── 用量和余额 ───────── */
+const CUR = {CNY: "¥", USD: "$"};
+function balText(b) {
+  if (!b) return "查询中…";
+  if (!b.ok) return esc(b.error || "查不到");
+  return (b.infos || []).map(x => `${CUR[x.currency] || x.currency + " "}${esc(x.total_balance)}`).join(" / ") || "—";
+}
+function balStat(b) {
+  return `<div class="stat" title="DeepSeek 官方余额接口 5 分钟查一次"><b>${b && b.ok ? balText(b) : "—"}</b><span>DeepSeek 余额${b && b.ok && !b.available ? '（<span style="color:var(--bad)">不够用了</span>）' : ""}${b && !b.ok ? "（" + esc(b.error || "查不到") + "）" : ""}</span></div>`;
+}
+const kt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : num(n);
+function peakLine(pk) {
+  if (!pk || !pk.enabled) return "";
+  const hrs = (pk.hours || []).map(([a, b]) => `${a}-${b}`).join("、");
+  return `<div class="small" style="margin:-2px 0 8px"><span class="badge ${pk.now ? "warn" : "good"}">DeepSeek 现在${esc(pk.text || "")}</span> <span class="muted">高峰 = 北京时间 周一到周五 ${esc(hrs)} 点（价格翻倍）${pk.defer ? " · 高峰时群里的记忆提炼、前情提要、学梗先攒着 过了再做" : ""}</span></div>`;
+}
+const cny = (v, p) => "¥" + ((v || 0) * (p.usd_cny || 7.1)).toFixed(2);
+function animCard(a) {
+  const st = a.status || {}, td = a.today || {}, left = Math.max(0, (a.budget || 0) - (a.spent || 0));
+  const head = `<div class="row"><h2 style="margin:0">动画</h2><span class="badge">火山方舟 ${esc(a.model || "")} · ${esc(a.resolution || "")} · ${esc(a.duration || 5)} 秒</span><span class="spacer"></span><a class="small" href="${esc(a.console || "#")}" target="_blank" rel="noopener">去火山控制台看余额</a></div>`;
+  if (!a.has_key) return `<div class="card">${head}<div class="empty">还没填火山方舟的 key（功能开关 → 密钥）</div></div>`;
+  const badge = a.enabled === false ? '<span class="badge">关着</span>' : st.ready === false ? `<span class="badge bad">${esc(st.why || "暂停中")}</span>` : '<span class="badge good">能做</span>';
+  return `<div class="card">${head}
+    <div class="row" style="margin:10px 0 6px"><b style="font-size:24px">¥${(a.spent || 0).toFixed(2)}</b><span class="muted">/ 预算 ¥${esc(a.budget)}（还能花 ¥${left.toFixed(2)}）</span>${badge}</div>
+    <div class="small muted">一共做了 ${num(a.count)} 条 · 今天做好 ${num(td.made)} 条（你 ${num(td.owner)} / 别人 ${num(td.others)} / 她自己 ${num(td.proactive)}）${td.failed ? " · 没做出来 " + num(td.failed) + " 条" : ""}${a.running ? " · 正在做 " + num(a.running) + " 条" : ""}</div>
+    ${a.last_error ? `<div class="small" style="color:var(--bad);margin-top:6px">最近一次失败：${esc(a.last_error)}</div>` : ""}
+    ${(a.history || []).length ? `<table style="margin-top:10px"><tr><th>时间</th><th>画面</th><th>花费</th></tr>${a.history.map(x => `<tr><td style="white-space:nowrap">${hm(x.t)}</td><td>${esc(x.prompt || "")}${x.ok ? "" : ` <span class="muted">（没做出来：${esc(x.why || "")}）</span>`}</td><td>${x.ok ? "¥" + (x.cny || 0).toFixed(2) : "—"}</td></tr>`).join("")}</table>` : '<div class="empty">还没做过动画</div>'}
+    <div class="small muted" style="margin-top:6px">花费 = 火山返回的 token 数 × 每百万 token ¥${esc(a.price)}，真实余额以火山控制台为准</div></div>`;
+}
+VIEWS.usage = async main => {
+  main.innerHTML = `<h1>用量和余额</h1><p class="sub">DeepSeek（聊天）、MiniMax（语音）和火山方舟（动画）用了多少、花了多少、还剩多少。花费是估的</p><div id="uv"><div class="empty">读取中…</div></div>`;
+  const draw = async force => {
+    const r = await api(`/api/usage${force ? "?force=1" : ""}`), P = r.prices || {};
+    const per = [["今天", r.today], ["最近 7 天", r.d7], ["最近 30 天", r.d30]];
+    const ds = r.deepseek || {}, mm = r.minimax || {};
+    const hitRate = x => (x.hit + x.miss) ? Math.round(x.hit / (x.hit + x.miss) * 100) + "%" : "—";
+    const by = r.d7.by || [], bySum = by.reduce((a, x) => a + x.cost, 0) || 1;
+    $("#uv").innerHTML = `
+      <div class="cols">
+        <div class="card"><div class="row"><h2 style="margin:0">DeepSeek</h2><span class="badge">聊天、判断、学梗…</span><span class="spacer"></span><button class="btn small" id="uref">刷新余额</button></div>
+          <div class="row" style="margin:10px 0 6px"><b style="font-size:24px">${balText(ds)}</b>
+            ${ds.ok ? `<span class="badge ${ds.available ? "good" : "bad"}">${ds.available ? "可用" : "余额不够了"}</span>` : ""}</div>
+          ${ds.ok ? `<div class="small muted">${(ds.infos || []).map(x => `${x.currency}：充值 ${esc(x.topped_up_balance)} + 赠送 ${esc(x.granted_balance)}`).join("；")} · ${ds.t ? hm(ds.t) + " 查的" : ""}</div>` : ""}
+          <div style="margin-top:8px">${peakLine(r.peak)}</div>
+          <table style="margin-top:10px"><tr><th></th><th>调用</th><th>输入（没命中 / 命中缓存）</th><th>输出</th><th>缓存命中</th><th>搜索</th><th>花费</th></tr>
+            ${per.map(([n, x]) => `<tr><td style="white-space:nowrap">${n}</td><td>${num(x.calls)}</td><td>${kt(x.miss)} / ${kt(x.hit)}</td><td>${kt(x.out)}</td><td>${hitRate(x)}</td><td>${num(x.searches)}${x.fetches ? `<span class="muted small"> +读网页 ${num(x.fetches)}</span>` : ""}</td><td>${money(x.ds_cost + x.search_cost)} <span class="muted small">${cny(x.ds_cost + x.search_cost, P)}</span>${x.peak_cost ? `<div class="muted small">高峰时段 ${cny(x.peak_cost, P)}</div>` : ""}</td></tr>`).join("")}</table></div>
+        <div class="card"><div class="row"><h2 style="margin:0">MiniMax</h2><span class="badge">语音合成</span></div>
+          <div style="margin:10px 0 6px">${mm.ok ? `<table><tr><th>Token Plan</th><th>剩余</th><th>总共</th></tr>${(mm.remains || []).map(x => `<tr><td>${esc(x.model)}</td><td>${esc(x.remaining ?? "—")}</td><td>${esc(x.total ?? "—")}</td></tr>`).join("")}</table>`
+            : `<span class="small">按量付费的余额 MiniMax 没开放接口查 → <a href="${esc(mm.console || "#")}" target="_blank" rel="noopener">去 MiniMax 官网看余额</a>（余额不够时 她会自动改打字 日志里有 [语音] 余额不足）</span>`}</div>
+          <table style="margin-top:10px"><tr><th></th><th>合成次数</th><th>计费字数</th><th>发出去的语音</th><th>花费</th></tr>
+            ${per.map(([n, x]) => `<tr><td style="white-space:nowrap">${n}</td><td>${num(x.tts_calls)}</td><td>${num(x.chars)}</td><td>${num(x.voice_msgs)}</td><td>${money(x.mm_cost)} <span class="muted small">${cny(x.mm_cost, P)}</span></td></tr>`).join("")}</table>
+          <div class="small muted" style="margin-top:6px">按 MiniMax 返回的 usage_characters 计（启动自检和试音也算）</div></div>
+      </div>
+      ${animCard(r.anim || {})}
+      <div class="card"><h2>DeepSeek 的钱花在哪了（最近 7 天）</h2>
+        ${by.length ? `<table><tr><th>功能</th><th>次数</th><th>输入 token</th><th>输出</th><th>花费</th><th style="width:30%">占比</th></tr>${by.map(x => `<tr><td>${esc(x.tag)}</td><td>${num(x.calls)}</td><td>${kt(x.miss + x.hit)}</td><td>${kt(x.out)}</td><td>${money(x.cost)}</td><td><div style="background:var(--soft);border-radius:4px;height:10px"><div style="width:${Math.round(x.cost / bySum * 100)}%;height:10px;border-radius:4px;background:var(--accent)"></div></div></td></tr>`).join("")}</table>`
+          : '<div class="empty">换上新版本以后才开始按功能记（重启一次机器人）</div>'}</div>
+      <div class="card"><h2>每天</h2><table><tr><th>日期</th><th>DeepSeek 调用</th><th>输入 / 输出 token</th><th>DeepSeek</th><th>MiniMax 字数</th><th>MiniMax</th><th>搜索</th></tr>
+        ${r.daily.slice().reverse().map(d => `<tr><td>${d.day.slice(5)}</td><td>${num(d.calls)}</td><td>${kt(d.tok)} / ${kt(d.out)}</td><td>${money(d.ds_cost)}</td><td>${num(d.chars)}</td><td>${money(d.mm_cost)}</td><td>${num(d.searches)}</td></tr>`).join("")}</table></div>`;
+    $("#uref").onclick = () => { toast("在查…"); draw(true); };
+  };
+  await draw(false);
+};
+
+/* ───────── 日志 ───────── */
+const TAGS = ["接话", "表情包", "语音", "唱歌", "动画", "补回", "节奏", "冒泡", "搜索", "学梗", "梗百科", "认AI", "记忆", "心情", "控制台", "QQ", "启动", "B站", "错误"];
+function fmtLog(line) {
+  let s = esc(line);
+  s = s.replace(/^\[(\d\d:\d\d:\d\d)\]/, '<span class="t">[$1]</span>');
+  s = s.replace(/\[([^\]\s]{1,8})\]/g, (m, t) => TAGS.some(x => t.startsWith(x)) || t.startsWith("模型") ? `<span class="tag">[${t}]</span>` : m);
+  if (/出错|失败|Traceback|Error|异常|超时/.test(line)) s = `<span class="err">${s}</span>`;
+  return s;
+}
+VIEWS.logs = async main => {
+  const on = new Set();
+  main.innerHTML = `<h1>日志</h1><p class="sub">她在干什么、为什么回/不回，都写在这里</p>
+    <div class="row" style="margin-bottom:10px">${TAGS.map(t => `<button class="chip" data-t="${t}">${t}</button>`).join("")}</div>
+    <div class="row" style="margin-bottom:10px"><input type="text" id="lq" placeholder="搜（比如群号、人名）" style="width:220px"><select id="ln"><option>200</option><option selected>500</option><option>1500</option></select>
+      <label class="row small"><span class="sw"><input type="checkbox" id="auto" checked><span></span></span>自动刷新</label><span class="spacer"></span><button class="btn small" id="lr">刷新</button></div>
+    <div class="logbox" id="lb">读取中…</div>`;
+  const load = async () => {
+    const r = await api(`/api/logs?n=${$("#ln").value}&tags=${encodeURIComponent([...on].join(","))}&q=${encodeURIComponent($("#lq").value.trim())}`);
+    const box = $("#lb"), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+    box.innerHTML = (r.lines || []).map(fmtLog).join("\n") || "（没有符合的）";
+    if (stick) box.scrollTop = box.scrollHeight;
+  };
+  main.querySelector(".row").onclick = e => { const t = e.target.dataset.t; if (!t) return; on.has(t) ? on.delete(t) : on.add(t); e.target.classList.toggle("on"); load(); };
+  $("#lq").onchange = load; $("#ln").onchange = load; $("#lr").onclick = load;
+  await load(); $("#lb").scrollTop = 1e7;
+  every(3000, () => { if ($("#auto") && $("#auto").checked) load(); });
+};
+
+/* ───────── 人设 ───────── */
+VIEWS.persona = async main => {
+  const r = await api("/api/persona");
+  main.innerHTML = `<h1>人设</h1><p class="sub">persona.md —— 她是谁、怎么说话。保存后她下一次回复就用新的（不用重启）；每次保存都会留一份备份</p>
+    <div class="card"><textarea id="pt" rows="28" style="font:13px/1.65 Consolas,'Microsoft YaHei UI',monospace">${esc(r.text || "")}</textarea>
+    <div class="row" style="margin-top:10px"><span class="muted small" id="pc"></span><span class="spacer"></span><button class="btn" id="po">打开备份文件夹</button><button class="btn primary" id="ps">保存</button></div></div>`;
+  const cnt = () => $("#pc").textContent = `${$("#pt").value.length} 字`; $("#pt").oninput = cnt; cnt();
+  $("#ps").onclick = async () => { const x = await api("/api/persona", {text: $("#pt").value}); toast(x.ok ? "存好了 下一句话就用新人设" : x.error, !x.ok); };
+  $("#po").onclick = async () => { const x = await api("/api/tool", {name: "open_backups"}); toast(x.msg || x.error, !x.ok); };
+};
+
+/* ───────── 工具 ───────── */
+VIEWS.tools = async main => {
+  main.innerHTML = `<h1>工具</h1><p class="sub">一些偶尔用的东西</p>
+    <div class="card"><h2>试音</h2><div class="row"><input type="text" id="tt" value="本鱼开嗓啦 今天也要好好吃饭哦" style="flex:1"><select id="te"><option value="">自动语气</option>${["开心", "撒娇", "难过", "生气", "惊讶", "平静", "困"].map(x => `<option>${x}</option>`).join("")}</select><button class="btn primary" id="tg">合成</button></div>
+      <div id="ta" style="margin-top:10px" class="small muted">用现在的音色设置合成一句 在这里播放（不发出去 不算条数）</div></div>
+    <div class="card"><h2>在电脑上打开</h2><div class="row">
+      <button class="btn" data-tool="import_stickers">导入表情包（导入表情包.bat）</button>
+      <button class="btn" data-tool="install_voice">安装语音听写（安装语音.bat）</button>
+      <button class="btn" data-tool="open_logs">打开机器人文件夹</button>
+      <button class="btn" data-tool="open_data">打开数据文件夹</button>
+      <button class="btn" data-tool="open_backups">打开控制台备份</button></div>
+      <p class="small muted">改设置、人设、记忆之前 控制台都会自动备份一份到 backup_20261024\\panel_backups</p></div>`;
+  $("#tg").onclick = async () => {
+    $("#ta").textContent = "合成中…"; const r = await api("/api/tts", {text: $("#tt").value, emo: $("#te").value});
+    $("#ta").innerHTML = r.ok ? `<audio controls autoplay src="/voicefile?f=${encodeURIComponent(r.file)}&t=${Date.now()}"></audio> <span class="muted">${r.secs.toFixed(1)} 秒</span>` : `<span style="color:var(--bad)">${esc(r.error)}</span>`;
+  };
+  main.onclick = async e => { const t = e.target.dataset.tool; if (!t) return; const r = await api("/api/tool", {name: t}); toast(r.msg || r.error, !r.ok); };
+};
+
+pollFoot(); setInterval(pollFoot, 15000);
+render();
+</script>
+</body>
+</html>

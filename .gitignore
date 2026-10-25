@@ -1,0 +1,23 @@
+# 只在自己电脑上有、不进仓库的东西：key、聊天记录、记忆、好感度、日志、表情包图片、模型
+bot/config.json
+bot/data/
+bot/mood.json
+bot/avatar.png
+bot/stickers/
+bot/backup_*/
+*.log
+*.err
+__pycache__/
+*.pyc
+NapCat/
+*.zip
+models/
+sticker_review/
+/local_ai_test.txt
+/voice_test.txt
+/sticker_import.txt
+/screen*.png
+
+# 导出工具自己的私有规则 和 导出目录
+tools/export_rules.json
+github/

@@ -1,0 +1,359 @@
+{
+ "bot_name": "大肥鱼",
+ "aliases": [
+  "大肥鱼",
+  "肥鱼"
+ ],
+ "group_card": "小明的大肥鱼",
+ "owner_qq": "你的QQ号",
+ "onebot": {
+  "url": "ws://127.0.0.1:3001"
+ },
+ "llm": {
+  "provider": "deepseek",
+  "temperature": 0.9,
+  "deepseek": {
+   "base_url": "https://api.deepseek.com",
+   "model": "deepseek-flash",
+   "api_key": "",
+   "thinking": "disabled"
+  },
+  "claude": {
+   "base_url": "https://api.anthropic.com",
+   "model": "claude-sonnet-4-5-20250929",
+   "api_key": ""
+  }
+ },
+ "bili": {
+  "enabled": true,
+  "sessions_per_day": 6,
+  "active_hours": [
+   12,
+   24
+  ],
+  "mode": "v2",
+  "interests": [
+   "米饭 美食",
+   "番剧 推荐",
+   "搞笑 日常",
+   "鲸鱼 海洋",
+   "DeepSeek",
+   "大肥鱼",
+   "猫 哈基米",
+   "游戏 整活",
+   "AI 新闻"
+  ],
+  "min_views": 30000,
+  "min_age_hours": 12,
+  "max_age_days": 90,
+  "sessdata": "",
+  "_说明": "v2=按兴趣/群话题/热搜搜视频 读简介热评弹幕；sessdata 留空=不登录（读不了字幕）。想让她读字幕可以自己把 B 站 cookie 里的 SESSDATA 填进来（等于把账号借给她 风险自担）"
+ },
+ "requests": {
+  "auto_accept_friend": true,
+  "auto_accept_group": true,
+  "greet_new_friend": true
+ },
+ "behavior": {
+  "group_reply_prob": 0.15,
+  "name_boost": 0.55,
+  "group_cooldown_sec": 90,
+  "group_max_per_hour": 20,
+  "context_messages": 50,
+  "group_context_messages": 70,
+  "max_segments": 6,
+  "typing_speed_cps": 9,
+  "proactive_private": true,
+  "proactive_min_hours": 12,
+  "proactive_prob": 0.35,
+  "quiet_hours": [
+   4,
+   12
+  ],
+  "reply_max_tokens": 1200,
+  "note_gap_sec": 3600,
+  "nick_gap_sec": 21600,
+  "reply_wait_private": 7,
+  "reply_wait_group": 5,
+  "reply_max_wait": 30,
+  "follow_window_sec": 120,
+  "native_vision": true,
+  "sticker_gap_sec": 180,
+  "slang_scan_hours": 1,
+  "slang_live_check": true,
+  "group_max_segments": 2,
+  "group_reply_max_tokens": 450,
+  "group_image_reply_prob": 0.3,
+  "web_search": true,
+  "deepseek_search": true
+ },
+ "persona_file": "persona.md",
+ "soul": {
+  "_说明": "timezone 留空=用电脑时间；聊天对象主要在国内就填 Asia/Shanghai（Windows 需先 pip install tzdata）",
+  "timezone": "",
+  "diary": true,
+  "diary_hour": 4,
+  "diary_to_owner": false
+ },
+ "vision": {
+  "_说明": "识图：主模型本地 Ollama；本地没开/失败时用 fallback（智谱云端）",
+  "provider": "ollama",
+  "model": "qwen3-vl:8b-instruct-q8_0",
+  "max_per_hour": 40,
+  "max_chars": 90,
+  "fallback": {
+   "provider": "openai",
+   "base_url": "https://open.bigmodel.cn/api/paas/v4",
+   "model": "glm-4v-flash",
+   "api_key": ""
+  }
+ },
+ "local": {
+  "_说明": "本地 Ollama 模型。enabled 改 false 就全部回到云端。tasks 是交给本地的后台杂活（extract 提炼记忆实测 8B 漏记太多，留给 DeepSeek）",
+  "enabled": true,
+  "base_url": "http://localhost:11434",
+  "model": "qwen3-vl:8b-instruct-q8_0",
+  "keep_alive": "30m",
+  "tasks": [
+   "forget"
+  ]
+ },
+ "memory2": {
+  "_说明": "记忆2.0：鲜活度半衰期(天)、排序权重(鲜活/重要/情绪)、证据门槛、每次最多想起几条/多少字、每天最多新记几条、攒多少条聊天提炼一次",
+  "half_life_days": 30,
+  "w_fresh": 0.4,
+  "w_imp": 0.4,
+  "w_emo": 0.2,
+  "evidence": 1.0,
+  "max_inject": 6,
+  "max_chars": 800,
+  "daily_cap": 8,
+  "distill_every": 25,
+  "distill_every_group": 50
+ },
+ "speakup": {
+  "_说明": "群里冷场冒泡。dry_run=true 只在日志里写本来会说什么 看着合适再改 false。groups 留空=她在的所有群",
+  "enabled": true,
+  "dry_run": true,
+  "interval_min": 30,
+  "quiet_min": 30,
+  "peak_base": 0.1,
+  "off_base": 0.3,
+  "miss_bonus": 0.1,
+  "miss_max": 0.4,
+  "daily_max": 6,
+  "groups": []
+ },
+ "mood2": {
+  "_说明": "心情2.0：每轮聊完另起一次小调用判断心情。baseline 基准心情 / 半衰期（小时）/ 置信度够多少才把「刚才心里想的」告诉她",
+  "enabled": true,
+  "baseline": 70,
+  "mood_half_life_h": 3,
+  "emo_half_life_h": 1.5,
+  "voice_confidence": 60
+ },
+ "rhythm": {
+  "_说明": "群聊节奏：她在群里说上话后会「在线」聊一阵（minutes 随机几分钟），期间没点她名的话也挑着接（reply_prob 概率、两句至少隔 min_gap_sec 秒、每轮最多 max_replies 句、光发图打 pic_factor 折）；冷场 idle_min 分钟后有 probe_prob 概率再试探一句；到点时如果大家还在聊 说句收尾话再潜水（exit_line）；收尾后 cooldown_min 分钟内不主动插话。enabled 改 false 回到原来的样子",
+  "enabled": true,
+  "minutes": [
+   8,
+   15
+  ],
+  "reply_prob": 0.3,
+  "pic_factor": 0.3,
+  "min_gap_sec": 45,
+  "max_replies": 6,
+  "idle_min": 5,
+  "probe_prob": 0.3,
+  "exit_line": true,
+  "exit_line_prob": 0.7,
+  "cooldown_min": 10
+ },
+ "followup": {
+  "_说明": "群里没 @ 她、但其实在接她话的消息也接上：她说完话 window_sec 秒内的消息按信号打分（紧跟着她、说「你」、在问、接了她的词、是她刚回的人、她刚点名的人），到 yes_score 就接，不到 no_score 不接，中间的让模型看一眼判断（ask_model）；同一个人不 @ 她最多连着接 max_turns 轮（防两个机器人对聊停不下来），有人 @ 她或 10 分钟后重新算。enabled 改 false 回到原来的样子",
+  "enabled": true,
+  "window_sec": 150,
+  "yes_score": 4.0,
+  "no_score": 1.5,
+  "ask_model": true,
+  "max_turns": 5,
+  "owner_max_turns": 10
+ },
+ "catchup": {
+  "_说明": "上线补回：每次启动/重连后 把下线期间漏掉的消息补看一遍（一页 fetch_count 条 群最多往回翻 fetch_pages_group 页、私聊 fetch_pages_private 页 一直翻到下线以前）。私聊对方发了就回；群里有人 @/叫名字/引用她 才回 每个找过她的人各回一条（每群最多 max_people_per_group 个人），没人找她的只记下当背景；一次最多补回 max_replies 条（私聊优先）；私聊 max_private_hours（默认一周 电脑关几天也补）、群 max_group_hours 小时以前的不管。回得晚会像真人那样先说一句「刚看到/才看到」（late_min 分钟以上才算晚）。补回不受省 token 限制。enabled 改 false 关掉。另外 sweep_private：私聊里只要有她没回的（不只是下线期间：重启时正在攒的、生成失败、没发出去的…）开机时和之后每 sweep_every_sec 秒扫一遍 都回；回了 sweep_max_tries 次都没回成就先放下 等他再发新的",
+  "enabled": true,
+  "max_private_hours": 168,
+  "max_group_hours": 6,
+  "max_replies": 20,
+  "late_min": 3,
+  "fetch_count": 40,
+  "fetch_pages_group": 15,
+  "fetch_pages_private": 5,
+  "max_people_per_group": 6,
+  "sweep_private": true,
+  "sweep_every_sec": 180,
+  "sweep_min_age_sec": 60,
+  "sweep_hours": 168,
+  "sweep_max_tries": 5
+ },
+ "continuity": {
+  "_说明": "群里群外是同一个她：私聊里的事在群里 discreet=记得但不说（他自己提起才接）/ relation=只知道私下聊过 / off=不带",
+  "private_in_group": "discreet",
+  "max_private_facts": 3,
+  "group_in_private": true,
+  "group_days": 3
+ },
+ "voice": {
+  "_说明": "第五期 语音。听：别人发的语音用本地 SenseVoice 听写（先双击 安装语音.bat）；stt 改 off 就不听。说：MiniMax 专属声音（双击 设计声音.bat 填 key、挑声音）；enabled 改 false 就不发语音。private_every=私聊大约每几句来一条语音；群里只在有人要她发语音时发；daily_max=每天最多发几条；max_chars=一条语音最多几个字；proactive_prob=主动找人时用语音的概率",
+  "enabled": true,
+  "tts": "minimax",
+  "minimax": {
+   "base_url": "https://api.minimaxi.com",
+   "api_key": "",
+   "model": "speech-2.8-turbo",
+   "voice_id": "Chinese (Mandarin)_ExplorativeGirl",
+   "voice_desc": "年轻女孩的声音 带点好奇、爱到处探索的感觉（音色叫「探索少女」）",
+   "speed": 1.0,
+   "vol": 1.0,
+   "pitch": 0,
+   "format": "wav"
+  },
+  "private_every": 5,
+  "private_auto": true,
+  "proactive_prob": 0.3,
+  "daily_max": 80,
+  "max_chars": 60,
+  "min_gap_sec": 40,
+  "stt": "sensevoice",
+  "stt_threads": 2
+ },
+ "anim": {
+  "_说明": "做动画（火山方舟 Seedance 视频生成，5 秒一条）。api_key = 火山方舟控制台「API Key 管理」里的 key；模型要先在控制台「开通管理」里开通。谁能让她做：老板随时（每天最多 owner_daily 条）；好感 ≥ friend_favor 的熟人每人每天 friend_daily 条；除老板外所有人每天合计 others_daily 条；别人发的图只有老板能让她动起来；她自己每天最多主动做 proactive 条（0 = 不主动）。花费 = 返回的 token 数 × price_cny_per_m（每百万 token 多少元），花到 budget_cny 元就不再做。watermark = 加「AI生成」水印",
+  "enabled": true,
+  "api_key": "",
+  "model": "doubao-seedance-2-0-mini-260615",
+  "resolution": "480p",
+  "duration": 5,
+  "ratio": "1:1",
+  "watermark": true,
+  "generate_audio": true,
+  "self_mode": "reference",
+  "self_desc": "蓝色长卷发、戴白色女仆头饰、穿深蓝女仆裙和白围裙、身后有一条鲸鱼尾巴的Q版二次元女孩",
+  "price_cny_per_m": 23,
+  "budget_cny": 190,
+  "owner_daily": 20,
+  "friend_favor": 40,
+  "friend_daily": 1,
+  "others_daily": 5,
+  "user_image_owner_only": true,
+  "proactive": 1
+ },
+ "panel": {
+  "_说明": "网页控制台（双击 C:\\QQBot\\控制台.bat）。token 是控制台和机器人之间的口令 别改别外传",
+  "port": 8765,
+  "api_port": 8766,
+  "token": "",
+  "prices": {
+   "_说明": "人民币（10-26 改）。DeepSeek（deepseek-flash）每百万 token：空闲时段 输入没命中缓存 / 命中缓存 / 输出；高峰时段（北京时间 周一到周五 9-12、14-18）× peak_mult；DeepSeek 搜索、读网页 按每千次成功请求；MiniMax 语音按每百万字（这个是美元）；usd_cny 美元换人民币。2026-10 官网价 变了自己改",
+   "cny_miss": 1.0,
+   "cny_hit": 0.02,
+   "cny_out": 4.0,
+   "peak_mult": 2.0,
+   "search_cny_per_k": 5.0,
+   "fetch_cny_per_k": 5.0,
+   "tts_per_m_chars": 60,
+   "usd_cny": 7.1
+  }
+ },
+ "budget": {
+  "_说明": "省 token：回复意愿 w = floor + (1-floor)/(1+(最近window_hours小时花的美元/half_usd)^shape)；不同场合用 w 的不同次方 powers（private 私聊 / direct 被@叫名字引用 / follow 没@的接话 / chat 自己插话 / extra 冒泡主动找人）；老板不限，补回不算（10-26 起私聊每条都回 不过这一掷；powers.private 不再用）；10-26 峰谷计价后价格算准了（输出和高峰时段比以前估的贵）half_usd 从 0.3 调到 0.45 回复量跟以前差不多",
+  "enabled": true,
+  "half_usd": 0.45,
+  "shape": 0.6,
+  "floor": 0.1,
+  "window_hours": 24,
+  "powers": {
+   "private": 0.5,
+   "direct": 0.1,
+   "follow": 2.5,
+   "chat": 3.0,
+   "extra": 3.0
+  }
+ },
+ "peak": {
+  "_说明": "DeepSeek 峰谷价（10-26）：北京时间 周一到周五 9-12、14-18 是高峰 价格翻倍（weekdays 0=周一）。holidays 填法定节假日的北京日期（如 \"2027-01-01\"）当天全天按空闲算。defer=true：高峰时群里的记忆提炼、前情提要、学梗先攒着 过了高峰再做（群里没提炼的聊天攒到 defer_overflow 条才先提炼一批 免得挤掉）；私聊照常",
+  "enabled": true,
+  "tz": 8,
+  "weekdays": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "hours": [
+   [
+    9,
+    12
+   ],
+   [
+    14,
+    18
+   ]
+  ],
+  "holidays": [],
+  "defer": true,
+  "defer_overflow": 200
+ },
+ "full_power": {
+  "_说明": "火力全开（总览页开关 / 老板私聊「火力全开」「省着点」）：群里找她/对聊/接话/插话 不过省 token；接话认得更宽、更爱插嘴；冒泡和主动私聊不变；到点自动关。改这里要重启",
+  "default_hours": 3,
+  "follow_window_sec": 300,
+  "followup_window_sec": 300,
+  "yes_score": 3.0,
+  "no_score": 0.5,
+  "max_turns": 10,
+  "interject_mult": 2.5,
+  "cooldown_sec": 60,
+  "max_per_hour": 30,
+  "rhythm_reply_prob": 0.6,
+  "rhythm_min_gap_sec": 20,
+  "rhythm_max_replies": 15,
+  "rhythm_minutes": [
+   15,
+   30
+  ],
+  "rhythm_cooldown_min": 3
+ },
+ "sing": {
+  "_说明": "唱歌：有人让她唱（唱首歌/唱个试试/来首歌/点歌）就从 bot\\songs 里挑那首 剪一段当 QQ 语音发（录好的歌 不是合成）；歌单里没有的：online 开着就去网易云（不行再 B站）找歌名完全对得上的原唱 截 online_sec 秒高潮唱（找不到就说没找着 不拿别的歌顶替）。歌在控制台「唱歌」页加。max_sec 一次最多唱几秒 short_sec QQ 不收长语音时剪成几秒重发 gap_sec 同一个聊天隔多久才能再唱 daily_max 每天最多唱几次",
+  "enabled": true,
+  "max_sec": 150,
+  "short_sec": 60,
+  "gap_sec": 60,
+  "daily_max": 30,
+  "online": true,
+  "online_sec": 12
+ },
+ "memewiki": {
+  "_说明": "梗百科：cnmeme.wiki 的离线词库（data/memewiki/memes.db 来自 github.com/in1t1a1/astrbot_plugin_memewiki MIT）。有人问梗先查本地 没有再在线查（online）最后才上网学；hints 对方的话里有词库里的梗就给她看一眼；sync 每天凌晨同步新词条",
+  "enabled": true,
+  "hints": true,
+  "online": true,
+  "sync": true
+ },
+ "group_admin": {
+  "_说明": "群管说话算数（10-26）：群主/管理员（只认 QQ 上的身份 不认嘴上说的）在群里让鱼们安静 → 这个群自动降档：「少说两句/别插嘴」= 少说（不主动插话 有人跟她说照常回）；「关一下/关一关/潜水」= 只回@；「闭嘴/禁言」= 静音；「放出来/可以说话了」= 恢复。没说多久 default_hours 小时后自动恢复（说了就按说的 最长 max_hours）。只能往紧了调、管理员放不开群主设的、谁都放不开控制台设的；改好了在那条消息上点个表情（react_emoji：124=OK 76=赞）。花钱的（动画/语音/唱歌/上网查）群管和普通群友一样。普通群友只能管自己：「别接我的话/别理我」→ self_hours 小时内不主动接他的话。被 QQ 禁言 → 解禁前不说话。min_confidence = 模型判断的把握到多少才改",
+  "enabled": true,
+  "default_hours": 3,
+  "max_hours": 168,
+  "self_hours": 12,
+  "min_confidence": 70,
+  "react": true,
+  "react_emoji": [
+   "124",
+   "76"
+  ],
+  "catchup_hours": 6
+ }
+}

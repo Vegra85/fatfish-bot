@@ -1,0 +1,10 @@
+httpx>=0.27
+websockets>=14
+# Windows 上 zoneinfo 要它
+tzdata
+# 动图拼帧、表情包工具
+pillow
+
+# 本地听语音（SenseVoice）：双击 安装语音.bat 会自己装这两个
+# sherpa-onnx
+# numpy
