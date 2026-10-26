@@ -40,9 +40,11 @@ BOT_FILES = ["bot.py", "budget.py", "catchup.py", "clock.py", "control.py", "fol
              "soul.py", "speakup.py", "stats.py", "stickers.py", "style.py", "vision.py", "voice.py", "websearch.py",
              "bili.py", "bili2.py", "panel.py", "panel.html", "botloop.bat", "persona.md", "setup_voice.py",
              "apply_stickers.py", "import_nekowhale.py", "sticker_curate.py", "anim.py", "cross.py", "wipe.py", "sing.py",
-             "music.py", "aidetect.py", "memewiki.py", "groupadmin.py", "safeio.py"]
+             "music.py", "aidetect.py", "memewiki.py", "groupadmin.py", "safeio.py", "commit.py",
+             "version.py"]   # version.py：发布用的版本号（10-27 v1.0.0）
 # 不公开的「灵魂」：导出的是 tools/public_stubs/ 里同名的空壳（10-26）
-PRIVATE = {"persona.md", "soul.py", "memory.py", "mood2.py", "galgame.py", "cross.py", "slang.py", "style.py", "shared.py"}
+PRIVATE = {"persona.md", "soul.py", "memory.py", "mood2.py", "galgame.py", "cross.py", "slang.py", "style.py", "shared.py",
+           "commit.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）
 STUBS = HERE / "public_stubs"
 TOOL_FILES = ["export_github.py"]
 HANDWRITTEN = {"README.md", "CHANGELOG.md", ".gitignore", ".gitattributes", "LICENSE",
@@ -110,6 +112,11 @@ def secret_values(o, out=None):
     return out
 
 
+# 她自己的名字和 QQ 资料（属于「灵魂」那部分 不公开）：导出时换成通用的
+PERSONAL = {"bot_name": "大肥鱼", "group_card": "", "strong_aliases": [],
+            "profile": {"nickname": "", "note_suffix": ""}}
+
+
 def example_config(cfg, nums):
     def clean(o, key=""):
         if isinstance(o, dict):
@@ -124,10 +131,18 @@ def example_config(cfg, nums):
             return r
         if isinstance(o, list):
             return [clean(x, key) for x in o if str(x) not in nums]
-        if str(o) in nums:
+        if str(o) in nums or (isinstance(o, str) and any(n in o for n in nums)):    # 带着私人号码的整句清空
             return ""
         return o
-    return json.dumps(clean(cfg), ensure_ascii=False, indent=1) + "\n"
+    out = clean(cfg)
+    for k, v in PERSONAL.items():
+        if k not in out:
+            continue
+        if isinstance(v, dict) and isinstance(out[k], dict):
+            out[k].update(v)
+        else:
+            out[k] = v
+    return json.dumps(out, ensure_ascii=False, indent=1) + "\n"
 
 
 # ───────────── 导出 ─────────────

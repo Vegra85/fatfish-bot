@@ -34,6 +34,16 @@ NOT_ORIG = re.compile(r"伴奏|纯音乐|\binst\b|instrumental|翻唱|\bcover\b|
                       r"架子鼓|指弹|弹唱|合集|串烧|混剪|鬼畜|reaction|片段|\bcut\b|舞蹈|翻跳|练习|试唱|ai翻唱|ai版|ai cover|模仿|"
                       r"女声版|男声版|降调|升调|加速|倍速|慢速|铃声|教程|歌词版|动态歌词|循环|1小时|一小时|10小时", re.I)
 PREFER = re.compile(r"原唱|官方|mv|高音质|无损|hi-?res|完整版|官方版|official|音乐", re.I)
+# 10-26 晚：电脑不在中国大陆时 网易云对海外 IP 的搜索只回一串加密的字（{"abroad": true, "result": "35b1…"}）
+# 以前把这串字当歌单读 → AttributeError 整个唱歌出错、她只说了句「咳咳」。不去破解它：认出来就直接走 B站 6 小时后再试
+ABROAD_HOLD = 6 * 3600
+BILI_TRY = 3                  # B站 第一个视频放不了（地区限制/拿不到音轨）就换下一个 最多试这么多个
+_NE = {"abroad_until": 0.0, "told": 0.0}
+
+
+def ne_abroad():
+    """网易云这会儿是不是把这台电脑当海外 IP（只给加密的结果 用不了）"""
+    return time.time() < _NE["abroad_until"]
 
 
 def _norm(t):
@@ -75,6 +85,8 @@ def _artist_ok(names, artist):
 
 # ───────────── 网易云 ─────────────
 def ne_search(title, artist, client, log=print):
+    if ne_abroad():
+        return []
     q = f"{title} {artist}".strip()
     try:
         r = client.get("https://music.163.com/api/search/get/web",
@@ -83,10 +95,23 @@ def ne_search(title, artist, client, log=print):
     except Exception as e:
         log(f"[唱歌] 网易云搜不了（{repr(e)[:80]}）")
         return []
-    songs = ((j or {}).get("result") or {}).get("songs") or []
+    if not isinstance(j, dict):
+        log(f"[唱歌] 网易云回的不是正常的搜索结果（{type(j).__name__}）")
+        return []
+    res = j.get("result")
+    if j.get("abroad") or isinstance(res, str):
+        now = time.time()
+        _NE["abroad_until"] = now + ABROAD_HOLD
+        if now - _NE["told"] > ABROAD_HOLD:
+            _NE["told"] = now
+            log("[唱歌] 网易云把这台电脑当成海外 IP：搜索结果是加密的（abroad）用不了 → 现找先走 B站（6 小时后再试网易云）")
+        return []
+    songs = (res.get("songs") if isinstance(res, dict) else None) or []
     out = []
     for s in songs:
-        names = [a.get("name") or "" for a in s.get("artists") or s.get("ar") or []]
+        if not isinstance(s, dict):
+            continue
+        names = [a.get("name") or "" for a in s.get("artists") or s.get("ar") or [] if isinstance(a, dict)]
         if not _ok_name(s.get("name"), title, f"{title} {artist}"):
             continue
         if not _artist_ok(names, artist):
@@ -246,10 +271,19 @@ async def bili_search(c, kw):
 
 
 def bili_pick(results, title, artist, raw_req=""):
-    """搜到的视频里挑「就是这首歌的原唱」那个：标题里有歌名；点了歌手的 标题或 UP 主里有歌手；不要翻唱伴奏教学合集"""
+    """搜到的视频里挑「就是这首歌的原唱」那个（最像的一个；没有 None）"""
+    ranked = bili_rank(results, title, artist, raw_req)
+    return ranked[0] if ranked else None
+
+
+def bili_rank(results, title, artist, raw_req=""):
+    """搜到的视频按「像原唱」排好：标题里有歌名；点了歌手的 标题或 UP 主里有歌手；不要翻唱伴奏教学合集
+    → 第一个放不了（地区限制、拿不到音轨）就试下一个（10-26 晚）"""
     want = _norm(title)
-    best, score = None, -1e9
-    for x in results:
+    out = []
+    for i, x in enumerate(results or []):
+        if not isinstance(x, dict):
+            continue
         t = x["title"]
         if want not in _norm(t):
             continue
@@ -265,9 +299,9 @@ def bili_pick(results, title, artist, raw_req=""):
                 continue
         if PREFER.search(t):
             sc += 2
-        if score < sc:
-            best, score = x, sc
-    return best
+        out.append((sc, i, x))
+    out.sort(key=lambda z: (-z[0], z[1]))          # 分高的在前；一样高的按 B站 给的顺序（跟以前只挑一个时选的同一个）
+    return [x for _, _, x in out]
 
 
 # ───────────── 找高潮 / 剪 ─────────────
@@ -327,9 +361,10 @@ def cut(src, start, sec, out):
 # ───────────── 记过的 ─────────────
 def _cache():
     try:
-        return json.loads(CACHE.read_text(encoding="utf-8"))
+        d = json.loads(CACHE.read_text(encoding="utf-8"))
     except Exception:
         return {}
+    return {k: v for k, v in d.items() if isinstance(v, dict)} if isinstance(d, dict) else {}
 
 
 def _save_cache(d):
@@ -365,11 +400,37 @@ def fetch(req, log=print, sec=12, sessdata=""):
     tag = hashlib.md5(key.encode("utf-8")).hexdigest()[:10]
     out = CLIP_DIR / f"song_net_{tag}.wav"
     why = []
-    # 1) 网易云
+    # 1) 网易云（在海外用不了时 ne_search 直接返回空 不去要）
+    try:
+        got = _ne_fetch(title, artist, req, sec, out, cache, key, why, log)
+    except Exception as e:                      # 网易云这边出什么错都别让唱歌整个挂掉 接着去 B站
+        why.append(f"网易云出错：{repr(e)[:60]}")
+        got = None
+    if got:
+        return got
+    # 2) B站
+    try:
+        meta = asyncio.run(_bili_fetch(title, artist, req, sec, out, sessdata, log))
+    except RuntimeError as e:
+        why.append(f"B站：{e}")
+        meta = None
+    except Exception as e:
+        why.append(f"B站出错：{repr(e)[:80]}")
+        meta = None
+    if meta:
+        cache[key] = meta
+        _save_cache(cache)
+        return dict(meta, path=out)
+    log(f"[唱歌] 网上找「{req}」没找到能唱的：" + "；".join(why[-4:]))
+    return {"fail": "；".join(why[-3:]) or "没找到"}
+
+
+def _ne_fetch(title, artist, req, sec, out, cache, key, why, log):
+    """网易云：歌名对上的免费原唱 → 剪好 → {…, "path"}；不行返回 None（原因追加进 why）"""
     with httpx.Client(timeout=15, headers={"User-Agent": UA}) as client:
         cands = ne_search(title, artist, client, log)
         if not cands:
-            why.append("网易云没有歌名对得上的")
+            why.append("网易云在海外用不了（只给加密的结果）" if ne_abroad() else "网易云没有歌名对得上的")
         for s in cands[:4]:
             audio = ne_audio(s["id"], client)
             if not audio:
@@ -395,21 +456,7 @@ def fetch(req, log=print, sec=12, sessdata=""):
                     tmp.unlink()
                 except OSError:
                     pass
-    # 2) B站
-    try:
-        meta = asyncio.run(_bili_fetch(title, artist, req, sec, out, sessdata, log))
-    except RuntimeError as e:
-        why.append(f"B站：{e}")
-        meta = None
-    except Exception as e:
-        why.append(f"B站出错：{repr(e)[:80]}")
-        meta = None
-    if meta:
-        cache[key] = meta
-        _save_cache(cache)
-        return dict(meta, path=out)
-    log(f"[唱歌] 网上找「{req}」没找到能唱的：" + "；".join(why[-4:]))
-    return {"fail": "；".join(why[-3:]) or "没找到"}
+    return None
 
 
 async def _bili_fetch(title, artist, req, sec, out, sessdata, log):
@@ -421,10 +468,21 @@ async def _bili_fetch(title, artist, req, sec, out, sessdata, log):
         except Exception as e:
             raise RuntimeError(f"连不上 / 被拦了（{e}）")
         res = await bili_search(c, f"{title} {artist}".strip())
-        x = bili_pick(res, title, artist, req)
-        if not x:
+        cands = bili_rank(res, title, artist, req)
+        if not cands:
             raise RuntimeError("没有标题对得上的原唱视频")
-        data, v = await bili_audio(c, {"bvid": x["bvid"]})
+        data, whys = None, []
+        for x in cands[:BILI_TRY]:                  # 第一个放不了（地区限制 / 拿不到音轨）换下一个
+            try:
+                data, v = await bili_audio(c, {"bvid": x["bvid"]})
+                break
+            except RuntimeError as e:
+                whys.append(f"{x['bvid']} {e}")
+                data = None
+        if data is None:
+            raise RuntimeError("；".join(whys[-2:]) or "音轨下不下来")
+        if whys:
+            log(f"[唱歌] B站前面 {len(whys)} 个视频放不了（{whys[0][:60]}）→ 用的是第 {len(whys) + 1} 个")
     finally:
         try:
             await c.close()
@@ -441,7 +499,8 @@ async def _bili_fetch(title, artist, req, sec, out, sessdata, log):
             tmp.unlink()
         except OSError:
             pass
-    meta = {"title": title, "artist": artist or x["up"], "source": "B站", "id": x["bvid"],
+    # 歌手只写点歌的人说了的（UP 主不一定是唱的人：雨爱那个视频是 UP「JLRS-LeoFM」传的杨丞琳原唱）
+    meta = {"title": title, "artist": artist or "", "source": "B站", "id": x["bvid"],
             "video": x["title"][:60], "up": x["up"], "start": round(st, 1), "how": "最响的一段",
             "clip": out.name, "t": time.time()}
     log(f"[唱歌] 网上找「{req}」→ B站《{x['title'][:30]}》UP {x['up']}（最响的一段 从 {st:.0f} 秒开始 {sec} 秒）")

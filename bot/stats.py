@@ -13,6 +13,8 @@ import os
 import time
 from pathlib import Path
 
+import clock
+
 ROOT = Path(__file__).resolve().parent
 FILE = ROOT / "data" / "stats.json"
 MOOD = ROOT / "data" / "mood2.json"
@@ -95,14 +97,14 @@ def _spend(usd):
     if usd <= 0:
         return
     h = _load().setdefault("hours", {})
-    k = time.strftime("%Y-%m-%d %H")
+    k = clock.strf("%Y-%m-%d %H")
     h[k] = round(h.get(k, 0.0) + usd, 7)
 
 
 def spent(hours=24, now=None):
     """最近 hours 小时花了多少（美元）"""
     now = now or time.time()
-    keys = {time.strftime("%Y-%m-%d %H", time.localtime(now - i * 3600)) for i in range(max(1, int(hours)))}
+    keys = {clock.strf("%Y-%m-%d %H", now - i * 3600) for i in range(max(1, int(hours)))}
     return sum(v for k, v in (_load().get("hours") or {}).items() if k in keys)
 
 
@@ -119,7 +121,7 @@ def _load():
 
 
 def _day():
-    return time.strftime("%Y-%m-%d")
+    return clock.strf("%Y-%m-%d")             # 北京时间的一天（10-27 起）
 
 
 def add(key, n=1):
@@ -170,7 +172,7 @@ def llm(usage, model="", tag=""):
 
 
 def _sample_mood():
-    hour = time.strftime("%Y-%m-%d %H")
+    hour = clock.strf("%Y-%m-%d %H")
     m = _load()["mood"]
     if hour in m:
         return
@@ -189,12 +191,12 @@ def flush(force=False):
         return
     d = _load()
     _sample_mood()
-    cut = time.strftime("%Y-%m-%d", time.localtime(time.time() - KEEP_DAYS * 86400))
+    cut = clock.strf("%Y-%m-%d", time.time() - KEEP_DAYS * 86400)
     for k in [k for k in d["days"] if k < cut]:
         del d["days"][k]
     for k in [k for k in d["mood"] if k[:10] < cut]:
         del d["mood"][k]
-    hcut = time.strftime("%Y-%m-%d %H", time.localtime(time.time() - KEEP_HOURS * 3600))
+    hcut = clock.strf("%Y-%m-%d %H", time.time() - KEEP_HOURS * 3600)
     for k in [k for k in (d.get("hours") or {}) if k < hcut]:
         del d["hours"][k]
     try:

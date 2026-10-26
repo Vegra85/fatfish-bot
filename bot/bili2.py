@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 
 import bili
+import clock
 
 ROOT = Path(__file__).resolve().parent
 REPORTS = ROOT / "data" / "bili_reports"
@@ -361,7 +362,7 @@ async def scroll_session(llm_fn, cfg, hot_terms=None, log=print):
     t = bili.load_trends()
     takes = []
     REPORTS.mkdir(parents=True, exist_ok=True)
-    md = [f"\n## {time.strftime('%H:%M')} {why}{'（已登录 读了字幕）' if login else ''}"]
+    md = [f"\n## {clock.strf('%H:%M')} {why}{'（已登录 读了字幕）' if login else ''}"]
     for it in items:
         v = by.get(it.get("bvid"))
         if not v:
@@ -379,7 +380,7 @@ async def scroll_session(llm_fn, cfg, hot_terms=None, log=print):
     if not takes:
         return None
     t["seen"] = list(seen)[-300:]
-    day = time.strftime("%Y-%m-%d")
+    day = clock.strf("%Y-%m-%d")
     t.setdefault("sessions", {})[day] = t.get("sessions", {}).get(day, 0) + 1
     t["updated"] = time.time()
     bili.save_trends(bili.prune(t))

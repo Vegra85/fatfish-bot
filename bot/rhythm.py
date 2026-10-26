@@ -9,6 +9,8 @@
   冷场：在线时大家突然都不说话了 → 有一定概率顺着话题再试探一句；还是没人理 → 安静回观望
   到点：聊天还在继续 → 自然说句收尾话（「我先潜水了」「去吃饭了 你们聊」）再回观望
         收尾后一段时间内不主动插话（被叫了照样回）
+        —— 10-26 晚起 收尾那句也算她说了要潜水：这个群里真的潜一阵（被叫了回不回 看 commit.py 说到做到）
+  她自己说了要睡/要走（说到做到）→ leave() 直接回观望
   状态只在内存里 重启就回到观望
 """
 import random
@@ -162,6 +164,15 @@ def _to_lurk(st, now, cool=True):
     st["probed"] = 0
     if cool:
         st["cool_until"] = now + float(_c.get("cooldown_min", 10)) * 60
+
+
+def leave(gid, until):
+    """她在这个群说了要睡/要走/潜水（说到做到 commit.py 10-26 晚）：马上回观望 到 until 之前不主动接话、不试探、不收尾
+    （有人 @她 回不回 是 bot.py 那边按承诺管的）"""
+    st = _st(gid)
+    st["mode"] = "lurk"
+    st["probed"] = 0
+    st["cool_until"] = max(float(st.get("cool_until") or 0), float(until or 0))
 
 
 def active_groups():

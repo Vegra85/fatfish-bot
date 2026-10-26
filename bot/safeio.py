@@ -22,6 +22,8 @@ import time
 import zipfile
 from pathlib import Path
 
+import clock
+
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 DAILY = ROOT / "backup_20261024" / "daily"
@@ -97,7 +99,7 @@ def keep_bad(p, raw=None, log=None, why=""):
     """坏文件另存一份（同一个文件最多留 5 份坏的）"""
     p = Path(p)
     try:
-        bad = p.with_name(f"{p.name}.bad-{time.strftime('%m%d-%H%M%S')}")
+        bad = p.with_name(f"{p.name}.bad-{clock.strf('%m%d-%H%M%S')}")
         if raw is None:
             shutil.copy2(p, bad)
         else:
@@ -123,7 +125,7 @@ def _want(rel):
 
 def daily_backup(log=print, now=None):
     """今天还没打包就打一个 → 打了返回 zip 路径；今天打过了返回 None"""
-    day = time.strftime("%Y%m%d", time.localtime(now or time.time()))
+    day = clock.strf("%Y%m%d", now or time.time())
     out = DAILY / f"data_{day}.zip"
     if out.exists() or not DATA.exists():
         return None

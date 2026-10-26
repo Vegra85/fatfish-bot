@@ -7,27 +7,48 @@
 """
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-_CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+try:
+    _CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+except Exception:                 # 控制台 / 小工具在没有 config 的地方 import 也别崩
+    _CFG = {}
 _TZ_NAME = (_CFG.get("soul") or {}).get("timezone") or ""
+# 中国 1991 年以后没有夏令时：北京时间就是固定的 UTC+8 —— 不用装 tzdata（Windows 上 zoneinfo 没有 tzdata 会加载失败）
+FIXED = {"Asia/Shanghai": 8, "Asia/Chongqing": 8, "Asia/Harbin": 8, "Asia/Urumqi": 8, "PRC": 8, "Asia/Hong_Kong": 8,
+         "Asia/Macau": 8, "Asia/Taipei": 8, "Asia/Singapore": 8, "Asia/Tokyo": 9}
 
 _tz = None
-if _TZ_NAME:
+if _TZ_NAME in FIXED:
+    _tz = timezone(timedelta(hours=FIXED[_TZ_NAME]), "北京时间" if FIXED[_TZ_NAME] == 8 else _TZ_NAME)
+elif _TZ_NAME:
     try:
         from zoneinfo import ZoneInfo
         _tz = ZoneInfo(_TZ_NAME)
     except Exception as e:  # Windows 上没装 tzdata 会走到这里
         print(f"[时间] 时区 {_TZ_NAME} 加载失败（pip install tzdata 可修）: {e}，改用本机时间")
         _tz = None
+TZ_LABEL = ("北京时间" if FIXED.get(_TZ_NAME) == 8 else _TZ_NAME) if _tz else ""
 
 WEEK = "一二三四五六日"
 
 
 def now():
     return datetime.now(_tz) if _tz else datetime.now()
+
+
+def dt(ts=None):
+    """时间戳 → 她那边的时间（10-27 起是北京时间）；None = 现在"""
+    if ts is None:
+        return now()
+    return datetime.fromtimestamp(float(ts), _tz) if _tz else datetime.fromtimestamp(float(ts))
+
+
+def strf(fmt, ts=None):
+    """time.strftime 的替身：按她的时区（10-27 小明：以后总时区以北京时间为准 —— 日志、按天算的数、文件夹名都用这个）"""
+    return dt(ts).strftime(fmt)
 
 
 def hour():
@@ -66,7 +87,7 @@ def block():
     n = now()
     name, how = state()
     wk = WEEK[n.weekday()]
-    s = (f"\n# 现在\n{n.strftime('%m月%d日')} 星期{wk} {n.strftime('%H:%M')}。"
+    s = (f"\n# 现在\n{n.strftime('%m月%d日')} 星期{wk} {n.strftime('%H:%M')}" + (f"（{TZ_LABEL}）" if TZ_LABEL else "") + "。"
          f"你这会儿：{name}（{how}）。\n"
          "时间是真的 别说跟时间对不上的话（比如晚上十点说早安）。\n")
     try:  # 群友多在国内：问「北京时间」时别报自己这边的钟点

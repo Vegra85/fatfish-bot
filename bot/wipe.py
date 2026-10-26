@@ -21,7 +21,18 @@ import re
 import time
 from pathlib import Path
 
-SELF_NAMES = {"大肥鱼", "肥鱼", "她的小名", "本鱼", "蓝色大肥鱼"}
+def _cfg_names():
+    """config 里她的名字（bot_name / group_card / profile.nickname）—— 改名了不用改代码"""
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        c = _j.loads((_P(__file__).resolve().parent / "config.json").read_text(encoding="utf-8"))
+        out = [c.get("bot_name"), c.get("group_card"), (c.get("profile") or {}).get("nickname")]
+        return {str(x).strip() for x in out if x and len(str(x).strip()) >= 2}
+    except Exception:
+        return set()
+
+SELF_NAMES = {"大肥鱼", "肥鱼", "她的小名", "本鱼", "蓝色大肥鱼"} | _cfg_names()
 GENERIC = {"某人", "群友", "老板", "管理员", "群主", "大家", "网友", "全体成员", "系统", "哈哈", "哈哈哈", "嗯嗯", "啊啊"}
 
 
@@ -121,21 +132,23 @@ def scrub(t, names, texts=()):
     return t
 
 
-def _about(f, names):
-    s = str(f.get("text") or "") + " " + str(f.get("key") or "")
+def _about(f, names, uid=""):
+    if uid and str(f.get("uid") or "") == str(uid):          # 10-26 晚起记忆会记下是谁（QQ 号）的事
+        return True
+    s = str(f.get("text") or "") + " " + str(f.get("key") or "") + " " + str(f.get("who") or "")
     return any(n in s for n in names)
 
 
-def facts_about(m, names):
+def facts_about(m, names, uid=""):
     """删掉关于他的记忆：有效的、旧的、墓碑里的都删（墓碑本身就是一句关于他的话）。返回删了几条有效的"""
-    if not names:
+    if not names and not uid:
         return 0
     fs = [f for f in m.get("facts") or [] if isinstance(f, dict)]
-    dead = [f for f in fs if _about(f, names)]
+    dead = [f for f in fs if _about(f, names, uid)]
     if dead:
-        m["facts"] = [f for f in fs if not _about(f, names)]
+        m["facts"] = [f for f in fs if not _about(f, names, uid)]
     tt = m.get("tomb_text") or []
-    if tt:
+    if tt and names:
         m["tomb_text"] = [t for t in tt if not _about(t, names)]
     return len([f for f in dead if f.get("status") == "active"])
 
@@ -162,7 +175,7 @@ def conv_mem(m, uid, names, texts):
                     rep["scrubbed"] += 1
             keep.append(h)
         m[fld] = keep
-    rep["facts"] = facts_about(m, names)
+    rep["facts"] = facts_about(m, names, uid)
     if m.get("summary") and any(n in m["summary"] for n in names):
         m["summary"] = "" if group else scrub(m["summary"], names)
         rep["summary"] = 1
@@ -171,6 +184,11 @@ def conv_mem(m, uid, names, texts):
         if n in names:
             al.pop(n)
             rep["alias"] += 1
+    mab = m.get("mem_added_by")                # 群里按人算的「今天记了几条」（10-26 晚）：名字也是他的痕迹
+    if isinstance(mab, dict):
+        for n in list(mab):
+            if n in names:
+                mab.pop(n)
     r = m.get("rel") or {}
     if r.get("loops"):
         r["loops"] = [x for x in r["loops"] if not any(n in str(x.get("text") or "") for n in names)]
@@ -314,8 +332,8 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
         rep["shared_notes"] = len(sh["notes"])
         sh["notes"], sh["last_refresh"] = [], 0
         _wj(data / "shared.json", sh)
-    # 按对话记的小状态（语音、表情包、冒泡）
-    for f in ("voice_state.json", "sticker_state.json", "speakup.json", "panel_cache.json"):
+    # 按对话记的小状态（语音、表情包、冒泡）；认 AI 的判断记录（10-26：里面有他的名字和模型的判断）
+    for f in ("voice_state.json", "sticker_state.json", "speakup.json", "panel_cache.json", "aidetect.json"):
         d = _rj(data / f)
         if d is not None and _drop_keys(d, {uid, f"private_{uid}"}):
             _wj(data / f, d)

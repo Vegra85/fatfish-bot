@@ -22,6 +22,8 @@ import re
 import time
 from pathlib import Path
 
+import clock
+
 ROOT = Path(__file__).resolve().parent
 DIR = ROOT / "stickers"
 INDEX = DIR / "index.json"
@@ -251,11 +253,24 @@ def _remember(conv, name):
 
 
 def _log(*a):
-    print(time.strftime("[%H:%M:%S]"), *a, flush=True)
+    print(clock.strf("[%H:%M:%S]"), *a, flush=True)
 
 
 # ───────────── 检索：这次聊天最对得上的几张 ─────────────
-_NAMES = re.compile(r"大肥鱼|肥鱼|鲸鱼娘|她的小名")
+
+def _cfg_names():
+    """config 里她的名字（bot_name / group_card / profile.nickname）—— 改名了不用改代码"""
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        c = _j.loads((_P(__file__).resolve().parent / "config.json").read_text(encoding="utf-8"))
+        out = [c.get("bot_name"), c.get("group_card"), (c.get("profile") or {}).get("nickname")]
+        return {str(x).strip() for x in out if x and len(str(x).strip()) >= 2}
+    except Exception:
+        return set()
+
+_NAMES = re.compile("|".join(re.escape(x) for x in sorted({"大肥鱼", "肥鱼", "鲸鱼娘", "她的小名"} | _cfg_names(),
+                                                          key=len, reverse=True)))
 
 
 def _clean(text):

@@ -20,6 +20,8 @@ from pathlib import Path
 
 import httpx
 
+import clock
+
 ROOT = Path(__file__).resolve().parent
 OUT_DIR = ROOT / "data" / "voice"
 STATE_FILE = ROOT / "data" / "voice_state.json"
@@ -88,7 +90,7 @@ def _state():
         s = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         s = {}
-    day = time.strftime("%Y-%m-%d")
+    day = clock.strf("%Y-%m-%d")
     if s.get("day") != day:
         s.update(day=day, count=0, chars=0)
     s.setdefault("conv", {})

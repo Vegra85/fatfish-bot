@@ -25,6 +25,8 @@ from pathlib import Path
 
 import httpx
 
+import clock
+
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT / "data" / "anim_state.json"
 OUT = ROOT / "data" / "anim"
@@ -61,8 +63,20 @@ ASK = re.compile(r"(做|生成|制作|创作|整|弄|搞)(?![了过的得])(个|
                  r"|(来|画|拍|剪)(个|一个|段|一段|条|一条)[^。！？!?\n]{0,8}?(动画|视频|短片)"
                  r"|动起来|动一动")
 MARK = re.compile(r"\[\[动画[:：]\s*([^\[\]\n]{2,300}?)\s*\]\]")
-SELF_WORDS = {"自己", "我", "我自己", "本鱼", "大肥鱼", "头像"}
-NAME_WORDS = re.compile(r"(蓝色)?大肥鱼|本鱼|肥鱼")     # 做视频的模型不认识这个名字 → 换成「她」
+def _cfg_names():
+    """config 里她的名字（bot_name / group_card / profile.nickname）—— 改名了不用改代码"""
+    try:
+        import json as _j
+        from pathlib import Path as _P
+        c = _j.loads((_P(__file__).resolve().parent / "config.json").read_text(encoding="utf-8"))
+        out = [c.get("bot_name"), c.get("group_card"), (c.get("profile") or {}).get("nickname")]
+        return {str(x).strip() for x in out if x and len(str(x).strip()) >= 2}
+    except Exception:
+        return set()
+
+SELF_WORDS = {"自己", "我", "我自己", "本鱼", "大肥鱼", "头像"} | _cfg_names()
+NAME_WORDS = re.compile("|".join(["(蓝色)?大肥鱼", "本鱼", "肥鱼"] + [re.escape(x) for x in sorted(_cfg_names(), key=len, reverse=True)]))
+# ↑ 做视频的模型不认识她的名字 → 换成「她」
 USER_WORDS = {"这张图", "这张", "这图", "图", "那张图", "他的图", "对方的图", "刚才的图"}
 _TOKENS = {"480p": 864 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080}   # 每帧像素（估花费用）
 
@@ -77,7 +91,7 @@ def configure(cfg):
 
 
 def _day():
-    return time.strftime("%Y-%m-%d")
+    return clock.strf("%Y-%m-%d")             # 北京时间的一天（10-27）
 
 
 def _load():
@@ -409,7 +423,7 @@ async def submit(job, desc, frame=None, log=print, kind="text"):
         if r.status_code >= 300:
             code, msg = _err(r)
             why = _explain(code, msg, r.status_code)
-            _load()["last_error"] = f"{time.strftime('%m-%d %H:%M')} 提交失败 {code}：{msg[:80]}"
+            _load()["last_error"] = f"{clock.strf('%m-%d %H:%M')} 提交失败 {code}：{msg[:80]}"
             _save()
             log(f"[动画] 提交失败 {r.status_code} {code}：{msg[:120]}")
             return None, why
@@ -469,7 +483,7 @@ async def fetch(res, tid):
     if len(r.content) > 60 * 1024 * 1024:
         raise RuntimeError("视频太大")
     OUT.mkdir(parents=True, exist_ok=True)
-    p = OUT / f"{time.strftime('%m%d_%H%M%S')}_{tid[-6:]}.mp4"
+    p = OUT / f"{clock.strf('%m%d_%H%M%S')}_{tid[-6:]}.mp4"
     p.write_bytes(r.content)
     vids = sorted(OUT.glob("*.mp4"), key=lambda x: x.stat().st_mtime)
     for old in vids[:-int(A["keep"])]:
@@ -497,7 +511,7 @@ def done(tid, res=None, ok=True, why=""):
     else:
         d["failed"] += 1
         _unbook(t)
-        s["last_error"] = f"{time.strftime('%m-%d %H:%M')} {why}"[:120]
+        s["last_error"] = f"{clock.strf('%m-%d %H:%M')} {why}"[:120]
     s["history"].append({"t": int(time.time()), "ok": ok, "conv": t.get("conv"), "uid": t.get("uid"),
                          "prompt": (t.get("prompt") or "")[:80],
                          "tokens": tokens, "cny": cny if ok else 0, "why": why[:60]})

@@ -11,6 +11,8 @@ from pathlib import Path
 
 import httpx
 
+import clock
+
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 HEADERS = {"User-Agent": UA, "Referer": "https://www.bilibili.com/"}
@@ -202,7 +204,7 @@ async def scroll_session(llm_fn, log=print):
             "take": take.replace("|||", " / ").replace("\n", " / ")[:200],
         })
         t["keywords"] = kws[:20]
-        day = time.strftime("%Y-%m-%d")
+        day = clock.strf("%Y-%m-%d")
         t.setdefault("sessions", {})
         t["sessions"][day] = t["sessions"].get(day, 0) + 1
         t["updated"] = time.time()

@@ -7,8 +7,10 @@
 这一版能让 bot.py 跑起来：不会自动提炼、聊天时也不会想起什么；控制台「记忆」页手动加的会存进聊天记录文件。
 
 要她记事，照着下面这些函数自己写（bot.py / control.py 只用到这些）：
-  render2(mem, query, cfg, speaker) → (放进提示词的一段文字, 想起来的条目, [(没想起来的条目, 原因)])
-  apply2(mem, items, supersede_ids, tombstones, daily_cap) → 这次新记下的条目列表
+  render2(mem, query, cfg, speaker, uid) → (放进提示词的一段文字, 想起来的条目, [(没想起来的条目, 原因)])
+  apply2(mem, items, supersede_ids, tombstones, daily_cap, person_daily=, person_max=, max_active=, names=)
+      → 这次新记下的条目列表（群里每个人单独算名额：一天几条、最多存几条）
+  quota(mem, daily_cap) → (今天还能记几条, {谁: 今天记了几条})（群里记满了 bot.py 就不调模型提炼）
   active(mem) → 还有效的记忆条目；migrate(facts) → 旧格式升级；cleanup(mem) → 清掉了几条
   forget_idx(mem, [序号]) → 忘掉了几条；tomb_add(mem, 条目) → 记一块「墓碑」以后别再记回来
   wants_forget(text) → 这句话是不是在让她忘掉什么
@@ -65,12 +67,17 @@ def active(mem):
     return [f for f in migrate(mem.get("facts")) if f.get("status", "active") == "active"]
 
 
-def render2(mem, query="", cfg=None, speaker=""):
+def render2(mem, query="", cfg=None, speaker="", uid=""):
     return "", [], []
 
 
-def apply2(mem, items, supersede_ids=(), tombstones=None, daily_cap=8):
+def apply2(mem, items, supersede_ids=(), tombstones=None, daily_cap=8,
+           person_daily=0, person_max=0, max_active=0, names=None):
     return []
+
+
+def quota(mem, daily_cap=8, today=None):
+    return int(daily_cap), {}
 
 
 def tomb_add(mem, f):

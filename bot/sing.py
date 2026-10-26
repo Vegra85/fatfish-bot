@@ -22,6 +22,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import clock
+
 ROOT = Path(__file__).resolve().parent
 SONG_DIR = ROOT / "songs"
 INDEX = SONG_DIR / "songs.json"
@@ -248,7 +250,7 @@ def _state():
         s = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except Exception:
         s = {}
-    day = time.strftime("%Y-%m-%d")
+    day = clock.strf("%Y-%m-%d")
     if s.get("day") != day:
         s.update(day=day, count=0)
     s.setdefault("conv", {})
@@ -360,7 +362,7 @@ def render(req, conv, log=print, short=False, song=None):
     """要唱了：查许可 → 歌单里找 → 没有就去网上现找 → 剪 → (QQ 语音消息段, 歌, 开始, 结束)
     唱不了返回 None（原因写日志；现找没找到的 记在 _fail 里 机器人会补一句「没找到」）"""
     pm = _permits.get(conv)
-    name = ((req or {}).get("name") or "").strip()
+    name = str((req.get("name") if isinstance(req, dict) else req) or "").strip()
     if not song:
         if not pm or pm["until"] < time.time() or pm["left"] <= 0:
             log(f"[唱歌] {conv} 没人要她唱 这次不唱（她自己写了唱歌标记）")
@@ -377,21 +379,32 @@ def render(req, conv, log=print, short=False, song=None):
                 return None
             import music
             t0 = time.time()
-            got = music.fetch(name, log, int(_cfg.get("online_sec", 12)), SESSDATA["v"])
-            if got.get("fail"):
-                _fail[conv] = {"name": name, "why": got["fail"]}
+            try:
+                got = music.fetch(name, log, int(_cfg.get("online_sec", 12)), SESSDATA["v"])
+            except Exception as e:             # 10-26 晚：现找出错以前一路抛到 bot 那边 连「没找到」都不补 她只说了句「咳咳」
+                log(f"[唱歌] {conv} 现找「{name}」出错：{repr(e)[:150]}")
+                _fail[conv] = {"name": name, "why": "出错了", "err": True}
+                return None
+            if not isinstance(got, dict) or got.get("fail") or not got.get("path"):
+                _fail[conv] = {"name": name, "why": (got.get("fail") if isinstance(got, dict) else "") or "没找到",
+                               "ne_abroad": bool(getattr(music, "ne_abroad", lambda: False)())}
                 return None
             p = got["path"]
             log(f"[唱歌] {conv} 唱网上找的《{got.get('title')}》{got.get('artist') or ''}（{got.get('source')}，"
                 f"一共用了 {time.time() - t0:.1f}s）")
-            meta = {"name": got.get("title") or name, "artist": got.get("artist") or "", "online": True,
-                    "source": got.get("source")}
+            artist = got.get("artist") or ""
+            if got.get("source") == "B站" and artist and artist == got.get("up"):
+                artist = ""                    # 以前把 B站 UP 主记成了歌手（UP 不一定是唱的人）：聊天记录里别写错
+            meta = {"name": got.get("title") or name, "artist": artist, "online": True,
+                    "source": got.get("source"), "up": got.get("up") or "", "video": got.get("video") or ""}
             return {"type": "record", "data": {"file": p.resolve().as_uri()}}, meta, 0.0, float(_cfg.get("online_sec", 12))
     a, b = span(song, short)
     t0 = time.time()
     p = cut(song, a, b)
     if not p:
         log(f"[唱歌] 《{song.get('name')}》剪不出来（" + ("没装 ffmpeg" if not ffmpeg() else "ffmpeg 出错 / 文件坏了") + "）")
+        if not short:                      # 第一次就剪不出来：让机器人补一句没唱成（剪短重发那次失败 机器人那边自己会处理）
+            _fail[conv] = {"name": song.get("name") or name, "why": "剪不出来", "err": True}
         return None
     log(f"[唱歌] {conv} 唱《{song.get('name')}》{a:.0f}~{b:.0f} 秒（剪好用了 {time.time() - t0:.1f}s）")
     return {"type": "record", "data": {"file": p.resolve().as_uri()}}, song, a, b
@@ -446,7 +459,7 @@ def add_file(name, ext, data, meta=None):
     d = index()
     d["songs"] = [s for s in d["songs"] if s.get("file") != p.name]
     e = {"id": _sid(p.name), "name": str(name or base)[:40], "file": p.name, "aliases": [], "credit": "",
-         "enabled": True, "added": time.strftime("%Y-%m-%d %H:%M")}
+         "enabled": True, "added": clock.strf("%Y-%m-%d %H:%M")}
     e.update({k: v for k, v in (meta or {}).items() if v not in (None, "")})
     if not any(s.get("default") for s in d["songs"] if s.get("exists")):
         e["default"] = True

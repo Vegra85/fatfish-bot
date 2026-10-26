@@ -8,7 +8,8 @@
 
 bot.py 用到的函数（照着签名自己写）：
   self_block() / diary_block() / summary_block(mem) / rel_block(mem, is_owner) → 放进提示词的一段文字（没有就空字符串）
-  extract_view(mem) / build_extract_prompt(mem, 聊天文字) / apply_extract(mem, 模型返回的 JSON, is_owner) → 记忆提炼用
+  extract_view(mem, 聊天文字, names=这批说话的人) / build_extract_prompt(mem, 聊天文字, view=挑好的已有记忆, quota=名额说明)
+  / apply_extract(mem, 模型返回的 JSON, is_owner) → 记忆提炼用（作者的做法：给模型看「跟这段聊天有关的」旧记忆 不是最近的几十条）
   build_summary_prompt(mem, 更早的聊天) → 前情提要用的提示词
   open_loops(mem) / due_loops(mem) → 她心里挂着的事（[{text, …}]）；due_loops 里的会让她主动去问
   bump_turn(mem, is_owner) → 每聊一轮记一下（关系慢慢变熟）
@@ -43,11 +44,11 @@ def bump_turn(mem, is_owner=False):
     r["turns"] = int(r.get("turns") or 0) + 1
 
 
-def extract_view(mem):
+def extract_view(mem, conv="", n=60, names=()):
     return []
 
 
-def build_extract_prompt(mem, conv):
+def build_extract_prompt(mem, conv, view=None, quota=""):
     return ("从下面这段聊天里提炼值得长期记住的事。只输出 JSON："
             "{\"memories\": [{\"text\": \"…\", \"kind\": \"fact\", \"imp\": 3}]}\n\n" + str(conv or ""))
 

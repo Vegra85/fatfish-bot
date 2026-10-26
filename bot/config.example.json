@@ -4,7 +4,15 @@
   "大肥鱼",
   "肥鱼"
  ],
- "group_card": "小明的大肥鱼",
+ "strong_aliases": [],
+ "group_card": "",
+ "profile": {
+  "_说明": "QQ 资料（10-26 改名）：nickname 新设的名字开机后改一次 之后她自己偶尔改昵称也不拦；签名 = 她自己写的那句 + note_sep + note_suffix（放不下就只放 note_suffix）；strong_aliases 是别人这么叫也算在叫她（群里有人名字里带这个就不算）",
+  "nickname": "",
+  "note_suffix": "",
+  "note_sep": "｜",
+  "note_max": 80
+ },
  "owner_qq": "你的QQ号",
  "onebot": {
   "url": "ws://127.0.0.1:3001"
@@ -89,8 +97,8 @@
  },
  "persona_file": "persona.md",
  "soul": {
-  "_说明": "timezone 留空=用电脑时间；聊天对象主要在国内就填 Asia/Shanghai（Windows 需先 pip install tzdata）",
-  "timezone": "",
+  "_说明": "timezone：她按哪个时区过日子（作息、日记、几点提醒…）。10-27 起 Asia/Shanghai（小明：以后总时区以北京时间为准；北京时间按固定 UTC+8 算 不用装 tzdata）；留空 = 用电脑时间",
+  "timezone": "Asia/Shanghai",
   "diary": true,
   "diary_hour": 4,
   "diary_to_owner": false
@@ -119,7 +127,7 @@
   ]
  },
  "memory2": {
-  "_说明": "记忆2.0：鲜活度半衰期(天)、排序权重(鲜活/重要/情绪)、证据门槛、每次最多想起几条/多少字、每天最多新记几条、攒多少条聊天提炼一次",
+  "_说明": "记忆2.0：鲜活度半衰期(天)、排序权重(鲜活/重要/情绪)、证据门槛、每次最多想起几条/多少字、每天最多新记几条(私聊 daily_cap)、攒多少条聊天提炼一次。群（10-26 晚）：daily_cap_group 全群每天最多新记几条、group_person_daily 每个人每天最多几条他的事、group_person_max 每个人最多存几条（超了先淘汰他自己的）、group_max_active 一个群最多存几条、skip_when_full 记满了（全群用完/这批说话的人都记够了）就不调模型提炼",
   "half_life_days": 30,
   "w_fresh": 0.4,
   "w_imp": 0.4,
@@ -129,7 +137,12 @@
   "max_chars": 800,
   "daily_cap": 8,
   "distill_every": 25,
-  "distill_every_group": 50
+  "distill_every_group": 50,
+  "daily_cap_group": 40,
+  "group_person_daily": 5,
+  "group_person_max": 30,
+  "group_max_active": 500,
+  "skip_when_full": true
  },
  "speakup": {
   "_说明": "群里冷场冒泡。dry_run=true 只在日志里写本来会说什么 看着合适再改 false。groups 留空=她在的所有群",
@@ -326,7 +339,7 @@
   "rhythm_cooldown_min": 3
  },
  "sing": {
-  "_说明": "唱歌：有人让她唱（唱首歌/唱个试试/来首歌/点歌）就从 bot\\songs 里挑那首 剪一段当 QQ 语音发（录好的歌 不是合成）；歌单里没有的：online 开着就去网易云（不行再 B站）找歌名完全对得上的原唱 截 online_sec 秒高潮唱（找不到就说没找着 不拿别的歌顶替）。歌在控制台「唱歌」页加。max_sec 一次最多唱几秒 short_sec QQ 不收长语音时剪成几秒重发 gap_sec 同一个聊天隔多久才能再唱 daily_max 每天最多唱几次",
+  "_说明": "唱歌：有人让她唱（唱首歌/唱个试试/来首歌/点歌）就从 bot\\songs 里挑那首 剪一段当 QQ 语音发（录好的歌 不是合成）；歌单里没有的：online 开着就去网易云（不行再 B站；网易云对海外 IP 只给加密结果 认出来就直接走 B站 B站第一个视频放不了换下一个 最多 3 个）找歌名完全对得上的原唱 截 online_sec 秒高潮唱（找不到就说没找着 不拿别的歌顶替）。歌在控制台「唱歌」页加。max_sec 一次最多唱几秒 short_sec QQ 不收长语音时剪成几秒重发 gap_sec 同一个聊天隔多久才能再唱 daily_max 每天最多唱几次",
   "enabled": true,
   "max_sec": 150,
   "short_sec": 60,
@@ -355,5 +368,72 @@
    "76"
   ],
   "catchup_hours": 6
+ },
+ "commit": {
+  "_说明": "说到做到（10-26 晚起）：她说出口的、关于自己接下来要做什么的事 都真的去做 —— 每个群、每个私聊各算各的。① 到点要做的事（10-27 承诺表 tasks）：「5 分钟后提醒你」「明早 8 点叫你」「每天 11 点催你睡」「回头告诉你」→ 到点她用自己的话去做（群里 @ 他 / 他要私聊就私聊 私聊发不出去回原来的群 @ 他）；她在「睡觉」也照样爬起来做；掉线 / 静音 / 发不出去 grace_min 分钟内补上 再晚就去道歉；重复的（每天 / 工作日 / 每周 / 每月 / 每年）一直有效；时间一律北京时间；谁都能让她定时做事 每人同时最多 max_pending 件、每天新加最多 max_daily 件（老板不限）；别人家的 AI 说的一切不算。控制台「日历」看 / 打勾 / 取消 / 改时间 / 手动加。② 一段时间里的约束：她说了要睡 / 要走 / 潜水 / 少说 / 不理谁 / 不发语音… 就真的照做一阵。走多久：她说了多久就按她说的；没说按这个对话最近 30 分钟的样子算 T = t × (1 / 真人每分钟几句)^alpha × (1 + beta × 找她的占比) × (1 + gamma × 最近 6 小时食言几次)，夹在 min ~ max 之间（分钟）再随机 ±15%。离开期间有人找她会积累叫醒压力：每人最多算 group/private（群友 / 私聊的人叫她的分量 老板是 owner_weight）、像机器人的不算、她走之前正跟他聊着的减半、越早叫的越不算（半衰期 half_life_min 分钟）；压力超过门槛就醒 —— 门槛刚说完是 theta0 慢慢降到 1，floor_min 分钟内只有老板叫得醒。③ 没说时间的答应：他下次来找她时提醒她兑现。enabled 改 false 回到原来的样子",
+  "enabled": true,
+  "owner_weight": 3.0,
+  "floor_min": 2,
+  "alpha": 0.5,
+  "beta": 1.5,
+  "gamma": 0.5,
+  "half_life_min": 10,
+  "theta0": 2.0,
+  "kinds": {
+   "sleep": {
+    "t": 180,
+    "min": 90,
+    "max": 600,
+    "group": 0.75,
+    "private": 1.3
+   },
+   "away": {
+    "t": 45,
+    "min": 15,
+    "max": 180,
+    "group": 0.9,
+    "private": 1.5
+   },
+   "lurk": {
+    "t": 25,
+    "min": 8,
+    "max": 120,
+    "group": 1.6,
+    "private": 2.0
+   },
+   "quiet": {
+    "t": 30,
+    "min": 10,
+    "max": 120
+   },
+   "ignore": {
+    "t": 8,
+    "min": 3,
+    "max": 30,
+    "group": 0.6,
+    "private": 0.8
+   },
+   "novoice": {
+    "t": 90,
+    "min": 20,
+    "max": 360
+   },
+   "nosticker": {
+    "t": 90,
+    "min": 20,
+    "max": 360
+   },
+   "nosing": {
+    "t": 90,
+    "min": 20,
+    "max": 360
+   }
+  },
+  "tasks": {
+   "enabled": true,
+   "max_pending": 5,
+   "max_daily": 10,
+   "grace_min": 60
+  }
  }
 }

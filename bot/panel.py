@@ -32,6 +32,8 @@ import stats  # noqa: E402  （DeepSeek 峰谷时段和机器人共用）
 import control  # noqa: E402  （记忆/好感的改法和机器人共用）
 import wipe  # noqa: E402  （删一个人的数据：机器人开着让它删 没开就直接删文件）
 import sing  # noqa: E402  （她会唱的歌：songs 文件夹 + songs.json）
+import clock  # noqa: E402  （北京时间 10-27：以后总时区以北京时间为准）
+import commit  # noqa: E402  （说到做到 / 承诺表：控制台「日历」）
 
 ROOT = Path(__file__).resolve().parent
 QQBOT = ROOT.parent
@@ -46,6 +48,11 @@ FAVOR = DATA / "favor.json"
 STICKERS = ROOT / "stickers"
 BACKUP = ROOT / "backup_20261024" / "panel_backups"
 HTML = ROOT / "panel.html"
+AVATAR = ROOT / "avatar.png"          # 她的头像（有就显示在控制台上；公开版没有 → 显示默认的鱼）
+try:
+    from version import __version__ as APP_VERSION   # 发布用的版本号（控制台左下角显示）
+except Exception:
+    APP_VERSION = ""
 HEARTBEAT = DATA / "heartbeat.json"
 NAPCAT_LOG = QQBOT / "napcat.log"
 QRCODE = QQBOT / "NapCat" / "cache" / "qrcode.png"
@@ -91,7 +98,7 @@ def backup(p, tag):
     if not p.exists():
         return
     BACKUP.mkdir(parents=True, exist_ok=True)
-    dst = BACKUP / f"{tag}_{time.strftime('%Y%m%d_%H%M%S')}{p.suffix}"
+    dst = BACKUP / f"{tag}_{clock.strf('%Y%m%d_%H%M%S')}{p.suffix}"
     dst.write_bytes(p.read_bytes())
     old = sorted(BACKUP.glob(f"{tag}_*{p.suffix}"))
     for x in old[:-30]:
@@ -426,6 +433,46 @@ def apply_changes(changes):
         return done, bad
 
 
+# ───────────── 日历：承诺表（说到做到 10-27） ─────────────
+def tasks_view():
+    """机器人开着：问她（她手里的最新）；没开：直接读 data/commit.json"""
+    r = bot_api("tasks", timeout=8)
+    if isinstance(r, dict) and r.get("ok"):
+        r["online"] = True
+        return r
+    with _lock:
+        commit.reload()
+        v = commit.tasks_view()
+    v.update(ok=True, online=False)
+    return v
+
+
+def task_action(b):
+    """打勾 / 取消 / 加 / 改：机器人开着让她改（免得跟她手里的冲突）；没开就直接改文件"""
+    act = str(b.get("action") or "")
+    if act not in ("done", "cancel", "add", "edit"):
+        return {"ok": False, "error": "不认识的操作"}
+    params = {k: b.get(k) for k in ("n", "id", "key", "scene", "target", "who", "who_name", "what", "at", "ts",
+                                    "repeat", "via") if b.get(k) not in (None, "")}
+    r = bot_api("task_" + act, params, timeout=10)
+    if r is not None:
+        return r
+    with _lock:
+        commit.reload()
+        why = ""
+        if act == "done":
+            t = commit.mark_done(params.get("n") or params.get("id"), "控制台", plog)
+        elif act == "cancel":
+            t0 = commit.find_task(params.get("n") or params.get("id"))
+            t = commit.cancel_task(t0, "控制台", plog) if t0 and t0.get("status") == "pending" else None
+        elif act == "add":
+            t, why = commit.panel_add(params, plog)
+        else:
+            t = commit.panel_edit(params, plog)
+        commit.reload()
+    return {"ok": bool(t), "task": t, "offline": True, "error": why or ("" if t else "没找到这件事（或者已经做完 / 取消了）")}
+
+
 # ───────────── 群和人 ─────────────
 def control_data():
     d = jread(CONTROL, {}) or {}
@@ -657,7 +704,7 @@ def budget_view(s=None):
     s = s if s is not None else (jread(STATS, {}) or {})
     wh = max(1, int(B.get("window_hours") or 24))
     now = time.time()
-    keys = {time.strftime("%Y-%m-%d %H", time.localtime(now - i * 3600)) for i in range(wh)}
+    keys = {clock.strf("%Y-%m-%d %H", now - i * 3600) for i in range(wh)}
     u = sum(v for k, v in (s.get("hours") or {}).items() if k in keys)
     w = budget.curve(u, B.get("half_usd"), B.get("shape"), B.get("floor"))
     return {"enabled": bool(B.get("enabled", True)), "spent": round(u, 4), "will": round(w, 3),
@@ -670,7 +717,7 @@ def stats_view(days=14):
     s = jread(STATS, {}) or {}
     p = prices()
     all_days = s.get("days") or {}
-    keys = [time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400)) for i in range(days - 1, -1, -1)]
+    keys = [clock.strf("%Y-%m-%d", time.time() - i * 86400) for i in range(days - 1, -1, -1)]
     rows = []
     tot = {}
     for k in keys:
@@ -755,7 +802,7 @@ def usage_view(force=False):
     def agg(n):
         tot, by = {}, {}
         for i in range(n):
-            d = days.get(time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))) or {}
+            d = days.get(clock.strf("%Y-%m-%d", time.time() - i * 86400)) or {}
             for a, b in d.items():
                 if isinstance(b, (int, float)):
                     tot[a] = tot.get(a, 0) + b
@@ -777,7 +824,7 @@ def usage_view(force=False):
 
     daily = []
     for i in range(13, -1, -1):
-        k = time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400))
+        k = clock.strf("%Y-%m-%d", time.time() - i * 86400)
         d = days.get(k) or {}
         daily.append({"day": k, "calls": d.get("llm_calls", 0), "tok": d.get("tok_miss", 0) + d.get("tok_hit", 0),
                       "out": d.get("tok_out", 0), "ds_cost": round(_ds_cost(d, p), 5), "chars": d.get("voice_chars", 0),
@@ -793,7 +840,7 @@ def anim_view():
     st = jread(DATA / "anim_state.json", {}) or {}
     a = cfg().get("anim") or {}
     hb = jread(DATA / "heartbeat.json", {}) or {}
-    today = (st.get("days") or {}).get(time.strftime("%Y-%m-%d")) or {}
+    today = (st.get("days") or {}).get(clock.strf("%Y-%m-%d")) or {}
     return {"has_key": bool(a.get("api_key")), "enabled": a.get("enabled", True),
             "model": a.get("model", "doubao-seedance-2-0-mini-260615"), "resolution": a.get("resolution", "480p"),
             "duration": a.get("duration", 5), "price": a.get("price_cny_per_m", 23),
@@ -880,6 +927,52 @@ def sticker_toggle(name, off):
 
 
 # ───────────── 总览 ─────────────
+def her_view(cons=()):
+    """总览最上面那条「她现在怎么样」：名字、有没有头像、她这会儿在干嘛（按她的作息 / 时区）、正在兑现的约束"""
+    c = cfg()
+    out = {"name": str(c.get("bot_name") or "大肥鱼"), "card": str(c.get("group_card") or ""),
+           "avatar": AVATAR.exists(), "tz": clock.TZ_LABEL or "电脑时间", "state": "", "how": "", "away": []}
+    try:
+        out["state"], out["how"] = clock.state()
+    except Exception:
+        pass
+    try:
+        cache = jread(CACHE, {}) or {}
+        for r in cons or []:
+            key = str(r.get("key") or "")
+            if key.startswith("group_"):
+                nm = ((cache.get("groups") or {}).get(key[6:]) or {}).get("name") or ""
+                where = f"群「{nm}」" if nm else "群 " + key[6:]
+            else:
+                nm = (cache.get("friends") or {}).get(key[8:], "") if isinstance(cache.get("friends"), dict) else ""
+                where = f"私聊「{nm}」" if isinstance(nm, str) and nm else "私聊 " + key[8:]
+            out["away"].append({"where": where, "name": r.get("name") or "", "say": r.get("say") or "",
+                                "left_min": int(r.get("left_min") or 0)})
+        out["away"] = out["away"][:6]
+    except Exception:
+        pass
+    return out
+
+
+def spark_view(s=None, days=7):
+    """总览数字卡片底下的小趋势线：最近 7 天（她的时区的天）每天的数 + 最近 24 小时每小时花费（美元）"""
+    s = s if s is not None else (jread(STATS, {}) or {})
+    p, now = prices(), time.time()
+    keys = [clock.strf("%Y-%m-%d", now - i * 86400) for i in range(days - 1, -1, -1)]
+    D = s.get("days") or {}
+
+    def ser(*ks):
+        return [sum(float((D.get(k) or {}).get(x) or 0) for x in ks) for k in keys]
+
+    hrs = s.get("hours") or {}
+    hk = [clock.strf("%Y-%m-%d %H", now - i * 3600) for i in range(23, -1, -1)]
+    return {"days": [k[5:] for k in keys], "recv": ser("recv_private", "recv_group"),
+            "replies": ser("replies_private", "replies_group"), "voice": ser("voice"), "stickers": ser("stickers"),
+            "followups": ser("followups"),
+            "cost": [round(float((cost_of(D.get(k) or {}, p) or {}).get("total") or 0), 5) for k in keys],
+            "hours": [round(float(hrs.get(k) or 0), 6) for k in hk]}
+
+
 def overview():
     ping = bot_api("status", timeout=4)
     st = {"bot": "offline", "napcat": napcat_up(), "qq": qq_status()}
@@ -889,7 +982,7 @@ def overview():
         st.update(bot="error", error=ping.get("error"))
     elif heartbeat().get("fresh") or bot_procs() or (st["napcat"] and ws_clients()):
         st.update(bot="stuck")
-    today = time.strftime("%Y-%m-%d")
+    today = clock.strf("%Y-%m-%d")
     s = jread(STATS, {}) or {}
     d = (s.get("days") or {}).get(today) or {}
     st["today"] = dict({a: b for a, b in d.items() if isinstance(b, (int, float))}, cost=cost_of(d, prices()))
@@ -908,7 +1001,19 @@ def overview():
     st["mood"] = {"value": m2.get("mood"), "emos": m2.get("emos") or {}, "label": mood.get("label") or "",
                   "note": mood.get("note") or "", "nick": mood.get("nickname") or "",
                   "timeline": (m2.get("timeline") or [])[-24:]}
-    st["recent"] = log_tail(14, ["接话", "表情包", "语音", "补回", "控制台", "冒泡", "节奏", "QQ", "启动", "错误"])
+    st["recent"] = log_tail(14, ["接话", "表情包", "语音", "补回", "控制台", "冒泡", "节奏", "QQ", "启动", "错误", "说到做到"])
+    cons = []
+    try:
+        with _lock:
+            commit.reload()                    # 机器人写的 data/commit.json（控制台这边每次现读）
+            st["tasks"] = commit.tasks_status()
+            cons = commit.status()
+    except Exception:
+        st["tasks"] = None
+    st["her"] = her_view(cons)
+    st["spark"] = spark_view(s)
+    st["usd_cny"] = float(prices().get("usd_cny") or 7.1)
+    st["app_version"] = APP_VERSION
     st["has_token"] = bool(panel_cfg().get("token"))
     hb = heartbeat()
     st["boot"] = (st.get("info") or {}).get("boot") or (hb.get("boot") if hb.get("fresh") else None)
@@ -1049,7 +1154,7 @@ def plog(msg):
     """控制台自己的启动/换版本记录：打印到黑窗口 + 写 data/panel.log（只留最近 100KB）"""
     print(msg, flush=True)
     try:
-        line = time.strftime("%m-%d %H:%M:%S ") + f"[{os.getpid()}] " + str(msg).strip() + "\n"
+        line = clock.strf("%m-%d %H:%M:%S ") + f"[{os.getpid()}] " + str(msg).strip() + "\n"
         if PANEL_LOG.exists() and PANEL_LOG.stat().st_size > 200_000:
             PANEL_LOG.write_text(PANEL_LOG.read_text(encoding="utf-8", errors="replace")[-100_000:], encoding="utf-8")
         with open(PANEL_LOG, "a", encoding="utf-8") as f:
@@ -1128,7 +1233,7 @@ def _watch(srv, files, every=2.0):
             plog("[控制台] 代码改了 但是有错 先不换（还用现在的）：" + "；".join(errs))
             bad = now
             continue
-        plog(time.strftime("[%H:%M:%S]") + " [控制台] 代码更新了 → 自动换成新版本（网页不用关 刷新一下就是新的）")
+        plog(clock.strf("[%H:%M:%S]") + " [控制台] 代码更新了 → 自动换成新版本（网页不用关 刷新一下就是新的）")
         for _ in range(60):            # 最多等 15 秒 让正在处理的请求做完
             if _busy["n"] <= 0:
                 break
@@ -1328,6 +1433,8 @@ class H(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "config": mask(cfg())})
             if u.path == "/api/people":
                 return self._json(people())
+            if u.path == "/api/tasks":
+                return self._json(tasks_view())
             if u.path == "/api/memory":
                 return self._json({"ok": True, "data": memory_list()})
             if u.path == "/api/memory/detail":
@@ -1357,6 +1464,10 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/voicefile":
                 name = re.sub(r"[^\w.\-]", "", q.get("f") or "")
                 return self._file(DATA / "voice" / name)
+            if u.path == "/avatar":
+                if not AVATAR.exists():
+                    return self._json({"ok": False, "error": "没有头像"}, 404)
+                return self._file(AVATAR, "image/png")
             if u.path == "/qrcode":
                 return self._file(QRCODE, "image/png", cache=False)
         except Exception as e:
@@ -1446,7 +1557,7 @@ class H(BaseHTTPRequestHandler):
                 if b.get("remove"):
                     d[kind].pop(uid, None)
                     if kind == "bots":             # 取消了 AI 标记的 = 真人：以后别再自动标（aidetect.py）
-                        d.setdefault("humans", {})[uid] = "控制台里取消了 AI 标记 " + time.strftime("%m-%d %H:%M")
+                        d.setdefault("humans", {})[uid] = "控制台里取消了 AI 标记 " + clock.strf("%m-%d %H:%M")
                 else:
                     d[kind][uid] = str(b.get("note") or "")[:40]
                     if kind == "bots":
@@ -1456,6 +1567,8 @@ class H(BaseHTTPRequestHandler):
             save_control(d)
             control._c["m"] = None
             return {"ok": True}
+        if u == "/api/tasks":
+            return task_action(b)
         if u == "/api/send":
             r = bot_api("send", {k: b.get(k) for k in ("scene", "target", "text", "sticker", "voice", "emo", "remember")},
                         timeout=60)
@@ -1605,7 +1718,7 @@ def serve(quiet=False, supervised=False):
         print("=" * 52)
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     else:
-        print(time.strftime("[%H:%M:%S]") + f" [控制台] 新版本开好了（{VERSION}）"
+        print(clock.strf("[%H:%M:%S]") + f" [控制台] 新版本开好了（{VERSION}）"
               + ("：机器人发现你开着的控制台是旧版本 帮你换成了这个（旧的关掉了）这个窗口别关" if BY_BOT else ""))
     if supervised:
         threading.Thread(target=_watch, args=(srv, watched_files()), daemon=True).start()
@@ -1649,7 +1762,7 @@ def supervise(extra):
         if rc == GIVEUP_RC:
             return 1
         fails = [t for t in fails if time.time() - t < 120] + [time.time()]
-        plog(time.strftime("[%H:%M:%S]") + f" [控制台] 网页服务出错退出了（退出码 {rc}）")
+        plog(clock.strf("[%H:%M:%S]") + f" [控制台] 网页服务出错退出了（退出码 {rc}）")
         if len(fails) >= 3:
             plog("  连着出错了 等代码改好了再自动试（也可以关掉这个窗口 再双击 控制台.bat）")
             sig = _py_sigs()

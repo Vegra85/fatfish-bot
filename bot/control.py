@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import memory
+import clock
 import safeio
 
 ROOT = Path(__file__).resolve().parent
@@ -357,7 +358,7 @@ def add_fact(mem, text, imp=4):
         return None
     mem["tombstones"] = [t for t in (mem.get("tombstones") or []) if t != fid]
     f = {"id": fid, "text": text, "kind": "fact", "key": "", "imp": max(1, min(5, int(imp))), "emo": 1,
-         "date": time.strftime("%Y-%m-%d"), "ts": time.time(), "status": "active", "hits": 1, "manual": True}
+         "date": clock.strf("%Y-%m-%d"), "ts": time.time(), "status": "active", "hits": 1, "manual": True}
     mem["facts"].append(f)
     return f
 
