@@ -16,6 +16,8 @@ bot.py 用到的函数（照着签名自己写）：
   has_diary(那天) / async write_diary(llm, 心情, B站热点, 见闻, 记忆目录, log) → 每天写一篇日记（返回 {"post": 签名} 或 None）
   add_self(一句话, log) → 她发现了自己的新东西（%%STATE%% 里的 self）
   blend_mood(旧心情, 新心情) → 旧版心情系统用
+  （可选 v1.1.0）build_gist_prompt / has_dream / write_dream / dream_block / load_diary → 遗忘曲线的「蒸馏印象」和「做梦」；
+   bot.py 先看有没有这些函数 没有就不做
 
 作者的做法（思路）：每个人一张关系卡（第一次聊、熟悉程度、最近在聊什么、她挂念的事）；
 滑出上下文的旧聊天压成一段前情提要；她每天夜里写一篇日记；她对自己的认识慢慢攒成几句笔记。

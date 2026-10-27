@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -34,6 +35,9 @@ import wipe  # noqa: E402  （删一个人的数据：机器人开着让它删 �
 import sing  # noqa: E402  （她会唱的歌：songs 文件夹 + songs.json）
 import clock  # noqa: E402  （北京时间 10-27：以后总时区以北京时间为准）
 import commit  # noqa: E402  （说到做到 / 承诺表：控制台「日历」）
+import memory  # noqa: E402  （遗忘曲线 10-27：每条记忆清不清楚、还能记多久）
+import qzone  # noqa: E402  （QQ 空间 10-27 v1.3.0：控制台「QQ 空间」页）
+import safeio  # noqa: E402  （读改写数据文件：读坏了先另存 .bad、一时打不开就不改 10-28 审查 panel-1）
 
 ROOT = Path(__file__).resolve().parent
 QQBOT = ROOT.parent
@@ -79,7 +83,7 @@ STAGES = [(0, "陌生人"), (20, "认识的人"), (40, "熟人"), (60, "好朋�
 # ───────────── 文件小工具 ─────────────
 def jread(p, default=None):
     try:
-        return json.loads(Path(p).read_text(encoding="utf-8"))
+        return json.loads(Path(p).read_bytes().decode("utf-8-sig"))     # 记事本存的「UTF-8 带 BOM」也认（10-28 审查 panel-1）
     except Exception:
         return default
 
@@ -110,6 +114,35 @@ def backup(p, tag):
 
 def cfg():
     return jread(CONFIG, {}) or {}
+
+
+class ConfigBroken(ValueError):
+    """config.json 读不出来（手改多打了个逗号 / 一直打不开）：要改了再写回的地方别把它当成空的（10-28 审查 panel-1）"""
+
+
+def cfg_strict():
+    """要改 config.json 再写回的地方（还有设置页）用：没有这个文件 → {}；读不出来 → 抛 ConfigBroken（说清楚第几行）
+    cfg() 读坏了当成 {}：以前在 {} 上补几项再写回 → key、老板 QQ、所有设置一下全没了、口令也换了（10-28 审查 panel-1）"""
+    raw = None
+    for i in range(6):
+        try:
+            raw = CONFIG.read_bytes()
+            break
+        except FileNotFoundError:
+            return {}
+        except OSError as e:                   # Windows：正被别的程序占着 等一下再读
+            if i == 5:
+                raise ConfigBroken(f"config.json 打不开（{e.strerror or e}）等一下再试") from e
+            time.sleep(0.05 * (i + 1))
+    try:
+        c = json.loads(raw.decode("utf-8-sig"))           # 记事本 / PowerShell 存的「UTF-8 带 BOM」也认
+    except UnicodeDecodeError as e:
+        raise ConfigBroken("config.json 不是 UTF-8 编码（另存为时编码选 UTF-8）先修好") from e
+    except json.JSONDecodeError as e:
+        raise ConfigBroken(f"config.json 第 {e.lineno} 行读不出来（{e.msg}）先修好") from e
+    if not isinstance(c, dict):
+        raise ConfigBroken("config.json 最外面不是 { } 先修好")
+    return c
 
 
 def panel_cfg():
@@ -389,9 +422,10 @@ def _walk(c, path):
 
 
 def apply_changes(changes):
-    """[{path, value}] → 写回 config.json（类型要和原来的一致；先备份）"""
+    """[{path, value}] → 写回 config.json（类型要和原来的一致；先备份）
+    config.json 读不出来 → 抛 ConfigBroken 一项都不改（10-28 审查 panel-1：以前当成空的改完写回 整份 config 只剩改的那一项）"""
     with _lock:
-        c = cfg()
+        c = cfg_strict()
         done, bad = [], []
         for ch in changes or []:
             path, val = str(ch.get("path") or ""), ch.get("value")
@@ -475,6 +509,7 @@ def task_action(b):
 
 # ───────────── 群和人 ─────────────
 def control_data():
+    """只读来显示（读坏了当成空的）；要改 control.json 走 control._edit（10-28 审查 panel-1）"""
     d = jread(CONTROL, {}) or {}
     d.setdefault("groups", {})
     d.setdefault("blocked", {})
@@ -539,14 +574,22 @@ def conv_name(key, m, cache):
 
 
 def memory_list():
+    _fg_cfg()                                  # 按 config 的半衰期算（10-28 审查 panel-6）
     cache = jread(CACHE, {}) or {}
     out = []
     for p in MEM_DIR.glob("*.json"):
         m = jread(p, {}) or {}
         facts = [f for f in m.get("facts") or [] if isinstance(f, dict) and f.get("status") == "active"]
+        ov = {}
+        if _fg_on():
+            try:
+                ov = memory.overview(m)
+            except Exception:
+                ov = {}
         out.append({"key": p.stem, "type": m.get("type") or p.stem.split("_")[0], "name": conv_name(p.stem, m, cache),
                     "facts": len(facts), "history": len(m.get("history") or []), "last": m.get("last_active") or 0,
-                    "closeness": (m.get("rel") or {}).get("closeness")})
+                    "closeness": (m.get("rel") or {}).get("closeness"), "fuzzy": ov.get("fuzzy", 0),
+                    "faint": ov.get("faint", 0), "faded": ov.get("faded", 0)})
     out.sort(key=lambda x: -(x["last"] or 0))
     return out
 
@@ -557,11 +600,24 @@ def memory_detail(key, n=60):
     m = jread(MEM_DIR / f"{key}.json")
     if not m:
         return None
+    _fg_cfg()                                  # 按 config 的半衰期算（10-28 审查 panel-6）
     cache = jread(CACHE, {}) or {}
     facts = [f for f in m.get("facts") or [] if isinstance(f, dict)]
-    return {"key": key, "name": conv_name(key, m, cache), "type": m.get("type"),
-            "facts": sorted([f for f in facts if f.get("status") == "active"], key=lambda f: -(f.get("ts") or 0)),
-            "old_facts": len([f for f in facts if f.get("status") != "active"]),
+    now = time.time()
+    faded = [f for f in facts if f.get("status") == "archived" and "淡忘" in str(f.get("why") or "")]
+    inferred = [f for f in facts if f.get("status") == "archived" and "推断" in str(f.get("why") or "")]   # 10-27 记忆卫生
+    sup = sorted([f for f in facts if f.get("status") == "superseded"], key=lambda f: -(f.get("superseded_ts") or 0))
+    tab = []
+    if key.startswith("private_"):
+        u = (jread(FAVOR, {}) or {}).get(key[8:]) or {}
+        tab = [x for x in (u.get("taboo") or []) if isinstance(x, dict) and x.get("text")]
+    return {"key": key, "name": conv_name(key, m, cache), "type": m.get("type"), "forget": _fg_on(),
+            "inferred": [_fact_view(f, now) for f in sorted(inferred, key=lambda f: -(f.get("faded_ts") or 0))][:60],
+            "superseded": [_fact_view(f, now) for f in sup[:20]], "taboos": tab,
+            "facts": [_fact_view(f, now) for f in sorted([f for f in facts if f.get("status") == "active"],
+                                                          key=lambda f: -(f.get("ts") or 0))],
+            "faded": [_fact_view(f, now) for f in sorted(faded, key=lambda f: -(f.get("faded_ts") or 0))][:40],
+            "old_facts": len([f for f in facts if f.get("status") != "active"]) - len(faded) - len(inferred),
             "rel": m.get("rel") or {}, "summary": m.get("summary") or "", "alias": m.get("alias") or {},
             "history": [{k: h.get(k) for k in ("role", "name", "text", "ts")} for h in (m.get("history") or [])[-n:]],
             "last": m.get("last_active") or 0}
@@ -624,7 +680,10 @@ def favor_set(uid, value):
     if r is not None:
         return r
     with _lock:
-        d = jread(FAVOR, {}) or {}
+        try:                               # 读坏了先另存 .bad；一时打不开就不改（10-28 审查 panel-1：以前当成空的写回 所有人的好感、外号全没）
+            d = safeio.read_json(FAVOR, {}, plog, busy_raise=True) or {}
+        except safeio.Busy:
+            return {"ok": False, "error": "favor.json 正被别的程序占着 没改上（等一下再改）"}
         u = control.set_favor(d, uid, value)
         jwrite(FAVOR, d)
         return {"ok": True, "favor": u["favor"], "offline": True}
@@ -705,12 +764,25 @@ def budget_view(s=None):
     wh = max(1, int(B.get("window_hours") or 24))
     now = time.time()
     keys = {clock.strf("%Y-%m-%d %H", now - i * 3600) for i in range(wh)}
-    u = sum(v for k, v in (s.get("hours") or {}).items() if k in keys)
+    u_all = sum(v for k, v in (s.get("hours") or {}).items() if k in keys)
+    u = budget.usage(now, s.get("hours") or {}, wh)        # 控制台点过「从现在重新算」→ 只算点了以后花的（10-27）
     w = budget.curve(u, B.get("half_usd"), B.get("shape"), B.get("floor"))
     return {"enabled": bool(B.get("enabled", True)), "spent": round(u, 4), "will": round(w, 3),
+            "reset": budget.reset_state(now, wh), "spent_all": round(u_all, 4),
             "half_usd": float(B.get("half_usd")), "shape": float(B.get("shape")), "floor": float(B.get("floor")),
             "window_hours": wh, "powers": powers, "full": control.full_state(),
             "full_default_hours": float((cfg().get("full_power") or {}).get("default_hours", 3))}
+
+
+def _hour_ts(k):
+    """stats 里的小时键「2026-10-27 22」→ 时间戳：键是机器人按 clock 的时区写的 这边按同一个时区换回去；认不出来 → None
+    （10-28 审查 panel-3：网页以前按这台电脑的时区解析 再按北京时间显示 心情曲线整条往后挪 8 小时）"""
+    try:
+        d = datetime.strptime(str(k)[:13], "%Y-%m-%d %H")
+    except ValueError:
+        return None
+    tz = getattr(clock, "_tz", None)
+    return (d.replace(tzinfo=tz) if tz else d).timestamp()
 
 
 def stats_view(days=14):
@@ -728,7 +800,7 @@ def stats_view(days=14):
             if isinstance(b, (int, float)):
                 tot[a] = tot.get(a, 0) + b
     cut = keys[0]
-    mood = sorted((k, v) for k, v in (s.get("mood") or {}).items() if k[:10] >= cut)
+    mood = [(k, v, _hour_ts(k)) for k, v in sorted((s.get("mood") or {}).items()) if k[:10] >= cut]   # 第三个 = 时间戳（panel-3）
     m2 = jread(DATA / "mood2.json", {}) or {}
     return {"days": rows, "total": dict(tot, cost=cost_of(tot, p)), "prices": p, "mood": mood,
             "timeline": (m2.get("timeline") or [])[-40:], "now_mood": m2.get("mood"), "emos": m2.get("emos") or {},
@@ -1015,9 +1087,335 @@ def overview():
     st["usd_cny"] = float(prices().get("usd_cny") or 7.1)
     st["app_version"] = APP_VERSION
     st["has_token"] = bool(panel_cfg().get("token"))
+    try:                                       # config.json 读不出来：总览上说一声（10-28 审查 panel-1）
+        cfg_strict()
+        st["config_error"] = ""
+    except ConfigBroken as e:
+        st["config_error"] = str(e)
     hb = heartbeat()
     st["boot"] = (st.get("info") or {}).get("boot") or (hb.get("boot") if hb.get("fresh") else None)
+    try:
+        st["quick"] = quick_view(hb, st.get("info"))
+        st["remembered"] = latest_memory()
+    except Exception as e:
+        st["quick"], st["remembered"] = None, None
+        plog(f"总览：快捷操作 / 刚记住的 读不出来 {e!r}"[:200])
     return st
+
+
+# ───────────── 遗忘曲线（10-27）：每条记忆清不清楚、快忘掉的、昨晚整理、做的梦 ─────────────
+FORGET_FILE = DATA / "forget.json"
+DREAMS_FILE = DATA / "dreams.json"
+STATE_NAME = {"pinned": "钉住了", "clear": "清楚", "fuzzy": "模糊", "faint": "快想不起来"}
+
+
+def _fg_on():
+    return hasattr(memory, "clarity") and hasattr(memory, "FORGET") and not getattr(memory, "STUB", False)
+
+
+def _fg_cfg():
+    """半衰期 / 门槛按 config 里的 forget 来（机器人开机时也是这么配的）
+    控制台是另一个进程 以前从来没配过 一直按默认的 2/5/14/45/120 天画图、给离线「取消钉住」「找回」的半衰期（10-28 审查 panel-6）"""
+    if _fg_on() and hasattr(memory, "configure_forget"):
+        try:
+            memory.configure_forget(cfg().get("forget") or {})
+        except Exception:
+            pass
+
+
+def _fact_view(f, now):
+    """一条记忆给网页看的样子：等级、清晰度、还能记多久"""
+    out = {k: f.get(k) for k in ("id", "text", "kind", "key", "imp", "emo", "date", "ts", "hits", "manual", "rv", "src",
+                                  "why", "faded_ts", "gist", "status", "who", "uid", "speaker", "supersedes", "by",
+                                  "date_uncertain", "superseded_ts")}
+    out["src_n"] = len(f["src"]) if isinstance(f.get("src"), list) else 0      # 10-27 记忆卫生：依据几条消息
+    if not _fg_on():
+        return out
+    try:
+        memory.ensure_level(f)
+        out["lvl"] = memory.lvl(f)
+        out["S"] = round(float(f.get("S") or 0), 1)
+        out["clarity"] = round(memory.clarity(f, now), 3)
+        out["state"] = memory.state(f, now)
+        a, b = memory.days_left(f, now)
+        out["to_fuzzy"], out["to_faint"] = (None if a is None else round(a, 1)), (None if b is None else round(b, 1))
+        out["impression"] = memory.is_impression(f)
+    except Exception:
+        pass
+    return out
+
+
+def forget_view(soon_days=7):
+    """控制台「遗忘曲线」页：所有对话加起来 清楚 / 模糊 / 快想不起来 / 钉住 各几条、几天内要变的、最近淡忘的、昨晚整理、梦"""
+    _fg_cfg()                                  # 图例 / 曲线 / 表格按 config 的半衰期（10-28 审查 panel-6）
+    now = time.time()
+    cache = jread(CACHE, {}) or {}
+    tot = {"pinned": 0, "clear": 0, "fuzzy": 0, "faint": 0, "faded": 0}
+    soon, faded, levels = [], [], {}
+    on = _fg_on()
+    for p in MEM_DIR.glob("*.json"):
+        m = jread(p, {}) or {}
+        name = conv_name(p.stem, m, cache)
+        for f in m.get("facts") or []:
+            if not isinstance(f, dict):
+                continue
+            if f.get("status") == "archived" and "淡忘" in str(f.get("why") or ""):
+                tot["faded"] += 1
+                if now - float(f.get("faded_ts") or 0) < 14 * 86400:
+                    faded.append(dict(_fact_view(f, now), conv=p.stem, conv_name=name))
+                continue
+            if f.get("status") != "active" or not on:
+                continue
+            v = _fact_view(f, now)
+            tot[v.get("state", "clear")] = tot.get(v.get("state", "clear"), 0) + 1
+            levels[v.get("lvl", 3)] = levels.get(v.get("lvl", 3), 0) + 1
+            st = v.get("state")
+            if (st == "clear" and v.get("to_fuzzy") is not None and v["to_fuzzy"] <= soon_days) or \
+                    (st == "fuzzy" and v.get("to_faint") is not None and v["to_faint"] <= soon_days):
+                soon.append(dict(v, conv=p.stem, conv_name=name))
+    soon.sort(key=lambda v: (v["state"] != "fuzzy", v.get("to_faint") if v["state"] == "fuzzy" else v.get("to_fuzzy") or 0))
+    faded.sort(key=lambda v: -(v.get("faded_ts") or 0))
+    fl = jread(FORGET_FILE, {}) or {}
+    last = fl.get("last") or None
+    if last:                                   # 昨晚蒸馏出来的印象：从记忆文件里现读（删了数据的人就看不到了）
+        gl = []
+        for g in last.get("gists") or []:
+            m = jread(MEM_DIR / f"{g.get('key')}.json", {}) or {}
+            f = next((x for x in m.get("facts") or [] if isinstance(x, dict) and x.get("id") == g.get("id")), None)
+            if f:
+                gl.append({"conv": g.get("key"), "conv_name": conv_name(str(g.get("key")), m, cache), "n": g.get("n"),
+                           "text": f.get("text"), "who": f.get("who") or "", "active": f.get("status") == "active"})
+        last = {k: last.get(k) for k in ("ts", "day", "why", "archived", "calls", "secs")} | {"gists": gl}
+    dr = (jread(DREAMS_FILE, {}) or {}).get("entries") or []
+    FG = memory.FORGET if on else {}
+    c = (cfg().get("forget") or {})
+    hb = heartbeat()
+    return {"ok": True, "on": on and bool(c.get("enabled", True)), "totals": tot, "levels": levels,
+            "soon": soon[:60], "faded": faded[:60], "last": last, "runs": (fl.get("runs") or [])[-14:],
+            "dreams": dr[-5:], "half_life": {str(k): v for k, v in (FG.get("half_life") or {}).items()},
+            "fuzzy": FG.get("fuzzy", 0.5), "faint": FG.get("faint", 0.2), "night_hours": c.get("night_hours") or [5, 9],
+            "consolidating": bool(hb.get("fresh") and hb.get("consolidating"))}
+
+
+def memory_edit2(action, key, fid):
+    """钉住 / 取消钉住 / 找回 / 现在忘：机器人开着让它改（它拿着记忆的锁）；没开就直接改文件"""
+    if not re.fullmatch(r"(private|group)_\d+", key or "") or action not in ("pin", "unpin", "restore", "fade"):
+        return {"ok": False, "error": "参数不对"}
+    if not _fg_on():
+        return {"ok": False, "error": "这一版没有遗忘曲线（公开空壳）"}
+    r = bot_api("mem_" + action, {"key": key, "id": fid})
+    if r is not None:
+        return r
+    _fg_cfg()                                  # 离线「取消钉住」「找回」按 config 的半衰期给 S（10-28 审查 panel-6）
+    p = MEM_DIR / f"{key}.json"
+    with _lock:
+        m = jread(p)
+        if not m:
+            return {"ok": False, "error": "没有这个对话"}
+        ok = control.mem_edit(m, action, fid)
+        if ok:
+            backup(p, "mem_" + key)
+            jwrite(p, m)
+        return {"ok": ok, "offline": True}
+
+
+def taboo_del(uid, i):
+    """控制台删一条禁忌（10-27 记忆卫生）：机器人开着让它删（好感度表它一直在写）；没开就直接改文件"""
+    uid = str(uid or "")
+    if not re.fullmatch(r"\d{5,12}", uid):
+        return {"ok": False, "error": "QQ 号不对"}
+    r = bot_api("taboo_del", {"uid": uid, "i": i})
+    if r is not None:
+        return r
+    with _lock:
+        d = jread(FAVOR, {}) or {}
+        u = d.get(uid) or {}
+        lst = [x for x in (u.get("taboo") or []) if isinstance(x, dict)]
+        try:
+            lst.pop(int(i))
+        except (ValueError, IndexError, TypeError):
+            return {"ok": False, "error": "没有这一条"}
+        u["taboo"] = lst
+        d[uid] = u
+        backup(FAVOR, "favor")
+        jwrite(FAVOR, d)
+    return {"ok": True, "offline": True}
+
+
+def latest_memory():
+    """总览「她刚记住的一句」：所有对话里最新记下的一条（不算手动加的、蒸馏的印象另外标）"""
+    cache = jread(CACHE, {}) or {}
+    best = None
+    for p in MEM_DIR.glob("*.json"):
+        m = jread(p, {}) or {}
+        for f in m.get("facts") or []:
+            if isinstance(f, dict) and f.get("status") == "active" and not f.get("manual") and \
+                    (best is None or float(f.get("ts") or 0) > best[0]):
+                best = (float(f.get("ts") or 0), f, p.stem, m)
+    if not best:
+        return None
+    ts, f, key, m = best
+    return {"text": f.get("text"), "ts": ts, "conv": key, "conv_name": conv_name(key, m, cache),
+            "kind": f.get("kind"), "impression": bool(str(f.get("key") or "").endswith(".印象"))}
+
+
+def quick_view(hb=None, info=None):
+    """总览「快捷操作」那张卡片要显示的现状（info = 机器人接口刚回的 status：比心跳新）"""
+    hb = hb if hb is not None else heartbeat()
+    info = info or {}
+    now = time.time()
+    ctl = control.rules()
+    aw = float((ctl.get("awake") or {}).get("until") or 0)
+    fl = jread(FORGET_FILE, {}) or {}
+    runs = fl.get("runs") or []
+    try:
+        vm, sm = voice_muted(), sing.muted_convs()
+    except Exception:
+        vm, sm = [], []
+    return {"budget_reset": budget.reset_state(now, max(1, int((cfg().get("budget") or {}).get("window_hours") or 24))),
+            "awake_until": aw if aw > now else 0, "voice_muted": len(vm), "sing_muted": len(sm),
+            "brakes": int(info.get("brakes") or 0) if "brakes" in info else
+            (int(hb.get("brakes") or 0) if hb.get("fresh") else None),
+            "consolidating": bool(info.get("consolidating")) if "consolidating" in info else
+            bool(hb.get("fresh") and hb.get("consolidating")),
+            "last_run": runs[-1] if runs else None, "forget_on": _fg_on()}
+
+
+def voice_muted():
+    """voice.py 要 import 的东西多（语音合成）：控制台这边直接读状态文件"""
+    s = jread(DATA / "voice_state.json", {}) or {}
+    now = time.time()
+    return [c for c, v in (s.get("conv") or {}).items() if isinstance(v, dict) and float(v.get("mute_until") or 0) > now]
+
+
+# ───────────── QQ 空间（10-27 v1.3.0）─────────────
+QZ_SRC = {"diary": "日记那句", "bili": "B站刷到的", "mood": "心情和日常", "group": "群里的趣事"}
+
+
+def qzone_view():
+    c = cfg().get("qzone") or {}
+    qzone.configure(c)
+    s = jread(qzone.STATE, {}) or {}
+    fd = jread(qzone.FEED, {}) or {}
+    favor = jread(FAVOR, {}) or {}
+    cd = control_data()
+    now = time.time()
+
+    def nm(u, fallback=""):
+        return str((favor.get(str(u)) or {}).get("name") or fallback or u)
+    feed = []
+    for x in sorted(fd.get("items") or [], key=lambda x: -float(x.get("read") or 0))[:40]:
+        m = x.get("mention") or {}
+        feed.append({"uin": x.get("uin"), "name": x.get("name") or nm(x.get("uin")), "text": str(x.get("text") or "")[:160],
+                     "take": x.get("take", ""), "score": x.get("score", 0), "sensitive": bool(x.get("sensitive")),
+                     "liked": bool(x.get("liked")), "commented": bool(x.get("commented")), "comment": x.get("comment", ""),
+                     "ts": x.get("ts") or 0, "read": x.get("read") or 0, "src": x.get("src", "feed"),
+                     "img": ((x.get("img_desc") or [""])[0] or "")[:50], "mp": bool(m.get("p")), "mg": len(m.get("g") or {})})
+    mine = [{"tid": m.get("tid"), "text": m.get("text", ""), "ts": m.get("ts") or 0, "src": QZ_SRC.get(m.get("src"), m.get("src", "")),
+             "deleted": bool(m.get("deleted")), "cmtnum": m.get("cmtnum", 0)} for m in reversed(s.get("mine") or [])][:20]
+    replies = sorted([v for v in (s.get("replied") or {}).values() if isinstance(v, dict) and (v.get("text") or v.get("dry"))],
+                     key=lambda v: -float(v.get("ts") or 0))[:20]
+    replies = [{"name": v.get("name") or nm(v.get("uin")), "to": v.get("to", ""), "text": v.get("text") or v.get("dry"),
+                "dry": bool(v.get("dry")), "ts": v.get("ts") or 0} for v in replies]
+    visitors = [{"uin": v.get("uin"), "name": v.get("name") or nm(v.get("uin")), "ts": v.get("ts") or 0}
+                for v in reversed(s.get("visitors") or [])][:20]
+
+    def lst(k):
+        return [{"uin": u, "name": nm(u, (v or {}).get("note") if isinstance(v, dict) else ""),
+                 "t": (v or {}).get("t") if isinstance(v, dict) else None} for u, v in (cd.get(k) or {}).items()]
+    day = (s.get("days") or {}).get(clock.strf("%Y-%m-%d")) or {}
+    plan = s.get("post_plan") or {}
+    keys = ("read_every_min", "like_daily", "comment_daily", "comment_min_favor", "post_daily", "post_prob", "reply_daily",
+            "reply_rounds", "post_right")
+    return {"ok": True, "on": qzone.on(), "cfg": {k: qzone.Q.get(k) for k in keys},
+            "dry": {k: bool(v) for k, v in (qzone.Q.get("dry_run") or {}).items()},
+            "today": {k: int(day.get(k, 0)) for k in ("read", "like", "comment", "post", "reply")},
+            "paused": float(s.get("pause_until") or 0) > now, "pause_until": s.get("pause_until") or 0,
+            "pause_why": s.get("pause_why", ""), "selftest": s.get("selftest") or {}, "last_read": s.get("last_read") or 0,
+            "like_off": float(s.get("like_off_until") or 0) > now,
+            "plan": {"day": plan.get("day"), "go": bool(plan.get("go")), "at": plan.get("at") or 0, "done": bool(plan.get("done"))},
+            "events": list(reversed(s.get("events") or []))[:30], "feed": feed, "mine": mine, "replies": replies,
+            "visitors": visitors, "off": lst("qzone_off"), "nogroup": lst("qzone_nogroup"),
+            "dry_posts": list(reversed(s.get("dry_posts") or []))[:10]}
+
+
+def qzone_act(b):
+    what = str(b.get("what") or "")
+    if what in ("unoff", "ungroup"):
+        uid = str(b.get("uid") or "")
+        k = "qzone_off" if what == "unoff" else "qzone_nogroup"
+        try:                               # 走 control._edit：读坏了先另存 .bad、一时打不开就不改（10-28 审查 panel-1：以前当成空的整份写回）
+            with _lock:
+                control._edit(lambda d: (d.get(k) or {}).pop(uid, None))
+        except safeio.Busy:
+            return {"ok": False, "error": "control.json 正被别的程序占着 没改上（等一下再点）"}
+        return {"ok": True, "msg": "撤销了（马上生效）"}
+    if what not in ("read", "post", "reply", "visitors", "delete", "selftest", "resume"):
+        return {"ok": False, "error": "不认识的操作"}
+    r = bot_api("qzone", {"what": what, "tid": b.get("tid")}, timeout=150)
+    if r is not None:
+        return r
+    if what == "resume":
+        with _lock:
+            try:                           # 读坏了先另存 .bad；一时打不开就不改（10-28 审查 panel-1：以前当成空的 写回只剩 pause_until）
+                s = safeio.read_json(qzone.STATE, {}, plog, busy_raise=True) or {}
+            except safeio.Busy:
+                return {"ok": False, "error": "空间的状态文件正被别的程序占着 没改上（等一下再点）"}
+            s["pause_until"], s["pause_why"] = 0, ""
+            jwrite(qzone.STATE, s)
+        return {"ok": True, "offline": True, "msg": "不歇了（机器人开起来就接着刷）"}
+    return {"ok": False, "error": "机器人没开：空间要通过 QQ（NapCat）才能操作"}
+
+
+def quick_action(b):
+    """快捷操作：机器人开着就让它做（它那边马上生效）；没开 能直接改文件的就改文件"""
+    what = str(b.get("what") or "")
+    if what not in ("budget_reset", "budget_clear", "mood_reset", "wake", "wake_off", "unmute", "brakes_clear"):
+        return {"ok": False, "error": "不认识的快捷操作"}
+    r = bot_api("quick", {"what": what, "hours": b.get("hours")})
+    if r is not None:
+        return r
+    if what == "brakes_clear":
+        return {"ok": False, "error": "机器人没开：对聊刹车本来就不在了（只在机器人运行时有）"}
+    with _lock:
+        if what == "budget_reset":
+            budget.reset_now("控制台", (jread(STATS, {}) or {}).get("hours") or {})
+            return {"ok": True, "offline": True, "msg": "回复意愿从现在重新算了（机器人开了就生效）"}
+        if what == "budget_clear":
+            budget.reset_clear()
+            return {"ok": True, "offline": True, "msg": "恢复按实际花费算了"}
+        if what == "mood_reset":
+            p = DATA / "mood2.json"
+            m2 = jread(p, {}) or {}
+            if m2:
+                base = float((cfg().get("mood2") or {}).get("baseline", 70))
+                m2["mood"] = base
+                m2["emos"] = {k: 0 for k in (m2.get("emos") or {})}
+                m2["ts"] = time.time()
+                m2["timeline"] = ((m2.get("timeline") or []) + [{"t": int(time.time()), "mood": round(base), "d": 0, "emo": "",
+                                                                 "why": "控制台：心情回到平常", "conf": 100}])[-40:]
+                jwrite(p, m2)
+            return {"ok": True, "offline": True, "msg": "心情回到平常了"}
+        if what in ("wake", "wake_off"):
+            h = max(0.25, min(12.0, float(b.get("hours") or 1)))
+            until = time.time() + h * 3600
+            control._edit(lambda d: d.__setitem__("awake", {"until": until, "by": "控制台"}) if what == "wake"
+                          else d.pop("awake", None))
+            return {"ok": True, "offline": True, "msg": f"叫醒了（{h:g} 小时后接着睡）" if what == "wake" else "好 让她接着睡"}
+        if what == "unmute":
+            n = 0
+            for fn in ("voice_state.json", "sing_state.json"):
+                p = DATA / fn
+                s = jread(p, {}) or {}
+                k = 0
+                for v in (s.get("conv") or {}).values():
+                    if isinstance(v, dict) and v.pop("mute_until", None):
+                        k += 1
+                if k:
+                    jwrite(p, s)
+                n += k
+            return {"ok": True, "offline": True, "msg": f"放开了 {n} 个聊天"}
+    return {"ok": False, "error": "没做成"}
 
 
 # ───────────── 唱歌：歌单 ─────────────
@@ -1213,12 +1611,35 @@ def _compile_errors(files):
     return bad
 
 
+def _cfg_tz():
+    """config 里的时区（soul.timezone）；config 读不出来 → None"""
+    try:
+        return str((cfg_strict().get("soul") or {}).get("timezone") or "")
+    except (ConfigBroken, AttributeError):
+        return None
+
+
 def _watch(srv, files, every=2.0):
-    """代码文件改了（而且写完了、能编译）→ 等手上的请求做完 → 停掉服务 让管家用新代码重起"""
+    """代码文件改了（而且写完了、能编译）→ 等手上的请求做完 → 停掉服务 让管家用新代码重起
+    config 里的时区改了（功能开关里改 / 手改）→ 一样重起一次：clock 只在 import 时读时区 不重起的话
+    「今天收到 / 今天花了」和最近 24 小时的花费还按旧时区取键（10-28 审查 panel-7）
+    只认这个控制台起来以后又改了的、而且跟 clock 正在用的不一样（刚起来就对不上的 不会一直重起）"""
     base = {f: _sig(f) for f in files}
     pending = bad = None
+    csig, cpend, ctz = _sig(CONFIG), None, _cfg_tz()
     while True:
         time.sleep(every)
+        cs = _sig(CONFIG)
+        if cs != csig:
+            if cs != cpend:            # 刚改：等它稳定一轮（「保存并重启机器人」紧跟着还有一个请求）
+                cpend = cs
+            else:
+                csig, cpend, tz = cs, None, _cfg_tz()
+                if tz is not None and tz != ctz:
+                    ctz = tz
+                    if tz != str(getattr(clock, "_TZ_NAME", "") or ""):
+                        plog(clock.strf("[%H:%M:%S]") + f" [控制台] 时区改了（→ {tz or '跟电脑一样'}）→ 重起一次控制台 按新时区算")
+                        break
         now = {f: _sig(f) for f in files}
         if now == base:
             pending = None
@@ -1234,13 +1655,13 @@ def _watch(srv, files, every=2.0):
             bad = now
             continue
         plog(clock.strf("[%H:%M:%S]") + " [控制台] 代码更新了 → 自动换成新版本（网页不用关 刷新一下就是新的）")
-        for _ in range(60):            # 最多等 15 秒 让正在处理的请求做完
-            if _busy["n"] <= 0:
-                break
-            time.sleep(0.25)
-        _busy["reload"] = True
-        srv.shutdown()
-        return
+        break
+    for _ in range(60):                # 最多等 15 秒 让正在处理的请求做完
+        if _busy["n"] <= 0:
+            break
+        time.sleep(0.25)
+    _busy["reload"] = True
+    srv.shutdown()
 
 
 def _listening(port):
@@ -1430,13 +1851,20 @@ class H(BaseHTTPRequestHandler):
                     return self._json({"ok": False}, 403)
                 return self._file(sing.CLIP_DIR / name, "audio/wav", cache=False)
             if u.path == "/api/config":
-                return self._json({"ok": True, "config": mask(cfg())})
+                try:
+                    return self._json({"ok": True, "config": mask(cfg_strict())})
+                except ConfigBroken as e:          # 别给一份空的：设置页看着像全没了 一保存反而冲掉（10-28 审查 panel-1）
+                    return self._json({"ok": False, "error": str(e), "config": {}})
             if u.path == "/api/people":
                 return self._json(people())
             if u.path == "/api/tasks":
                 return self._json(tasks_view())
             if u.path == "/api/memory":
                 return self._json({"ok": True, "data": memory_list()})
+            if u.path == "/api/qzone":
+                return self._json(qzone_view())
+            if u.path == "/api/memory/forget":
+                return self._json(forget_view())
             if u.path == "/api/memory/detail":
                 d = memory_detail(q.get("key"), int(q.get("n") or 60))
                 return self._json({"ok": bool(d), "data": d})
@@ -1510,62 +1938,67 @@ class H(BaseHTTPRequestHandler):
                 return {"ok": False, "error": "不认识的操作"}
             return {"ok": ok, "msg": msg}
         if u == "/api/config":
-            done, bad = apply_changes(b.get("changes"))
+            try:
+                done, bad = apply_changes(b.get("changes"))
+            except ConfigBroken as e:              # 读不出来就一项都不存 告诉他哪一行坏了（10-28 审查 panel-1）
+                return {"ok": False, "done": [], "bad": [], "error": f"{e}（这次一项都没存）"}
             return {"ok": bool(done) and not bad, "done": done, "bad": bad}
         if u == "/api/control":
-            d = control_data()
+            # 10-28 审查 panel-1：先查参数 再走 control._edit（读完马上改完写回；读坏了先另存 .bad、一时打不开就不改）
+            # 以前 control_data() 读坏了 / 打不开就当成空的 再整份写回：别家机器人、拉黑、群管档位、叫醒、火力全开全丢
             kind = b.get("kind")
-            if kind == "group":
-                gid = str(b.get("id") or "")
-                if not gid.isdigit():
-                    return {"ok": False, "error": "群号不对"}
-                g = d["groups"].setdefault(gid, {})
-                if "mode" in b:
-                    g["mode"] = b["mode"] if b["mode"] in control.LEVELS else "normal"
-                if "mute_min" in b:
-                    mins = float(b.get("mute_min") or 0)
-                    g["mute_until"] = time.time() + mins * 60 if mins > 0 else 0
-                if b.get("clear_admin"):           # 撤销群管设的档位
-                    g.pop("admin", None)
-                if b.get("clear_ban"):             # QQ 禁言记录（解了但没收到通知时 手动清）
-                    old = g.pop("qq_ban", None)
-                    if old:
-                        g["qq_ban_last"] = {"t": old.get("t"), "lifted": time.time(), "whole": bool(old.get("whole"))}
-            elif kind == "self_off":           # 群友「别接我的话」：提前放开
-                uid = str(b.get("id") or "").strip()
-                if not uid.isdigit():
-                    return {"ok": False, "error": "QQ 号不对"}
-                (d.get("self_off") or {}).pop(uid, None)
-            elif kind == "full":           # 火力全开：hours>0 开几小时 / -1 一直开 / 0 关
+            gid, uid = str(b.get("id") or ""), str(b.get("id") or "").strip()
+            if kind not in ("group", "self_off", "full", "blocked", "bots"):
+                return {"ok": False, "error": "不认识的设置"}
+            if kind == "group" and not gid.isdigit():
+                return {"ok": False, "error": "群号不对"}
+            if kind in ("self_off", "blocked", "bots") and not uid.isdigit():
+                return {"ok": False, "error": "QQ 号不对"}
+            h = 0.0
+            if kind == "full":                 # 火力全开：hours>0 开几小时 / -1 一直开 / 0 关
                 try:
                     h = float(b.get("hours") or 0)
                 except (TypeError, ValueError):
                     return {"ok": False, "error": "时长不对"}
-                if h > 0:
-                    d["full"] = {"until": time.time() + min(h, 72) * 3600, "since": time.time(), "by": "控制台"}
-                elif h < 0:
-                    d["full"] = {"until": -1, "since": time.time(), "by": "控制台"}
-                else:
-                    d.pop("full", None)
-                save_control(d)
-                control._c["m"] = None
-                return {"ok": True, "full": control.full_state(), "text": control.full_left_text()}
-            elif kind in ("blocked", "bots"):
-                uid = str(b.get("id") or "").strip()
-                if not uid.isdigit():
-                    return {"ok": False, "error": "QQ 号不对"}
-                if b.get("remove"):
-                    d[kind].pop(uid, None)
+            mins = float(b.get("mute_min") or 0) if kind == "group" and "mute_min" in b else None
+
+            def edit(d):
+                if kind == "group":
+                    g = d.setdefault("groups", {}).setdefault(gid, {})
+                    if "mode" in b:
+                        g["mode"] = b["mode"] if b["mode"] in control.LEVELS else "normal"
+                    if mins is not None:
+                        g["mute_until"] = time.time() + mins * 60 if mins > 0 else 0
+                    if b.get("clear_admin"):           # 撤销群管设的档位
+                        g.pop("admin", None)
+                    if b.get("clear_ban"):             # QQ 禁言记录（解了但没收到通知时 手动清）
+                        old = g.pop("qq_ban", None)
+                        if old:
+                            g["qq_ban_last"] = {"t": old.get("t"), "lifted": time.time(), "whole": bool(old.get("whole"))}
+                elif kind == "self_off":           # 群友「别接我的话」：提前放开
+                    (d.get("self_off") or {}).pop(uid, None)
+                elif kind == "full":
+                    if h > 0:
+                        d["full"] = {"until": time.time() + min(h, 72) * 3600, "since": time.time(), "by": "控制台"}
+                    elif h < 0:
+                        d["full"] = {"until": -1, "since": time.time(), "by": "控制台"}
+                    else:
+                        d.pop("full", None)
+                elif b.get("remove"):              # blocked / bots
+                    d.setdefault(kind, {}).pop(uid, None)
                     if kind == "bots":             # 取消了 AI 标记的 = 真人：以后别再自动标（aidetect.py）
                         d.setdefault("humans", {})[uid] = "控制台里取消了 AI 标记 " + clock.strf("%m-%d %H:%M")
                 else:
-                    d[kind][uid] = str(b.get("note") or "")[:40]
+                    d.setdefault(kind, {})[uid] = str(b.get("note") or "")[:40]
                     if kind == "bots":
                         d.setdefault("humans", {}).pop(uid, None)
-            else:
-                return {"ok": False, "error": "不认识的设置"}
-            save_control(d)
-            control._c["m"] = None
+            try:
+                with _lock:
+                    control._edit(edit)
+            except safeio.Busy:
+                return {"ok": False, "error": "control.json 正被别的程序占着 没改上（等一下再点）"}
+            if kind == "full":
+                return {"ok": True, "full": control.full_state(), "text": control.full_left_text()}
             return {"ok": True}
         if u == "/api/tasks":
             return task_action(b)
@@ -1577,6 +2010,17 @@ class H(BaseHTTPRequestHandler):
             return memory_edit("forget", b.get("key"), id=b.get("id"))
         if u == "/api/memory/add":
             return memory_edit("add_fact", b.get("key"), text=b.get("text"), imp=b.get("imp") or 4)
+        if u in ("/api/memory/pin", "/api/memory/unpin", "/api/memory/restore", "/api/memory/fade"):
+            return memory_edit2(u.rsplit("/", 1)[1], b.get("key"), str(b.get("id") or ""))
+        if u == "/api/memory/taboo_del":
+            return taboo_del(b.get("uid"), b.get("i"))
+        if u == "/api/memory/consolidate":
+            r = bot_api("consolidate", {"dream": False}, timeout=10)
+            return r if r is not None else {"ok": False, "error": "机器人没开：整理要调模型 得机器人开着"}
+        if u == "/api/quick":
+            return quick_action(b)
+        if u == "/api/qzone":
+            return qzone_act(b)
         if u == "/api/favor":
             return favor_set(str(b.get("uid")), int(b.get("favor")))
         if u == "/api/wipe":
@@ -1597,7 +2041,10 @@ class H(BaseHTTPRequestHandler):
             return r if r is not None else {"ok": False, "error": "机器人没开 试不了音"}
         if u == "/api/prices":
             with _lock:
-                c = cfg()
+                try:
+                    c = cfg_strict()
+                except ConfigBroken as e:          # 读不出来就别写回（10-28 审查 panel-1：以前写回后 config 只剩 panel 一段）
+                    return {"ok": False, "error": f"{e}（价格没存）"}
                 P = c.setdefault("panel", {})
                 migrate_prices(P)
                 p = P.setdefault("prices", dict(DEFAULT_PRICES))
@@ -1639,9 +2086,14 @@ class H(BaseHTTPRequestHandler):
 
 
 def ensure_token():
-    """第一次用：在 config 里生成控制台和机器人之间的口令"""
+    """第一次用：在 config 里生成控制台和机器人之间的口令
+    config.json 读不出来 → 这次不补（10-28 审查 panel-1：以前当成空的补上口令再写回 整份 config 只剩 panel 一段、口令也换了）"""
     with _lock:
-        c = cfg()
+        try:
+            c = cfg_strict()
+        except ConfigBroken as e:
+            plog(f"[控制台] {e}（这次不补口令、不写 config）")
+            return False
         P = c.setdefault("panel", {})
         changed = False
         for k, v in (("port", 8765), ("api_port", 8766)):

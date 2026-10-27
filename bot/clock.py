@@ -11,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-try:
-    _CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+try:                              # utf-8-sig：记事本存的「UTF-8 带 BOM」也认（10-28 审查 panel-7 复查：以前读不出来就悄悄按电脑的时间）
+    _CFG = json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig"))
 except Exception:                 # 控制台 / 小工具在没有 config 的地方 import 也别崩
     _CFG = {}
 _TZ_NAME = (_CFG.get("soul") or {}).get("timezone") or ""
@@ -75,10 +75,24 @@ SCHEDULE = [
 ]
 
 
+AWAKE = ("被叫醒了", "本来在睡 被老板叫醒了 有点迷糊 但醒着 能正常聊 会嘟囔两句困")
+
+
+def awake_until():
+    """控制台「叫醒她」（10-27）：data/control.json 里 awake.until（到点自动回去按作息睡）"""
+    try:
+        import control                  # 在函数里 import：control 也 import 了 clock
+        return float((control.rules().get("awake") or {}).get("until") or 0)
+    except Exception:
+        return 0.0
+
+
 def state():
     h = hour()
     for a, b, name, how in SCHEDULE:
         if a <= h < b:
+            if name in ("在睡觉", "该睡了") and awake_until() > time.time():
+                return AWAKE
             return name, how
     return "晚上", ""
 

@@ -9,6 +9,7 @@
 bot.py 用到的：_load() / _save(d)（data/favor.json：{QQ: {"favor": 数, "name": 名字, …}}）
 / get(uid, name, is_owner) → 这个人的记录 / add(uid, 变化, name, is_owner, log) / block(uid, name, is_owner) → 提示词
 / group_block([(uid, name)]) → 群里最近说话的几个人跟她多熟 / event_done(uid) / face(对话, 立绘名) → 换立绘的表情包标记
+/ taboo_from_text / taboo_add / taboo_del / taboo_block（禁忌：空壳不记）
 
 作者的做法（思路）：按 QQ 号记好感、每天最多涨一点；分几档（陌生 → 熟人 → …），跨档触发一次小事件；
 熟到一定程度才给做动画、才开某些玩笑。
@@ -59,3 +60,21 @@ def event_done(uid):
 
 def face(conv, name):
     return None
+
+
+# 禁忌（作者 10-27 加的思路）：他明确说「别提 X / 别叫我 X」→ 按 QQ 号记下 对他常驻；空壳不记
+def taboo_from_text(text):
+    return None
+
+
+def taboo_add(uid, text, name="", kind="topic", verb="提", src=None, where="", date="", log=print):
+    return None
+
+
+def taboo_del(uid, i):
+    return None
+
+
+def taboo_block(people, group=False):
+    return ""
+

@@ -48,6 +48,12 @@ _ASK_SRC = re.compile(r"(表情包?|动图|这图|图).{0,8}(哪来|哪里来|�
 
 # 对方点名要表情包（这时候「刚发过」也照发）
 ASK_STK = re.compile(r"(发|来|整|给我|甩|丢|上|再来)(个|张|一张|一个|几张|两张|点)?(你的)?(表情包?|动图|斗图)|表情包呢|斗图|有表情包吗|没表情包")
+# 对方叫她别发 / 少发表情包（10-28 审查 media-3：以前「别发表情包了」也被 ASK_STK 认成在要 —— 冷却跳过、还让她马上再发一张）
+#   「不少表情包」「多少表情包」「至少发个表情包」不算；「别老是 / 别总是 / 别天天 / 别再老是发」也算（10-28 审查 media-3 复核）
+NO_STK = re.compile(r"(别|不要|不用|甭|(?<![不多至])少|不许|不准|禁止|能不能不|可不可以不)(再|老是?|总是?|一直|天天){0,2}(给我)?"
+                    r"(发|来|整|甩|丢|上|用)?(点|个|张|这么多|那么多|太多)?(你的)?(表情包?|动图|斗图)"
+                    r"|(表情包?|动图|斗图)(就|也|都)?(别|不要|甭|少)(再)?(发|来|整|斗)")
+HUSH_SEC = 90 * 60   # 对方说了别发：这个对话这么久不给表情包菜单（跟她自己说「不发了」的 nosticker 默认一样 90 分钟）
 # 她嘴上说了要给一张（「这张给你」「给你配张表情包」）：这时候表情包不能不发（10-26 小明：她说要发 结果没发）
 PROMISE = re.compile(r"这张|这个表情|这表情|表情包|给你(配|来|发|整|一)张|送你一张|看图|如图|上图|甩你|糊你一脸")
 # 老聊天记录里她写过的拼音名（以前的表情包文件名）→ 情绪
@@ -221,6 +227,7 @@ _last = {}       # (对话, 类型) -> 时间
 _shown = {}      # 对话 -> 这轮给她看过的几张
 _ctx = {}        # 对话 -> 这轮的聊天内容（她只写情绪的时候 按这个挑）
 _asked = {}      # 对话 -> 截止时间：对方点名要表情包（这时候「刚发过」也照发）
+_hush = {}       # 对话 -> 截止时间：对方说了别发表情包（这阵子不给菜单 她写了也不发 10-28 审查 media-3）
 
 
 def _read_state():
@@ -362,13 +369,26 @@ def asked(conv, now=None):
     return (now or time.time()) < _asked.get(str(conv), 0)
 
 
+def hushed(conv, now=None):
+    """对方刚说了别发表情包（10-28 审查 media-3）"""
+    return (now or time.time()) < _hush.get(str(conv), 0)
+
+
 def block(context="", mood_label="", conv=None, ask_text=None):
     c = _load()
     if not c["files"]:
         return ""
     now = time.time()
-    if ask_text is not None and ASK_STK.search(ask_text or ""):
+    if ask_text is not None and NO_STK.search(ask_text or ""):
+        _hush[str(conv)] = now + HUSH_SEC                # 对方叫她别发：这阵子都别发（不算在要 10-28 审查 media-3）
+        _asked.pop(str(conv), None)
+    elif ask_text is not None and ASK_STK.search(ask_text or ""):
         _asked[str(conv)] = now + 150                    # 对方要表情包：这轮和接下来一会儿 刚发过也照发
+        _hush.pop(str(conv), None)                       # 后来又有人点名要了：放开
+    if hushed(conv, now):
+        _shown[str(conv)] = []
+        return ("\n# 你的表情包\n对方刚说了别发 / 少发表情包：这阵子别写 [[表情:…]]，也别说「发张表情包」「这张给你」"
+                "这种话；想表达情绪就直接用字。\n") + _photo_block(c)
     left = 0 if asked(conv, now) else cooldown(conv, now)
     if left > 10:
         # 刚发过一张：这轮压根发不出去 —— 别让她写、也别让她嘴上说「这张给你」（以前写了被限频吞掉 看起来像说话不算话）
@@ -385,7 +405,8 @@ def block(context="", mood_label="", conv=None, ask_text=None):
          "想发就单独一条写 [[表情:名字]]；没有正合适的 也可以只写情绪 比如 [[表情:无语]] 会自动挑一张。\n"
          "**别每条都发**：大概四五次回复配一张就够。梗刚好接上、对方情绪很强、或者你自己情绪到了才发；拿不准就别发。"
          "一次最多一张。表情包是补语气的 不能代替回答；对方在认真说事或者真难过的时候 别发搞笑的。"
-         "图上已经有字的 那句话就别再打一遍。\n")
+         "图上已经有字的 那句话就别再打一遍；图上的字就是你在说的话 —— 跟你这句的意思和态度要一致"
+         "（你在怪他 就别发「我错了」「用户别走」那种认错的）对不上就别发。\n")
     if cand:
         s += "这次和聊天最对得上的几张：\n" + "\n".join(_line(n, c["st"][n]) for n in cand) + "\n"
     if emos:
@@ -505,6 +526,9 @@ def resolve2(seg, conv_key, said=""):
             return text, None, None
         _last[k] = now
         return text, {"type": "image", "data": {"file": c["pfiles"][name].resolve().as_uri()}}, f"[[照片:{name}]]"
+    if hushed(conv_key, now):                           # 对方刚说了别发表情包：她写了也不发（10-28 审查 media-3）
+        _log(f"[表情包] {conv_key} 对方说了别发表情包 这张「{ref}」不发")
+        return text, None, None
     promised = bool(PROMISE.search(f"{text} {said}"))
     if now - _last.get(k, 0) < STICKER_GAP:
         if asked(conv_key, now):
@@ -539,3 +563,21 @@ def resolve2(seg, conv_key, said=""):
 
 def strip(text):
     return MARK.sub("", text or "").strip()
+
+
+def info(name):
+    """一张表情包的资料：{emo, cap, kw, scene, text, …}（没有 → {}）"""
+    return dict((_load()["st"].get(name) or {}))
+
+
+def fit_prompt(name, said):
+    """发之前核对（10-28：她在怪他嘴瓢 却配了一张「用户,别走,我上错模型了」）→ 给小模型看的那段 / None（没东西可对）"""
+    d = info(name)
+    said = MARK.sub(" ", str(said or "")).strip()
+    if not said or not (d.get("text") or d.get("scene") or d.get("cap")):
+        return None
+    return (f"她这一轮说的话：「{said[:200]}」\n要配的表情包「{name}」："
+            + (f"图上的字「{d['text']}」；" if d.get("text") else "")
+            + f"画面：{d.get('cap') or '（没写）'}；适合：{d.get('scene') or '（没写）'}；情绪：{d.get('emo') or '（没写）'}。\n"
+            "这张表情包跟她这一轮话的意思、态度、情绪对得上吗？大致搭就算搭；明显不搭才算不搭"
+            "（她在怪对方 图上却在认错求饶；她在开心 图上在哭；图上的字说的事跟她说的对不上）。只回一个词：搭 / 不搭")

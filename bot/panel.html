@@ -285,6 +285,28 @@ details>summary::-webkit-details-marker{display:none}
 .chart .xh{stroke:var(--line2);stroke-width:1;opacity:0}
 .chart .xh.on{opacity:1}
 
+/* ── 遗忘曲线（10-27）：一条记忆清不清楚 = 一根小条 + 字（状态色只是辅助 字才是意思）── */
+.clar{display:flex;align-items:center;gap:8px;margin-top:5px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.clar .bar{position:relative;width:88px;height:6px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;flex:none}
+.clar .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:var(--good)}
+.clar.fuzzy .bar i{background:var(--warn)} .clar.faint .bar i{background:var(--bad)} .clar.pinned .bar i{background:var(--accent)}
+.clar .badge{font-weight:600}
+.badge.lvl{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink2)}
+.fact .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;max-width:240px}
+.fact.faded .t{color:var(--muted)}
+.qk{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.qk .q{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--panel2);display:flex;flex-direction:column;gap:6px;min-width:0}
+.qk .q .k{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.qk .q .k .ic{width:15px;height:15px;color:var(--accent)}
+.qk .q b{font-size:15px;font-weight:600}
+.qk .q .row{gap:6px}
+.qk a.btn{text-decoration:none}
+.lvtab{border-collapse:collapse;width:100%}
+.lvtab td,.lvtab th{text-align:left;padding:5px 12px 5px 0;font-size:13px;border-top:1px solid var(--line);vertical-align:top}
+.lvtab th{color:var(--muted);font-weight:500;border-top:0}
+.dream{font-size:15px;line-height:1.8;padding:10px 14px;border-left:3px solid var(--c5);background:var(--panel2);border-radius:0 10px 10px 0}
+@media (max-width:760px){.fact{flex-wrap:wrap}.fact .acts{max-width:none;width:100%;justify-content:flex-start}.lvtab td:nth-child(2),.lvtab th:nth-child(2){display:none}}
+
 /* ── 窄窗口：侧边栏只剩图标 ── */
 @media (max-width:760px){
   :root{--nav-w:66px}
@@ -316,7 +338,7 @@ details>summary::-webkit-details-marker{display:none}
 // 侧边栏：分四组（10-27 她的名字主题）
 const NAV = [
   ["概况", [["overview", "总览", "home"], ["calendar", "日历", "calendar"], ["stats", "统计", "chart"]]],
-  ["她", [["memory", "记忆和好感", "heart"], ["persona", "人设", "card"], ["stickers", "表情包", "smile"], ["sing", "唱歌", "music"]]],
+  ["她", [["memory", "记忆和好感", "heart"], ["persona", "人设", "card"], ["stickers", "表情包", "smile"], ["sing", "唱歌", "music"], ["qzone", "QQ 空间", "star"]]],
   ["聊天", [["people", "群和人", "users"], ["send", "代发消息", "send"]]],
   ["设置", [["settings", "功能开关", "sliders"], ["usage", "用量和余额", "wallet"], ["logs", "日志", "list"], ["tools", "工具", "wrench"]]],
 ];
@@ -352,6 +374,7 @@ const ICONS = {
   sparkle: '<path d="M12 4l1.8 4.6L18.5 10l-4.7 1.6L12 16.5l-1.8-4.9L5.5 10l4.7-1.4z"/>',
   alert: '<path d="M12 4.5 3.5 19h17z"/><path d="M12 10v4M12 16.6v.01"/>',
   check: '<path d="m5.5 12.5 4 4 9-9"/>',
+  star: '<path d="M12 4.2l2.3 4.8 5.2.7-3.8 3.6.9 5.2-4.6-2.5-4.6 2.5.9-5.2L4.5 9.7l5.2-.7z"/>',
 };
 function icon(n, cls = "ic") {
   const p = ICONS[n];
@@ -682,11 +705,11 @@ const FP_STEPS = (() => { const a = [], seg = (x, y, st) => { for (let m = x; m 
 const FP_TICKS = [[5, "5分钟"], [60, "1小时", 1], [180, "3小时"], [360, "6小时", 1], [720, "12小时", 1], [-1, "一直开"]];   // 24 小时就在「一直开」左边一格（标出来会叠在一起）
 const FP = {pick: null, state: null, old: false, will: null, key: ""};
 function fmtMin(m) { if (m < 0) return "一直开"; const h = Math.floor(m / 60), r = m % 60; return h ? (r ? `${h} 小时 ${r} 分钟` : `${h} 小时`) : `${r} 分钟`; }
-function clock(ts) {
-  const t = new Date(ts * 1000), n = new Date(), hh = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-  if (t.toDateString() === n.toDateString()) return hh;
-  const tm = new Date(n); tm.setDate(n.getDate() + 1);
-  return (t.toDateString() === tm.toDateString() ? "明天 " : `${t.getMonth() + 1}-${t.getDate()} `) + hh;
+function clock(ts) {             // 几点：按北京时间（跟页面上别的时间一样；10-28 审查 panel-3：以前按这台电脑的时区 电脑在英国就像下午 5 点关）
+  const hh = bjhm(ts), now = Date.now() / 1000;
+  if (bjday(ts) === bjday(now)) return hh;
+  if (bjday(ts) === bjday(now + 86400)) return "明天 " + hh;
+  const t = BJ(ts); return `${t.m}-${t.d} ${hh}`;
 }
 function fpLeft(sec) { sec = Math.max(0, Math.floor(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), x = sec % 60; return (h ? `${h} 小时 ` : "") + `${m} 分 ${String(x).padStart(2, "0")} 秒`; }
 function fpShort(sec) { sec = Math.max(0, Math.floor(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60); return h ? `${h}小时${m}分` : `${Math.max(1, m)}分钟`; }
@@ -786,6 +809,7 @@ function heroHTML(o) {
     <div class="hfacts">
       <div class="hf">${icon("pulse")}<div><div class="k">今天（${esc(h.tz || "北京时间")}）</div>收到 <b>${num(recv)}</b> · 回了 <b>${num(rep)}</b> 轮 · 花了 <b>${money(cost)}</b> <span class="muted">≈ ¥${(cost * rate).toFixed(2)}</span></div></div>
       <div class="hf">${icon("calendar")}<div><div class="k">下一件答应的事</div>${nx ? `${esc(nx.when)} · ${esc(nx.what)} → ${esc(nx.who)}${tk.pending > 1 ? ` <a href="#calendar" class="small">一共 ${tk.pending} 件</a>` : ""}` : '<span class="muted">没有要到点做的事</span>'}</div></div>
+      ${o.remembered ? `<div class="hf">${icon("sparkle")}<div><div class="k">她刚记住的${o.remembered.impression ? "（蒸馏出来的印象）" : ""}</div>${esc(o.remembered.text)} <span class="muted small">· ${esc(o.remembered.conv_name || "")} · ${ago(o.remembered.ts)}</span></div></div>` : ""}
       ${away.length ? `<div class="hf">${icon("moon")}<div><div class="k">说到做到（正在兑现）</div>${away.slice(0, 2).map(a => `${esc(a.where)}：${esc(a.name)} · 还剩 ${num(a.left_min)} 分钟`).join("<br>")}${away.length > 2 ? `<span class="muted small"> 等 ${away.length} 处</span>` : ""}</div></div>` : ""}
       ${tk.apology ? `<div class="hf warn">${icon("alert")}<div><div class="k">欠着的道歉</div>${num(tk.apology)} 件没做成的事要去道歉 <a href="#calendar" class="small">看日历</a></div></div>` : ""}
     </div>${WAVE}</section>`;
@@ -793,8 +817,50 @@ function heroHTML(o) {
 function kpi(ic, label, value, sub, series, title, attr = "") {
   return `<div class="stat"${attr}><div class="lbl">${icon(ic)}${label}</div><b${attr.includes("willb") ? ' id="willb"' : ""}>${value}</b>${sub ? `<span>${sub}</span>` : ""}${series ? spark(series, title) : ""}</div>`;
 }
+// 快捷操作（10-27）：有些数会自己积累 / 被人说了一句就卡住一阵 —— 这里一键放开
+function quickCard(o) {
+  const q = o.quick; if (!q) return "";
+  const b = o.budget || {}, h = o.her || {}, m = o.mood || {};
+  const rs = q.budget_reset, aw = q.awake_until, sleeping = /睡/.test(h.state || "");
+  const online = o.bot === "online";
+  const card = (ic, title, now, btns) => `<div class="q"><div class="k">${icon(ic)}${title}</div><b>${now}</b><div class="row">${btns}</div></div>`;
+  const btn = (what, label, tip, {hours, dis = false, primary = false} = {}) =>
+    `<button class="btn small${primary ? " primary" : ""}" data-q="${what}"${hours ? ` data-h="${hours}"` : ""} title="${esc(tip)}"${dis ? " disabled" : ""}>${label}</button>`;
+  const lr = q.last_run;
+  return `<div class="card"><div class="row"><h2 style="margin:0">${icon("sliders")}快捷操作</h2><span class="small muted">会自己慢慢积累、或者被人一句话卡住一阵的东西 在这里一键放开</span></div>
+    <div class="qk" style="margin-top:12px">
+      ${card("gauge", "回复意愿", fpOn() ? "火力全开中" : b.enabled === false ? "不限" : `${Math.round((b.will || 0) * 100)}%` + (rs ? ` <span class="small muted">（${bjhm(rs.ts)} 起重新算的）</span>` : ""),
+        btn("budget_reset", "从现在重新算", "花得越多回得越少：花费只从现在算起 意愿回到 100%（统计里的钱不动；24 小时后自动恢复按实际算）", {primary: !rs})
+        + (rs ? btn("budget_clear", "恢复按实际算", `按最近 ${b.window_hours || 24} 小时实际花的钱算（现在实际是 ${money(b.spent_all)}）`) : ""))}
+      ${card("heart", "心情", `${m.value != null ? Math.round(m.value) : "—"} <span class="small muted">${esc(m.label || "")}</span>`,
+        btn("mood_reset", "回到平常", "心情回到基准线（70）、各种情绪清零；时间线上会记一笔"))}
+      ${card(sleeping || aw ? "moon" : "sun", "作息", `${esc(h.state || "—")}${aw ? ` <span class="small muted">（叫醒到 ${bjhm(aw)}）</span>` : ""}`,
+        aw ? btn("wake_off", "让她接着睡", "回到按作息：该睡就睡")
+          : btn("wake", "叫醒她 1 小时", "她在睡觉时（北京时间 5~12 点）回得迷糊、字少：叫醒后正常聊（到点自己接着睡）", {hours: 1, dis: !sleeping})
+            + btn("wake", "3 小时", "叫醒 3 小时", {hours: 3, dis: !sleeping}))}
+      ${card("mic", "别发语音 / 别唱了", q.voice_muted || q.sing_muted ? `${num(q.voice_muted)} 个聊天不发语音 · ${num(q.sing_muted)} 个不唱` : '<span class="muted">没有</span>',
+        btn("unmute", "都放开", "有人说了「别发语音」（12 小时）/「别唱了」（6 小时）：现在就放开", {dis: !(q.voice_muted || q.sing_muted)}))}
+      ${card("bot", "对聊刹车", q.brakes == null ? '<span class="muted">机器人没开</span>' : q.brakes ? `${num(q.brakes)} 个人刹车中` : '<span class="muted">没有</span>',
+        btn("brakes_clear", "全部解除", "跟别人家的 AI 来回太多被刹住（10 分钟不回）：现在就放开", {dis: !q.brakes}))}
+      ${q.forget_on ? card("moon", "记忆整理", lr ? `${hm(lr.ts)} <span class="small muted">蒸馏 ${num(lr.gists)} · 归档 ${num(lr.archived)}</span>` : '<span class="muted">还没整理过</span>',
+        `<button class="btn small" data-cons="1" title="不等今晚 现在就整理一次"${q.consolidating || !online ? " disabled" : ""}>${q.consolidating ? "正在整理…" : "现在整理一次"}</button>`
+        + `<a href="#memory" class="btn small" data-tab="fg">看遗忘曲线</a>`) : ""}
+    </div></div>`;
+}
+async function quickClick(e, redraw) {
+  const t = e.target.closest("[data-tab]");
+  if (t) { NEXT_TAB = t.dataset.tab; return true; }
+  const c = e.target.closest("[data-cons]");
+  if (c) { c.setAttribute("disabled", ""); const r = await api("/api/memory/consolidate", {}); toast(r.ok ? (r.msg || "开始整理了") : (r.error || "没开始"), !r.ok); setTimeout(redraw, 3000); return true; }
+  const b = e.target.closest("[data-q]"); if (!b) return false;
+  b.setAttribute("disabled", "");
+  const r = await api("/api/quick", {what: b.dataset.q, hours: b.dataset.h ? Number(b.dataset.h) : undefined});
+  toast(r.ok ? (r.msg || "好了") + (r.offline ? "（机器人没开 直接改的文件）" : "") : (r.error || "没成功"), !r.ok);
+  setTimeout(redraw, 600);
+  return true;
+}
 VIEWS.overview = async main => {
-  main.innerHTML = `<h1>总览</h1><p class="sub">她现在怎么样、今天干了多少活</p><div id="ovw"><div id="ovalert"></div><div id="hero"></div><div id="kpis"></div><div class="cols"><div id="ovtop"></div><div id="fp"></div></div><div id="ov"></div></div>`;
+  main.innerHTML = `<h1>总览</h1><p class="sub">她现在怎么样、今天干了多少活</p><div id="ovw"><div id="ovalert"></div><div id="hero"></div><div id="kpis"></div><div class="cols"><div id="ovtop"></div><div id="fp"></div></div><div id="ovquick"></div><div id="ov"></div></div>`;
   FP.key = "";
   const draw = async () => {
     const o = await pollFoot(); if (!o || !$("#ovtop")) return;
@@ -819,6 +885,7 @@ VIEWS.overview = async main => {
       q.state === "off" ? `<div class="card alert"><div class="row"><h2 style="margin:0;color:var(--bad)">${icon("alert")}QQ 没在运行</h2><span class="small muted">她现在收不到也发不了消息</span><span class="spacer"></span><button class="btn primary" data-a="start_all">启动全部（含 QQ）</button></div></div>` :
       q.state === "starting" ? `<div class="card"><div class="row"><span class="badge warn">QQ 开着 但还没登好</span><span class="small muted">刚启动的话等半分钟；好几分钟都这样 就点「停止全部」再「启动全部」</span></div></div>` : "";
     $("#hero").innerHTML = heroHTML(o);
+    $("#ovquick").innerHTML = quickCard(o);
     const recvS = sp && sp.recv, d7 = "最近 7 天（每天）";
     $("#kpis").innerHTML = `<div class="grid">
         ${kpi("msg", "今天收到", num((t.recv_private || 0) + (t.recv_group || 0)), `私聊 ${num(t.recv_private)} / 群 ${num(t.recv_group)}`, recvS, d7 + "收到的消息")}
@@ -840,7 +907,8 @@ VIEWS.overview = async main => {
           <span>QQ 号</span><span>${esc(i.self_id ? (i.nick || "") + " " + i.self_id : q.account || "—")}</span>
           <span>QQ 登录</span><span><span class="badge ${(QQS[q.state] || [""])[0]}">${(QQS[q.state] || ["", "不明"])[1]}</span></span>
           <span>模型</span><span>${esc(i.model || "—")}</span></div>
-        ${o.has_token ? "" : '<div class="small" style="color:var(--warn);margin-top:8px">控制台口令刚生成：重启一次机器人 这里的按钮才能用</div>'}
+        ${o.config_error ? `<div class="small" style="color:var(--bad);margin-top:8px">${esc(o.config_error)}（修好之前控制台不改它；机器人重启会读不出来）</div>` :
+          o.has_token ? "" : '<div class="small" style="color:var(--warn);margin-top:8px">控制台口令刚生成：重启一次机器人 这里的按钮才能用</div>'}
         <details class="more" style="margin-top:10px"><summary>更多操作</summary><div class="row" style="margin-top:8px">
           <button class="btn small" data-a="restart_hard" title="机器人卡住 / 接口没响应时用：只重启机器人 QQ 不动（会弹管理员确认）">强制重启机器人</button>
           <button class="btn small" data-a="start_all">启动全部（含 QQ）</button>
@@ -860,6 +928,7 @@ VIEWS.overview = async main => {
     linechart($("#moodline"), (mood.timeline || []).map(x => [x.t, x.mood, x.why]), {h: 130});
   };
   $("#ovw").onclick = async e => {
+    if (await quickClick(e, draw)) return;
     const b = e.target.closest("[data-a]"); if (!b) return;
     const a = b.dataset.a;
     if (a === "stop_all" && !confirm("停止全部会把 QQ 也关掉 她会掉线。确定？")) return;
@@ -933,6 +1002,48 @@ const SETTINGS = [
     ["continuity.group_in_private", "群里的事带进私聊", "私聊时她记得这个人最近在群里跟她说过的（群里大家都看得到的）", "bool"],
     ["continuity.group_days", "带最近几天群里的事", "", "num", 1, 14, 1],
   ]],
+  ["记忆和遗忘", [
+    ["forget.enabled", "遗忘曲线", "每条记忆按等级有个半衰期：没人提就慢慢变淡（先快后慢）、聊到一次就记得更牢；模糊的她只会说「好像…」；关掉 = 记住的一直清楚（跟以前一样 超了上限才挤掉）", "bool"],
+    ["forget.half_life.1", "L1 随口一提：半衰期（天）", "今天中午吃了面这种", "num", 0.5, 60, 0.5],
+    ["forget.half_life.2", "L2 近况 / 小事：半衰期（天）", "这周在赶作业、她自己的小经历", "num", 1, 120, 1],
+    ["forget.half_life.3", "L3 一般：半衰期（天）", "喜欢猫、在哪上学", "num", 1, 365, 1],
+    ["forget.half_life.4", "L4 重要：半衰期（天）", "家里的大事、很在意的事", "num", 1, 1000, 1],
+    ["forget.half_life.5", "L5 很重要：半衰期（天）", "重大的事；名字 / 生日 / 有人说「记住」的直接钉住 不会忘", "num", 1, 3650, 5],
+    ["forget.close_favor", "好感到多少算熟人", "熟人（还有你）的事等级 +1 记得久一点", "num", 0, 100, 5],
+    ["forget.night_hours", "夜里整理的时间", "北京时间几点到几点（她在睡觉、DeepSeek 空闲价）：快忘的蒸馏成印象、忘得差不多的归档、做个梦", "pair", 0, 24, 1],
+    ["forget.gist", "快忘的蒸馏成一句印象", "同一个人有好几件事快忘了 → 合成一句「大概印象」（新的取代旧的 一层层蒸馏）细节归档（能找回）；关掉 = 直接归档", "bool"],
+    ["forget.max_gist_per_night", "一晚最多蒸馏几个人", "每个人调一次模型（约 ¥0.002）", "num", 0, 200, 1],
+    ["forget.dream", "做梦", "夜里整理完 拿当天的日记和一件快忘的旧事做个梦 第二天可能说「昨晚梦到…」（梦到的旧事算想起一次）", "bool"],
+    ["forget.wander", "突然想起来", "聊天时偶尔冒出一件快模糊了的事（「诶 你上次是不是说过…」）她说出口了 这件事就记得更牢", "bool"],
+    ["forget.wander_prob", "突然想起来：每轮的概率", "0~1", "num", 0, 1, 0.01],
+    ["forget.wander_cooldown_hours", "突然想起来：同一个聊天隔几小时", "", "num", 0.5, 72, 0.5],
+    ["forget.archive_search", "想不起来就翻聊天记录", "有人问「还记得吗」、记忆里又没想起来 → 去原始聊天存档里找原话（群里只翻他自己说过的）照实说「我翻了下记录」", "bool"],
+    ["forget.archive_days", "往回翻几天", "", "num", 1, 365, 1],
+  ]],
+  ["QQ 空间", [
+    ["qzone.enabled", "QQ 空间", "她自己刷好友的说说（看、点赞、偶尔评论）、发自己的说说、回说说下面的评论；有人叫她看空间就当场去看。关掉 = 都不做（聊天不受影响）", "bool"],
+    ["qzone.read_every_min", "多久刷一次（分钟）", "她醒着的时候 带一点随机", "num", 30, 1440, 10],
+    ["qzone.read_max_posts", "一次最多看几条新的", "每条看图走本地识图 不花钱；她的感想一次调一下模型", "num", 1, 30, 1],
+    ["qzone.like", "点赞", "觉得有意思才赞；别人家的 AI、广告不赞", "bool"],
+    ["qzone.like_daily", "每天最多赞几条", "", "num", 0, 100, 1],
+    ["qzone.comment", "评论", "评论区他所有的好友都看得到：不暧昧、不互骂、不带私聊里的事（带了就重写 还带就不评）", "bool"],
+    ["qzone.comment_daily", "每天最多评几条", "", "num", 0, 50, 1],
+    ["qzone.comment_min_favor", "好感到多少才评论", "20 = 认识的人；40 = 熟人（你不受这个限制）", "num", 0, 100, 5],
+    ["qzone.mention_private", "私聊里提她刷到的", "「看你空间说…」说过一次就不再带", "bool"],
+    ["qzone.mention_group", "群里提她刷到的", "只提正在跟她说话的那个人的、不敏感的、谁都能看的", "bool"],
+    ["qzone.view_on_ask", "叫她看空间就当场去看", "本人叫看自己的；你能叫她看别人的（在群里叫 她只说「私聊跟你说」然后私聊告诉你）", "bool"],
+    ["qzone.post", "发说说", "所有人可见；素材：日记那句 / B站刷到的 / 心情和日常 / 群里的趣事（不点名 私聊里的事不写）；控制台能删", "bool"],
+    ["qzone.post_prob", "每天发一条的概率", "0~1（一天最多一条）", "num", 0, 1, 0.05],
+    ["qzone.post_hours", "什么时候发", "北京时间几点到几点（她醒着的时候）", "pair", 0, 24, 1],
+    ["qzone.reply", "回她说说下面的评论", "别人家的 AI 不回", "bool"],
+    ["qzone.reply_daily", "每天最多回几条评论", "", "num", 0, 50, 1],
+    ["qzone.reply_rounds", "同一个人同一条最多回几轮", "", "num", 1, 10, 1],
+    ["qzone.visitors", "看访客", "一天看一次；私聊里偶尔提一句「看到你来我空间了」（同一个人一周最多一次）", "bool"],
+    ["qzone.dry_run.like", "点赞只试运行", "开着 = 只记本来会赞哪条 不真赞（「QQ 空间」页看得到）", "bool"],
+    ["qzone.dry_run.comment", "评论只试运行", "", "bool"],
+    ["qzone.dry_run.post", "发说说只试运行", "", "bool"],
+    ["qzone.dry_run.reply", "回评论只试运行", "", "bool"],
+  ]],
   ["私聊", [
     ["behavior.proactive_private", "主动找人聊天", "好久没聊会主动找人", "bool"],
     ["behavior.proactive_prob", "主动找人的概率", "0~1", "num", 0, 1, .05],
@@ -996,9 +1107,9 @@ const SETTINGS = [
     ["full_power.follow_window_sec", "火力全开：叫过她之后几秒内都算对她说", "平时用「群聊」里的设置（120 秒）", "num", 60, 1800, 30],
     ["full_power.rhythm_reply_prob", "火力全开：在线时没点名的话接的概率", "0~1", "num", 0, 1, .05],
     ["full_power.max_per_hour", "火力全开：每个群每小时最多说几次", "", "num", 1, 200, 1],
-    ["budget.enabled", "花得越多 回得越少（只管群里）", "按最近花的钱算回复意愿：一开始掉得快 很快到一半 之后越来越慢地往下掉。私聊每条都回、老板的消息永远回、补回不算", "bool"],
-    ["budget.half_usd", "花到多少美元 意愿降到一半", "越小越省（0.45 = 最近 24 小时花 $0.45 时 意愿降到一半；10-26 价格按峰谷算准了 从 0.3 调到 0.45 回复量不变）", "num", 0.01, 50, 0.05],
-    ["budget.shape", "曲线形状 k", "小于 1：前面掉得快 后面拖得长（0.6 比较合适）；越接近 1 越像普通的 S 形", "num", 0.2, 2, 0.05],
+    ["budget.enabled", "花得越多 回得越少（只管群里）", "按最近花的钱算回复意愿（曲线什么样看下面的 k）。私聊每条都回、老板的消息永远回、补回不算", "bool"],
+    ["budget.half_usd", "花到多少美元 意愿降到一半", "越小越省（1.69 = 最近 24 小时花 $1.69 ≈ ¥12 时 意愿降到一半；10-28 按每天 ¥15 的预算从 0.45 放到 1.69）", "num", 0.01, 50, 0.05],
+    ["budget.shape", "曲线形状 k", "小于 1：前面掉得快 后面拖得长（省着花 用 0.6）；大于 1：前面几乎不省 快花到上面那个数才往下掉（按预算花 用 4）", "num", 0.2, 8, 0.1],
     ["budget.floor", "最低意愿", "再怎么花也保留的回复意愿 0~1", "num", 0, 0.9, 0.05],
     ["budget.window_hours", "按最近几小时的花费算", "", "num", 1, 72, 1],
     ["budget.powers.direct", "被 @/叫名字/引用：次方", "越小越不受省 token 影响（0.1：意愿 63% 时 95% 会回 掉到底线也有 79%）", "num", 0, 5, 0.05],
@@ -1022,6 +1133,7 @@ const SETTINGS = [
     ["bili.enabled", "刷 B 站", "每天刷几轮视频 当聊天素材", "bool"],
     ["bili.sessions_per_day", "每天刷几轮", "", "num", 0, 24, 1],
     ["mood2.enabled", "心情系统", "聊完一轮判断一下心情变化", "bool"],
+    ["mood2.as_facts", "心情：只给她看最近碰到的事", "开着（默认）：不给她看心情分数和语气提示 换成最近真发生的 2~3 件事（数字会让她「演」心情）；关掉 = 原来那段。改了要重启机器人", "bool"],
     ["llm.temperature", "说话的随机性", "越大越跳脱 0.6~1.1 比较合适", "num", 0, 1.5, .05],
     ["behavior.typing_speed_cps", "打字速度", "每秒几个字（越小越像慢慢打）", "num", 1, 50, 1],
     ["soul.timezone", "时区", "她按这个时间作息。聊天的人在国内就选北京时间（电脑要装 tzdata）", "select", [["", "跟电脑一样"], ["Asia/Shanghai", "北京时间"], ["Europe/London", "英国时间"]]],
@@ -1030,17 +1142,30 @@ const SETTINGS = [
     ["llm.deepseek.api_key", "DeepSeek key", "聊天用", "secret"],
     ["voice.minimax.api_key", "MiniMax key", "语音用", "secret"],
     ["anim.api_key", "火山方舟 key", "做动画用", "secret"],
-    ["vision.fallback.api_key", "智谱 key", "本地识图不行时用", "secret"],
+    ["vision.fallback2.api_key", "智谱 key", "DeepSeek 和本地识图都看不了时用", "secret", "zhipu"],   // "zhipu"：按 config 认出智谱在哪一段（zhipuPath）
     ["bili.sessdata", "B 站 SESSDATA", "登录后能读字幕", "secret"],
   ]],
 ];
 const getp = (o, p) => p.split(".").reduce((a, k) => (a == null ? a : a[k]), o);
+// 「智谱 key」该写进 config 的哪一段（10-28 审查 panel-4）：v1.5.0 起 vision.fallback 是本地识图（不用 key）、智谱挪到了 fallback2；
+// 公开版的 config 智谱还在 fallback —— 按 base_url / 模型名认出智谱那段 不写死
+function zhipuPath(C) {
+  const v = (C && C.vision) || {}, zp = s => !!s && (/bigmodel/i.test(s.base_url || "") || /^glm/i.test(s.model || ""));
+  const k = zp(v.fallback2) ? "fallback2" : zp(v.fallback) ? "fallback" : (v.fallback || {}).provider === "ollama" ? "fallback2" : "fallback";
+  return `vision.${k}.api_key`;
+}
 VIEWS.settings = async main => {
   const r = await api("/api/config"); const C = r.config || {};
+  if (r.ok === false && r.error) {   // config.json 读不出来：别画一整页空的设置（看着像全没了 一保存反而冲掉；10-28 审查 panel-1）
+    const fix = /先修好/.test(r.error);   // 只有 config.json 真坏了才叫他去改；控制台没响应、被拒这种 只说出了什么错（10-28 审查 panel-1 复查）
+    main.innerHTML = `<h1>功能开关</h1><div class="card alert"><b>${esc(r.error)}</b>${fix ? `<div class="small muted" style="margin-top:6px">用记事本打开 C:\\QQBot\\bot\\config.json 找到那一行改好（多了 / 少了逗号、引号最常见），改好了刷新这一页。修好之前控制台不会去改它</div>` : ""}</div>`;
+    return;
+  }
   const changed = {};
   main.innerHTML = `<h1>功能开关</h1><p class="sub">改完点下面的「保存」。大部分设置要重启机器人才生效（重启只要十几秒 QQ 不会掉线）</p><div id="sets"></div>
     <div class="savebar"><span id="chg" class="muted">没有改动</span><span class="spacer"></span><button class="btn" id="save">保存</button><button class="btn primary" id="saverestart">保存并重启机器人</button></div>`;
   $("#sets").innerHTML = SETTINGS.map(([sec, rows]) => `<div class="card"><h2>${sec}</h2>${rows.map(([p, lab, desc, type, a, b, c]) => {
+    if (a === "zhipu") { p = zhipuPath(C); if (p !== "vision.fallback2.api_key") desc = "本地识图不行时用"; }
     const v = getp(C, p); let ctl = "";
     if (type === "bool") ctl = `<label class="sw"><input type="checkbox" data-p="${p}" ${v ? "checked" : ""}><span></span></label>`;
     else if (type === "num") ctl = `<input type="number" data-p="${p}" value="${v ?? ""}" min="${a}" max="${b}" step="${c}">`;
@@ -1066,6 +1191,7 @@ VIEWS.settings = async main => {
     const changes = Object.entries(changed).map(([path, value]) => ({path, value}));
     if (!changes.length) { toast("没有改动"); return; }
     const r = await api("/api/config", {changes});
+    if (r.error) { toast(r.error, true); return; }   // config.json 读不出来：一项都没存 也别去重启（10-28 审查 panel-1）
     if (r.bad && r.bad.length) toast("这些没存上：" + r.bad.join("、"), true);
     if (r.done && r.done.length) { toast(`存好了 ${r.done.length} 项`); Object.keys(changed).forEach(k => delete changed[k]); mark(); }
     if (restart) { const x = await api("/api/bot", {action: "restart"}); toast(x.msg || x.error, !x.ok); }
@@ -1283,14 +1409,102 @@ VIEWS.send = async main => {
 };
 
 /* ───────── 记忆和好感 ───────── */
+let NEXT_TAB = "";                // 从总览点「遗忘曲线」过来：直接开那个页签
+// 遗忘曲线（10-27）：每条记忆有等级（L1~L5 / 钉住）→ 半衰期；清晰度 = 0.5^(距上次想起的天数 / 半衰期)
+const LV_NAME = {0: "钉住", 1: "随口一提", 2: "近况/小事", 3: "一般", 4: "重要", 5: "很重要"};
+const LV_EG = {1: "今天中午吃了面", 2: "这周在赶作业、她自己的小经历", 3: "喜欢猫、在哪上学", 4: "家里的大事、很在意的事", 5: "重大的事"};
+const ST_NAME = {pinned: "钉住了", clear: "清楚", fuzzy: "模糊", faint: "快想不起来"};
+const ST_BADGE = {pinned: "acc", clear: "good", fuzzy: "warn", faint: "bad"};
+function dayTxt(d) { if (d == null) return ""; if (d < 1) return Math.max(1, Math.round(d * 24)) + " 小时"; return (d < 10 ? d.toFixed(1).replace(/\.0$/, "") : Math.round(d)) + " 天"; }
+function clarHTML(f) {           // 一条记忆清不清楚：一根小条 + 字（颜色只是辅助 字才是意思）
+  if (f.state == null) return "";
+  const pct = f.state === "pinned" ? 100 : Math.round((f.clarity || 0) * 100);
+  const left = f.state === "pinned" ? "不会忘" : f.state === "clear" ? `还能记清 ${dayTxt(f.to_fuzzy)} · 约 ${dayTxt(f.to_faint)} 后想不起来`
+    : f.state === "fuzzy" ? `已经模糊 · 约 ${dayTxt(f.to_faint)} 后想不起来` : "平时想不起来（他明着问、提示够多才隐约记得）";
+  return `<div class="clar ${f.state}" title="清晰度 ${pct}%${f.S ? " · 半衰期 " + f.S + " 天" : ""}${f.rv ? " · 想起过 " + f.rv + " 次（每次都记得更牢）" : ""}">
+    <span class="bar"><i style="width:${pct}%"></i></span><b class="badge ${ST_BADGE[f.state]}">${ST_NAME[f.state]}</b><span>${left}</span></div>`;
+}
+function lvBadge(f) {
+  if (f.lvl == null) return "";
+  return `<span class="badge lvl" title="${esc(LV_NAME[f.lvl] || "")}${f.S ? " · 半衰期 " + f.S + " 天" : ""}">${f.lvl === 0 ? "钉住" : "L" + f.lvl}</span>`;
+}
+function provHTML(f) {      /* 10-27 记忆卫生：这条从哪来 —— 依据几条消息、谁说的、取代了旧的几条 */
+  const bits = [];
+  if (f.src_n) bits.push(`依据 ${f.src_n} 条消息`);
+  if (f.speaker) bits.push(`说的人 QQ ${esc(f.speaker)}`);
+  if (f.uid && f.uid !== f.speaker) bits.push(`是 QQ ${esc(f.uid)} 的事`);
+  if ((f.supersedes || []).length) bits.push(`取代了旧的 ${f.supersedes.length} 条`);
+  if (f.status === "superseded") bits.push("被新的取代了" + (f.superseded_ts ? "（" + ago(f.superseded_ts) + "）" : ""));
+  return bits.length ? " · " + bits.join(" · ") : "";
+}
+function factRow(f, conv, {faded = false, showConv = false} = {}) {
+  const kind = f.impression ? "印象" : ({fact: "事实", recent: "近况", episode: "经历"}[f.kind] || f.kind || "事实");
+  const acts = faded ? `<button class="btn small" data-act="restore" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="拿回来 从现在开始重新算（清晰度回到 100%）">找回</button>`
+    : (f.lvl === 0 ? `<button class="btn small" data-act="unpin" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="回到按类型算的等级 从现在开始算">取消钉住</button>`
+      : `<button class="btn small" data-act="pin" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="钉住：不会忘">钉住</button>`)
+      + (f.lvl === 0 ? "" : ` <button class="btn small" data-act="fade" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="现在就让她忘掉（归档 下面「淡忘的」里能找回；以后他再说还会重新记住）">现在忘</button>`)
+      + ` <button class="btn small danger" data-f="${esc(f.id)}" data-k="${esc(conv)}" title="记错了：删掉 以后也不会再记回来">删掉</button>`;
+  return `<div class="fact ${faded ? "faded" : ""}"><span class="badge">${esc(kind)}</span>${lvBadge(f)}<span class="t">${esc(f.text)}${f.manual ? ' <span class="badge acc">手动加的</span>' : ""}
+    ${showConv ? `<span class="small muted"> · ${esc(f.conv_name || f.conv)}</span>` : ""}
+    <div class="small muted">${f.date_uncertain ? "约 " : ""}${esc(f.date || "")}${f.imp != null ? " · 重要度 " + f.imp : ""}${faded ? (f.why || f.status !== "superseded" ? " · " + esc(f.why || "淡忘") : "") + (f.faded_ts ? " · " + ago(f.faded_ts) : "") : ""}${provHTML(f)}</div>${faded ? "" : clarHTML(f)}</span>
+    <span class="acts">${acts}</span></div>`;
+}
+async function memAct(e, redraw) {          // 钉住 / 取消钉住 / 现在忘 / 找回 / 删掉（几个页签共用）
+  const tb = e.target.closest("[data-tb]");
+  if (tb) {                                   // 删一条禁忌（10-27 记忆卫生）
+    if (!confirm("删掉这条？以后跟他聊就不带着它了")) return true;
+    const r = await api("/api/memory/taboo_del", {uid: tb.dataset.u, i: +tb.dataset.tb});
+    toast(r.ok ? "删掉了" + (r.offline ? "（机器人没开 直接改的文件）" : "") : (r.error || "没成功"), !r.ok); redraw(); return true;
+  }
+  const b = e.target.closest("[data-act],[data-f]"); if (!b) return false;
+  if (b.dataset.f) {
+    if (!confirm("删掉这条？她以后也不会再记回来（记错了才用这个；想让她慢慢忘 用「现在忘」）")) return true;
+    const r = await api("/api/memory/forget", {key: b.dataset.k, id: b.dataset.f});
+    toast(r.ok ? "删掉了" + (r.offline ? "（机器人没开 直接改的文件）" : "") : (r.error || "没成功"), !r.ok); redraw(); return true;
+  }
+  const a = b.dataset.act, msg = {pin: "钉住了 不会忘", unpin: "取消钉住了", fade: "让她忘了（在「淡忘的」里能找回）", restore: "找回来了"}[a];
+  b.setAttribute("disabled", "");
+  const r = await api(`/api/memory/${a}`, {key: b.dataset.k, id: b.dataset.id});
+  toast(r.ok ? msg + (r.offline ? "（机器人没开 直接改的文件）" : "") : (r.error || "没成功"), !r.ok); redraw(); return true;
+}
+function forgetChart(el, hl, fz, ft) {
+  /* 每个等级的遗忘曲线：横轴 = 多少天没人提 纵轴 = 清晰度；两条横线 = 模糊 / 想不起来 */
+  const W = 760, H = 230, L = 46, B = 24, T = 12, R = 54;
+  const lv = [1, 2, 3, 4, 5].filter(k => hl[k] > 0), cols = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)"];
+  const dmax = Math.max(30, Math.min(365, Math.ceil(Math.max(...lv.map(k => hl[k])) * 1.4 / 30) * 30));
+  const X = d => L + (W - L - R) * d / dmax, Y = p => T + (H - T - B) * (1 - p);
+  const r = (k, d) => Math.pow(0.5, d / hl[k]);
+  let g = "";
+  [0, .25, .5, .75, 1].forEach(p => { g += `<line x1="${L}" x2="${W - R}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--line)"/><text x="${L - 8}" y="${Y(p) + 4}" text-anchor="end">${Math.round(p * 100)}%</text>`; });
+  const step = niceStep(dmax / 6);
+  for (let d = 0; d <= dmax + 1e-9; d += step) g += `<text x="${X(d)}" y="${H - 7}" text-anchor="middle">${d === 0 ? "记下" : d + " 天"}</text>`;
+  [[fz, "开始模糊"], [ft, "想不起来"]].forEach(([p, n]) => { g += `<line x1="${L}" x2="${W - R}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--ink2)" stroke-width="1" stroke-dasharray="4 4"/><text x="${W - R + 6}" y="${Y(p) + 4}" style="fill:var(--ink2)">${n}</text>`; });
+  lv.forEach((k, i) => {
+    const pts = [];
+    for (let j = 0; j <= 120; j++) { const d = dmax * j / 120; pts.push(`${X(d).toFixed(1)},${Y(r(k, d)).toFixed(1)}`); }
+    g += `<polyline fill="none" stroke="${cols[i]}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${pts.join(" ")}"/>`;
+  });
+  g += `<line class="xh" x1="0" x2="0" y1="${T}" y2="${H - B}"/>`;
+  g += `<rect class="hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" tabindex="0"><title>遗忘曲线</title></rect>`;
+  el.classList.add("chart");
+  el.innerHTML = `<div class="legend">${lv.map((k, i) => `<span><i class="ln" style="background:${cols[i]}"></i>L${k} ${esc(LV_NAME[k])}（半衰期 ${hl[k]} 天）</span>`).join("")}</div><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="遗忘曲线：每个等级多少天后开始模糊、想不起来">${g}</svg>`;
+  const svg = el.querySelector("svg"), xh = el.querySelector(".xh");
+  const pick = src => {
+    let d = 7;
+    if (src && src.clientX != null) { const b = svg.getBoundingClientRect(); const vx = (src.clientX - b.left) / b.width * W; d = Math.max(0, Math.min(dmax, (vx - L) / (W - L - R) * dmax)); }
+    xh.setAttribute("x1", X(d)); xh.setAttribute("x2", X(d)); xh.classList.add("on");
+    return [`没人提 ${dayTxt(d) || "0 天"} 后`, lv.map((k, i) => { const p = r(k, d); return [`L${k} ${LV_NAME[k]}`, `${Math.round(p * 100)}% · ${p >= fz ? "清楚" : p >= ft ? "模糊" : "想不起来"}`, cols[i]]; }), 0];
+  };
+  hover(el, pick, i => { if (i < 0) xh.classList.remove("on"); });
+}
 VIEWS.memory = async main => {
-  main.innerHTML = `<h1>记忆和好感</h1><p class="sub">她记住了每个人什么、心里挂着什么事、对谁有多少好感。删掉记错的 她以后也不会再记回来</p>
-    <div class="row" style="margin-bottom:12px"><button class="chip on" data-t="mem">记忆</button><button class="chip" data-t="fav">好感度</button></div><div id="mm"></div>`;
+  main.innerHTML = `<h1>记忆和好感</h1><p class="sub">她记住了每个人什么、哪些快忘了、心里挂着什么事、对谁有多少好感。记错的删掉 她以后也不会再记回来；想让她一直记得的「钉住」</p>
+    <div class="row" style="margin-bottom:12px" id="mtabs"><button class="chip on" data-t="mem">记忆</button><button class="chip" data-t="fg">遗忘曲线</button><button class="chip" data-t="fav">好感度</button></div><div id="mm"></div>`;
   let tab = "mem", sel = null;
   const drawMem = async () => {
     const L = (await api("/api/memory")).data || [];
     if (!sel && L.length) sel = L[0].key;
-    $("#mm").innerHTML = `<div class="cols" style="grid-template-columns:300px 1fr"><div class="card list" id="ml">${L.map(x => `<div class="item ${x.key === sel ? "on" : ""}" data-k="${x.key}"><b>${esc(x.name || x.key)}</b> <span class="badge">${x.type === "group" ? "群" : "私聊"}</span><div class="small muted">${x.facts} 条记忆 · ${ago(x.last)}</div></div>`).join("") || '<div class="empty">还没有</div>'}</div><div id="md"></div></div>`;
+    $("#mm").innerHTML = `<div class="cols" style="grid-template-columns:300px 1fr"><div class="card list" id="ml">${L.map(x => `<div class="item ${x.key === sel ? "on" : ""}" data-k="${x.key}"><b>${esc(x.name || x.key)}</b> <span class="badge">${x.type === "group" ? "群" : "私聊"}</span><div class="small muted">${x.facts} 条记忆${x.fuzzy ? ` · ${x.fuzzy} 条模糊` : ""}${x.faint ? ` · ${x.faint} 条快想不起来` : ""} · ${ago(x.last)}</div></div>`).join("") || '<div class="empty">还没有</div>'}</div><div id="md"></div></div>`;
     $("#ml").onclick = e => { const it = e.target.closest(".item"); if (it) { sel = it.dataset.k; drawMem(); } };
     if (sel) drawDetail();
   };
@@ -1299,30 +1513,67 @@ VIEWS.memory = async main => {
     const d = r.data, rel = d.rel || {};
     $("#md").innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">${esc(d.name || d.key)}</h2><span class="badge">${d.key}</span><span class="spacer"></span>${rel.closeness != null ? `<span class="badge acc">亲近度 ${rel.closeness}</span>` : ""}${d.key.startsWith("private_") ? ` <button class="btn small danger" id="wipe1" title="私聊、群里说过的话、记下的关于他的事、好感度 全删">删除这个人的所有数据</button>` : ""}</div>
       ${rel.topic ? `<div class="small muted" style="margin-top:6px">最近在聊：${esc(rel.topic)}</div>` : ""}</div>
-      <div class="card"><h2>她记得的事（${d.facts.length}）</h2>${d.facts.map(f => `<div class="fact"><span class="badge">${esc({fact: "事实", recent: "近况", episode: "经历"}[f.kind] || f.kind || "事实")}</span><span class="t">${esc(f.text)}${f.manual ? ' <span class="badge acc">手动加的</span>' : ""}<div class="small muted">${esc(f.date || "")} · 重要度 ${f.imp ?? "—"} · 想起过 ${f.hits ?? 0} 次</div></span><button class="btn small danger" data-f="${esc(f.id)}">忘掉</button></div>`).join("") || '<div class="muted">还没记什么</div>'}
-        <div class="row" style="margin-top:10px"><input type="text" id="nf" placeholder="让她记住一件事（60 字内）" style="flex:1"><button class="btn" id="addf">记住</button></div>
+      <div class="card"><h2>她记得的事（${d.facts.length}）</h2>${d.forget ? '<p class="small muted" style="margin-top:0">每条后面那根条 = 现在还记得多清楚：没人提就慢慢变淡（先快后慢）；聊到一次就记得更牢。「钉住」的不会忘</p>' : ""}${d.facts.map(f => factRow(f, d.key)).join("") || '<div class="muted">还没记什么</div>'}
+        <div class="row" style="margin-top:10px"><input type="text" id="nf" placeholder="让她记住一件事（60 字内 · 手动加的会钉住）" style="flex:1"><button class="btn" id="addf">记住</button></div>
         ${d.old_facts ? `<div class="small muted" style="margin-top:6px">另外还有 ${d.old_facts} 条旧的（被新的取代 / 归档了）</div>` : ""}</div>
+      ${(d.taboos || []).length ? `<div class="card"><h2>他说过别提的（${d.taboos.length}）</h2><p class="small muted" style="margin-top:0">他明确说「别提 / 别再说 / 别叫我…」才记；跟他聊的时候一直带着（群里私聊都算 按 QQ 号）。记错了就删掉</p>${d.taboos.map((x, i) => `<div class="fact"><span class="t">${x.kind === "call" ? "别叫他「" + esc(x.text) + "」" : "别再" + esc(x.verb || "提") + "他" + esc(x.text)}<div class="small muted">${esc(x.date || "")} 他说的${x.where ? " · " + (String(x.where).startsWith("group_") ? "群里" : "私聊") : ""}</div></span><span class="acts"><button class="btn small danger" data-tb="${i}" data-u="${esc(d.key.slice(8))}">删掉</button></span></div>`).join("")}</div>` : ""}
+      ${(d.inferred || []).length ? `<div class="card"><h2>归档的推断（${d.inferred.length}）</h2><p class="small muted" style="margin-top:0">10-27 起只记「谁、什么时候、说了 / 做了什么」：以前记下的对别人性格 / 态度的判断归档了 平时不再想起 —— 找回 = 拿回来</p>${d.inferred.map(f => factRow(f, d.key, {faded: true})).join("")}</div>` : ""}
+      ${(d.superseded || []).length ? `<details class="card"><summary><b>被新的取代了的（最近 ${d.superseded.length} 条）</b></summary><p class="small muted">同一件事有了新说法：旧的原文和日期都留着（话题碰到时她会知道「以前是…后来变了」）</p>${d.superseded.map(f => factRow(f, d.key, {faded: true})).join("")}</details>` : ""}
+      ${(d.faded || []).length ? `<div class="card"><h2>淡忘的（${d.faded.length}）</h2><p class="small muted" style="margin-top:0">太久没人提、慢慢忘掉的（好几件的会先蒸馏成一句印象）—— 找回 = 拿回来从现在重新算</p>${d.faded.map(f => factRow(f, d.key, {faded: true})).join("")}</div>` : ""}
       ${(rel.loops || []).length ? `<div class="card"><h2>心里挂着的事</h2>${rel.loops.map(l => `<div class="fact"><span class="t">${esc(l.text)}<div class="small muted">${l.due ? "打算 " + hm(l.due) + " 以后问" : ""}</div></span></div>`).join("")}</div>` : ""}
       ${d.summary ? `<div class="card"><h2>前情提要</h2><div class="small" style="white-space:pre-wrap">${esc(d.summary)}</div></div>` : ""}
       <div class="card"><h2>最近聊天</h2><div class="chat">${d.history.map(h => `<div class="${h.role === "assistant" ? "me" : ""}"><span class="muted small">${hm(h.ts)}</span> <b>${esc(h.role === "assistant" ? "她" : h.name)}</b>：${esc(h.text)}</div>`).join("")}</div></div>`;
     $("#md").querySelector(".chat").scrollTop = 1e6;
     $("#md").onclick = async e => {
-      const f = e.target.dataset.f;
-      if (f) { if (!confirm("忘掉这条？以后她也不会再记回来")) return; const r = await api("/api/memory/forget", {key: sel, id: f}); toast(r.ok ? "忘掉了" + (r.offline ? "（机器人没开 直接改的文件）" : "") : (r.error || "没成功"), !r.ok); drawDetail(); }
+      if (await memAct(e, drawDetail)) return;
       if (e.target.id === "wipe1") { if (await wipeFlow(sel.slice(8), d.name)) { sel = null; drawMem(); } return; }
-      if (e.target.id === "addf") { const t = $("#nf").value.trim(); if (!t) return; const r = await api("/api/memory/add", {key: sel, text: t}); toast(r.ok ? "记住了" : (r.error || "没记上（可能已经有了）"), !r.ok); drawDetail(); }
+      if (e.target.id === "addf") { const t = $("#nf").value.trim(); if (!t) return; const r = await api("/api/memory/add", {key: sel, text: t}); toast(r.ok ? "记住了（钉住 不会忘）" : (r.error || "没记上（可能已经有了）"), !r.ok); drawDetail(); }
+    };
+  };
+  const drawForget = async () => {
+    const F = await api("/api/memory/forget");
+    if (!F.ok) { $("#mm").innerHTML = '<div class="card">读不到</div>'; return; }
+    if (!F.on) { $("#mm").innerHTML = '<div class="card"><h2>遗忘曲线没开</h2><p class="small muted">在「功能开关 → 记忆和遗忘」里打开（公开版的记忆是空壳 没有这个）</p></div>'; return; }
+    const t = F.totals, hl = F.half_life || {}, lr = F.last, nh = F.night_hours || [5, 9];
+    const tile = (ic, lab, v, sub) => `<div class="stat"><div class="lbl">${icon(ic)}${lab}</div><b>${num(v)}</b><span>${sub}</span></div>`;
+    $("#mm").innerHTML = `<div class="grid">
+        ${tile("check", "清楚", t.clear, "聊到就想得起来")}
+        ${tile("clock", "模糊", t.fuzzy, "要更多线索 只能说「好像…」")}
+        ${tile("alert", "快想不起来", t.faint, "平时想不起来 今晚整理时会忘掉")}
+        ${tile("heart", "钉住", t.pinned, "不会忘")}
+        ${tile("moon", "淡忘的", t.faded, "已经归档（能找回）")}</div>
+      <div class="cols"><div class="card"><div class="row"><h2 style="margin:0">${icon("moon")}昨晚整理</h2><span class="spacer"></span>
+          <button class="btn small" id="cons" ${F.consolidating ? "disabled" : ""} title="不等今晚 现在就整理一次（要蒸馏的话每个人调一次模型）">${F.consolidating ? "正在整理…" : "现在整理一次"}</button></div>
+          ${lr ? `<div class="small muted" style="margin:6px 0 8px">${esc(lr.why || "")} · ${hm(lr.ts)} · 蒸馏 ${(lr.gists || []).length} 个印象 · 归档 ${num(lr.archived)} 条 · 调模型 ${num(lr.calls)} 次</div>
+            ${(lr.gists || []).map(g => `<div class="fact"><span class="badge acc">印象</span><span class="t">${esc(g.text)}<div class="small muted">${esc(g.who || "群")} · ${esc(g.conv_name || g.conv)} · ${num(g.n)} 件快忘的事并进来${g.active ? "" : " · 已经被更新的印象取代"}</div></span></div>`).join("") || '<div class="muted small">没有要蒸馏的（还没有谁的事快忘了）</div>'}`
+            : `<div class="muted small" style="margin-top:8px">还没整理过：每天北京时间 ${nh[0]}~${nh[1]} 点她睡着后整理一次</div>`}</div>
+        <div class="card"><h2>${icon("sparkle")}她做的梦</h2>${(F.dreams || []).slice().reverse().map((x, i) => `<div class="${i ? "small muted" : "dream"}" style="${i ? "margin-top:8px" : ""}">${esc(x.text)}<div class="small muted">${esc(x.day || "")}${i ? "" : " · 今天醒来还记得（聊天时可能提一句）"}</div></div>`).join("") || '<div class="muted small">还没做过梦（夜里整理完会做一个）</div>'}</div></div>
+      <div class="card"><h2>快忘掉的（7 天内）</h2><p class="small muted" style="margin-top:0">再没人提 这些很快就会变模糊 / 想不起来。想让她一直记得就「钉住」；也可以「现在忘」</p>
+        ${(F.soon || []).map(f => factRow(f, f.conv, {showConv: true})).join("") || '<div class="empty">没有快忘的</div>'}</div>
+      <div class="card"><h2>遗忘曲线</h2><p class="small muted" style="margin-top:0">没人提的话 每个等级的记忆过多少天变淡（先快后慢）；每被聊到一次 半衰期就变长（快忘了才想起来 加得越多），12 小时内只算一次</p>
+        <div id="fgc"></div>
+        <table class="lvtab" style="margin-top:10px"><tr><th>等级</th><th>例子</th><th>半衰期</th><th>开始模糊</th><th>想不起来</th><th>现在有</th></tr>
+        ${[1, 2, 3, 4, 5].map(k => `<tr><td><b>L${k}</b> ${esc(LV_NAME[k])}</td><td class="muted">${esc(LV_EG[k])}</td><td>${hl[k]} 天</td><td>第 ${dayTxt(hl[k] * Math.log2(1 / F.fuzzy))}</td><td>第 ${dayTxt(hl[k] * Math.log2(1 / F.faint))}</td><td>${num((F.levels || {})[k])} 条</td></tr>`).join("")}
+        <tr><td><b>钉住</b></td><td class="muted">名字、生日、她起的外号、有人说「记住…」、你手动加的</td><td>—</td><td>—</td><td>不忘</td><td>${num((F.levels || {})[0])} 条</td></tr></table>
+        <p class="small muted">等级怎么定：类型打底（近况 L2、她自己的经历 L2、事实和喜好 L3）· 重要或情绪浓 +1 · 鸡毛蒜皮 −1 · 熟人（好感 ≥ 40）或你的事 +1</p></div>
+      ${(F.faded || []).length ? `<div class="card"><h2>最近淡忘的（14 天）</h2>${F.faded.map(f => factRow(f, f.conv, {faded: true, showConv: true})).join("")}</div>` : ""}`;
+    forgetChart($("#fgc"), hl, F.fuzzy, F.faint);
+    $("#mm").onclick = async e => {
+      if (await memAct(e, drawForget)) return;
+      if (e.target.closest("#cons")) { const b = e.target.closest("#cons"); b.setAttribute("disabled", ""); const r = await api("/api/memory/consolidate", {}); toast(r.ok ? (r.msg || "开始整理了") : (r.error || "没开始"), !r.ok); setTimeout(drawForget, 8000); }
     };
   };
   const drawFav = async () => {
     const L = (await api("/api/favor")).data || [];
-    $("#mm").innerHTML = `<div class="card"><p class="small muted" style="margin-top:0">好感度 0~100：0 陌生人 · 20 认识的人 · 40 熟人（可以互骂了）· 60 好朋友 · 80 特别的人。每跨过一档 她会做一件那一档才做的小事</p>
+    $("#mm").innerHTML = `<div class="card"><p class="small muted" style="margin-top:0">好感度 0~100：0 陌生人 · 20 认识的人 · 40 熟人（可以互骂了 关于他的事记得更久）· 60 好朋友 · 80 特别的人。每跨过一档 她会做一件那一档才做的小事</p>
       <table><tr><th>谁</th><th>现在</th><th>好感度</th><th>聊过</th><th>认识多久</th><th></th></tr>${L.map(u => `<tr><td><b>${esc(u.name || "—")}</b><div class="small muted">${u.uid}</div></td><td><span class="badge acc">${u.stage}</span></td>
       <td><input type="range" min="0" max="100" value="${u.favor}" data-u="${u.uid}" style="width:180px"> <b data-v="${u.uid}">${u.favor}</b></td><td>${u.chats} 次</td><td>${ago(u.first)}</td><td><button class="btn small" data-s="${u.uid}">保存</button> <button class="btn small danger" data-w="${u.uid}" data-wn="${esc(u.name || "")}" title="私聊、群里说过的话、记下的关于他的事、好感度 全删">删数据</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">还没有</td></tr>'}</table></div>`;
     $("#mm").oninput = e => { const u = e.target.dataset.u; if (u) $(`[data-v="${u}"]`).textContent = e.target.value; };
     $("#mm").onclick = async e => { if (e.target.dataset.w) { if (await wipeFlow(e.target.dataset.w, e.target.dataset.wn)) drawFav(); return; } const u = e.target.dataset.s; if (!u) return; const v = $(`[data-u="${u}"]`).value; const r = await api("/api/favor", {uid: u, favor: Number(v)}); toast(r.ok ? `好感度改成 ${r.favor}` : (r.error || "没成功"), !r.ok); };
   };
-  main.querySelector(".row").onclick = e => { const t = e.target.dataset.t; if (!t) return; tab = t; main.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.t === t)); tab === "mem" ? drawMem() : drawFav(); };
-  drawMem();
+  const go = t => { tab = t; main.querySelectorAll("#mtabs .chip").forEach(c => c.classList.toggle("on", c.dataset.t === t)); $("#mm").onclick = null; $("#mm").oninput = null; tab === "mem" ? drawMem() : tab === "fg" ? drawForget() : drawFav(); };
+  $("#mtabs").onclick = e => { const t = e.target.dataset.t; if (t) go(t); };
+  go(NEXT_TAB || "mem"); NEXT_TAB = "";
 };
 
 /* ───────── 唱歌 ───────── */
@@ -1417,6 +1668,70 @@ VIEWS.sing = async main => {
   await draw();
 };
 
+/* ───────── QQ 空间（10-27 v1.3.0）───────── */
+VIEWS.qzone = async main => {
+  main.innerHTML = `<h1>QQ 空间</h1><p class="sub">她自己会刷好友的说说（看、点赞、偶尔评论），也会发自己的说说、回说说下面的评论；有人叫她看空间就当场去看。规矩和上限在「功能开关 → QQ 空间」</p><div id="qz"></div>`;
+  const SRC = {feed: "刷到的", ask: "叫她看的"};
+  const draw = async () => {
+    const d = await api("/api/qzone");
+    const box = $("#qz"); if (!box) return;
+    if (!d.ok) { box.innerHTML = `<div class="card">读不到：${esc(d.error || "")}</div>`; return; }
+    if (!d.on) { box.innerHTML = '<div class="card"><h2>空间功能关着</h2><p class="small muted">在「功能开关 → QQ 空间」里打开（要重启机器人）</p></div>'; return; }
+    const c = d.cfg || {}, t = d.today || {}, st = d.selftest || {}, pl = d.plan || {};
+    const dry = Object.entries(d.dry || {}).filter(([, v]) => v).map(([k]) => ({like: "点赞", comment: "评论", post: "发说说", reply: "回评论"}[k] || k));
+    const tile = (ic, lab, v, sub) => `<div class="stat"><div class="lbl">${icon(ic)}${lab}</div><b>${v}</b><span>${sub}</span></div>`;
+    const planTxt = pl.day !== undefined && pl.day ? (pl.done ? "今天的发过了（或者算了）" : pl.go ? `打算 ${hm(pl.at).slice(-5)} 前后发一条` : "今天不打算发") : "还没定";
+    box.innerHTML = `
+      ${d.paused ? `<div class="card alert"><b>空间先歇着</b>（${esc(d.pause_why || "")}）· 到 ${hm(d.pause_until)} · 聊天不受影响 <button class="btn small" data-q="resume">不歇了 再试一次</button></div>` : ""}
+      ${d.like_off ? '<div class="card alert">一天里好几次点赞没生效（接口回了成功 但空间里没赞上）→ 今天先不点赞了；看日志 [空间]</div>' : ""}
+      ${dry.length ? `<div class="card alert">试运行中：${dry.join("、")} 只记不做（功能开关 → QQ 空间 → 试运行）</div>` : ""}
+      <div class="grid">
+        ${tile("list", "今天看了", num(t.read), d.last_read ? "上次刷：" + ago(d.last_read) : "还没刷过")}
+        ${tile("heart", "点赞", `${num(t.like)}<small class="muted"> / ${c.like_daily}</small>`, "每天上限")}
+        ${tile("msg", "评论", `${num(t.comment)}<small class="muted"> / ${c.comment_daily}</small>`, `好感 ≥ ${c.comment_min_favor} 才评`)}
+        ${tile("send", "发说说", `${num(t.post)}<small class="muted"> / ${c.post_daily}</small>`, planTxt)}
+        ${tile("reply", "回评论", `${num(t.reply)}<small class="muted"> / ${c.reply_daily}</small>`, `同一个人最多 ${c.reply_rounds} 轮`)}
+      </div>
+      <div class="card"><div class="row"><h2 style="margin:0">登录和自检</h2>
+        <span class="badge ${st.ok ? "good" : st.t ? "warn" : ""}">${st.ok ? "正常" : st.t ? "没过" : "还没试"}</span>
+        <span class="small muted">${esc(st.msg || "")}${st.t ? " · " + ago(st.t) : ""}</span><span class="spacer"></span>
+        <button class="btn small" data-q="selftest">重新自检</button></div>
+        <div class="row" style="margin-top:10px"><button class="btn small primary" data-q="read">现在刷一次</button><button class="btn small" data-q="post">现在发一条</button>
+          <button class="btn small" data-q="reply">看看评论</button><button class="btn small" data-q="visitors">看访客</button>
+          <span class="small muted">登录态每次找 NapCat 现要（不存密码）；她醒着时大约每 ${c.read_every_min} 分钟刷一次</span></div></div>
+      <div class="card"><h2>她发的说说（${d.mine.length}）</h2>
+        ${d.mine.length ? d.mine.map(m => `<div class="fact"><span class="t">${esc(m.text)}<div class="small muted">${hm(m.ts)} · ${esc(m.src)}${m.cmtnum ? " · " + m.cmtnum + " 条评论" : ""}</div></span>
+          <span class="acts">${m.deleted ? '<span class="badge">删了</span>' : `<button class="btn small danger" data-q="delete" data-tid="${esc(m.tid)}">删掉</button>`}</span></div>`).join("") : '<div class="empty">还没发过</div>'}
+        ${d.dry_posts.length ? `<div class="small muted" style="margin-top:10px">试运行（本来会发的）：</div>${d.dry_posts.map(x => `<div class="fact"><span class="t muted">${esc(x.text)}<div class="small">${hm(x.ts)}</div></span></div>`).join("")}` : ""}
+        <div class="small muted" style="margin-top:8px">所有人可见。素材：日记那句 / B站刷到的 / 心情和日常 / 群里的趣事（不点名、私聊里的事不写）</div></div>
+      <div class="card"><h2>她最近看的</h2>
+        ${d.feed.length ? d.feed.map(x => `<div class="fact"><span class="t"><b>${esc(x.name)}</b> <span class="small muted">${x.ts ? ago(x.ts) + "发的" : ""} · ${SRC[x.src] || ""}</span><div>${esc(x.text) || '<span class="muted">（没写字）</span>'}${x.img ? `<span class="small muted">（图：${esc(x.img)}）</span>` : ""}</div>
+          ${x.take ? `<div class="small">她：${esc(x.take)}</div>` : ""}</span>
+          <span class="acts">${x.sensitive ? '<span class="badge warn">沉重</span>' : ""}${x.liked ? '<span class="badge good">赞了</span>' : ""}${x.commented ? `<span class="badge acc" title="${esc(x.comment)}">评了：${esc(x.comment).slice(0, 14)}</span>` : ""}${x.mp ? '<span class="badge">私聊提过</span>' : ""}${x.mg ? `<span class="badge">群里提过</span>` : ""}</span></div>`).join("") : '<div class="empty">还没刷到</div>'}</div>
+      <div class="cols" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+        <div class="card"><h2>她回的评论</h2>${d.replies.length ? d.replies.map(r => `<div class="fact"><span class="t"><b>${esc(r.name)}</b>：${esc(r.to)}<div>她${r.dry ? "（试运行）" : ""}：${esc(r.text)}</div><div class="small muted">${hm(r.ts)}</div></span></div>`).join("") : '<div class="empty">还没回过</div>'}</div>
+        <div class="card"><h2>访客</h2>${d.visitors.length ? d.visitors.map(v => `<div class="fact"><span class="t">${esc(v.name)} <span class="small muted">${ago(v.ts)}</span></span></div>`).join("") : '<div class="empty">还没看过访客（一天看一次）</div>'}</div>
+      </div>
+      <div class="card"><h2>不看名单</h2><p class="small muted" style="margin-top:0">有人跟她说「别看我空间」「别在群里提我空间」就记在这里；他说「可以看了」会自己撤销</p>
+        ${d.off.map(x => `<div class="fact"><span class="t">${esc(x.name)} <span class="small muted">${esc(x.uin)} · 别看他的空间${x.t ? " · " + hm(x.t) : ""}</span></span><span class="acts"><button class="btn small" data-q="unoff" data-uid="${esc(x.uin)}">撤销</button></span></div>`).join("")}
+        ${d.nogroup.map(x => `<div class="fact"><span class="t">${esc(x.name)} <span class="small muted">${esc(x.uin)} · 别在群里提他的空间</span></span><span class="acts"><button class="btn small" data-q="ungroup" data-uid="${esc(x.uin)}">撤销</button></span></div>`).join("")}
+        ${d.off.length || d.nogroup.length ? "" : '<div class="empty">没有</div>'}</div>
+      ${d.events.length ? `<div class="card"><h2>最近</h2>${d.events.map(e => `<div class="small" style="padding:3px 0"><span class="muted">${hm(e.t)}</span> <b>${esc(e.what)}</b> ${esc(e.text)}</div>`).join("")}</div>` : ""}`;
+  };
+  $("#qz").onclick = async e => {
+    const b = e.target.closest("[data-q]"); if (!b || b.hasAttribute("disabled")) return;
+    const q = b.dataset.q;
+    if (q === "delete" && !confirm("删掉这条说说？（QQ 空间上真删 找不回来）")) return;
+    if (q === "post" && !confirm("现在让她发一条说说？（所有人可见）")) return;
+    b.setAttribute("disabled", ""); const old = b.textContent; b.textContent = "稍等…";
+    const r = await api("/api/qzone", {what: q, tid: b.dataset.tid, uid: b.dataset.uid});
+    b.removeAttribute("disabled"); b.textContent = old;
+    toast(r.ok ? (r.msg || "好了") + (r.text ? "：" + r.text : "") : (r.error || "没成"), !r.ok);
+    draw();
+  };
+  await draw();
+};
+
 /* ───────── 表情包 ───────── */
 VIEWS.stickers = async main => {
   STK = null; const S = await stickers();
@@ -1438,6 +1753,14 @@ VIEWS.stickers = async main => {
 };
 
 /* ───────── 统计 ───────── */
+// 心情曲线的点（10-28 审查 panel-3）：用后台按机器人的时区换好的时间戳；旧后台没给 就把「2026-10-27 22」当北京时间
+// 以前 new Date("2026-10-27T22:00:00") 按这台电脑的时区解析、再按北京时间显示 电脑在英国整条线就往后挪 8 小时
+function moodPts(mood) {
+  return (mood || []).map(([k, v, t]) => {
+    if (t == null) { const [d, H] = String(k).split(" "), [y, m, dd] = String(d).split("-").map(Number); t = bjts(y, m, dd, +H); }
+    return [t, v];
+  }).filter(p => Number.isFinite(p[0]));
+}
 VIEWS.stats = async main => {
   main.innerHTML = `<h1>统计</h1><p class="sub">花费是按下面的价格估的 只是个大概</p><div class="row" style="margin-bottom:12px">${[7, 14, 30, 90].map(d => `<button class="chip ${d === 14 ? "on" : ""}" data-d="${d}">${d} 天</button>`).join("")}</div><div id="sv"></div>`;
   const draw = async days => {
@@ -1462,9 +1785,9 @@ VIEWS.stats = async main => {
     bars($("#c1"), lab, [{name: "收到", color: "var(--c1)", values: s.days.map(d => (d.recv_private || 0) + (d.recv_group || 0))}, {name: "回复", color: "var(--c2)", values: s.days.map(d => (d.replies_private || 0) + (d.replies_group || 0))}]);
     bars($("#c2"), lab, [{name: "DeepSeek", color: "var(--c1)", values: s.days.map(d => d.cost.deepseek)}, {name: "语音", color: "var(--c2)", values: s.days.map(d => d.cost.voice)}, {name: "搜索", color: "var(--c3)", values: s.days.map(d => d.cost.search)}], {stacked: true, money: true});
     curvechart($("#c4"), s.budget);
-    const pts = (s.mood || []).map(([k, v]) => [new Date(k.replace(" ", "T") + ":00:00").getTime() / 1000, v]);
+    const pts = moodPts(s.mood);
     linechart($("#c3"), pts.length ? pts : (s.timeline || []).map(x => [x.t, x.mood, x.why]));
-    $("#sp").onclick = async () => { const p = {}; document.querySelectorAll("[data-k]").forEach(x => p[x.dataset.k] = x.value); const r = await api("/api/prices", {prices: p}); toast(r.ok ? "价格存好了" : "没存上", !r.ok); draw(days); };
+    $("#sp").onclick = async () => { const p = {}; document.querySelectorAll("[data-k]").forEach(x => p[x.dataset.k] = x.value); const r = await api("/api/prices", {prices: p}); toast(r.ok ? "价格存好了" : (r.error || "没存上"), !r.ok); draw(days); };
   };
   main.querySelector(".row").onclick = e => { const d = e.target.dataset.d; if (!d) return; main.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.d === d)); draw(Number(d)); };
   draw(14);

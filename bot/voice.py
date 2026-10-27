@@ -14,7 +14,9 @@ import random
 import re
 import shutil
 import subprocess
+import threading
 import time
+import uuid
 import wave
 from pathlib import Path
 
@@ -58,17 +60,32 @@ EMO_NAMES = "开心/撒娇/得意/害羞/难过/委屈/生气/嫌弃/惊讶/害�
 # 对方想听她说话（10-26：以前「我要听语音」「想听语音」「给我语音」「发两句语音」都认不出来 → 群里她说发不了）
 _N = r"(个|条|段|句|一条|一段|一句|两条|两段|两句|几条|几句|一两句)?"
 _NOT = r"(?!识别|软件|输入|通话|电话|转|包|库|房|聊天室|助手|功能|消息提醒)"   # 「语音识别」「语音软件」…不是要她的语音
+# 「出声 / 开口说」前面是否定（别 / 不要 / 不准 / 禁止 / 别再…）不算在要（10-28 审查 media-1 复核：以前只挡了单字「别出声」）
+_NO = r"(?<![别不少甭])(?<!不要)(?<!不准)(?<!不许)(?<!禁止)(?<!别再)(?<!不再)(?<!要再)"
 ASK = re.compile(r"(发|来|整|录|说|回|(?<![在正刚])听|(?<!不)要|给我|想要)" + _N + r"(你的?)?语音" + _NOT +
                  r"|语音(回|说|发|聊|版)|用语音|"
-                 r"(听听?|想听|要听)你(的)?(声音|说话|讲话)|你(的)?声音(什么样|好听|怎么样|啥样)|出个?声|开个?口说|"
+                 # 「不想听你说话」「别出声」「笑出声」不算（10-28 审查 media-1）
+                 #   挡的是「不想 / 不要 / 没」这些否定：「我想要听你的声音」「我也要听你说话」照算（10-28 审查 media-1 复核：以前单字挡了「想 / 要」这两句也认不出了）
+                 r"(?<![不别没听])(?<!不想)(?<!没想)(?<!不要)(?<!不想要)(想要听|想听|要听|听听?)你(的)?(声音|说话|讲话)|你(的)?声音(什么样|好听|怎么样|啥样)|"
+                 + _NO + r"(?<![笑哭])出个?声|" + _NO + r"开个?口说|"
                  r"你会说话吗|说句话(给我)?听|(说|讲)(两|几|一)?句话?(给我|让我|给大家)听|念(一下|一遍|出来|给我听)|"
                  r"^\s*(@\S+\s*)*语音(呢|啊|呀|吧|嘛|来)?\s*[!！?？~～。]*\s*$")
 # 刚才在聊语音的时候 「说两句」「说句话」也算（10-26 小明 在群里 @她「说两句话」她打了字）
-ASK_CTX = re.compile(r"(说|讲|来)(两|几|一)?句(话)?|开口|出声|说话")
-CTX_HINT = re.compile(r"语音|声音|嗓子|开口|说话")
+ASK_CTX = re.compile(r"(说|讲|来)(两|几|一)?句(话)?|开口|(?<![笑哭])出声|说话")
+# 「正在聊语音」只看这几个词（10-28 审查 media-1：以前还认「说话 / 开口」—— 「别说话了」自己就成了「在聊语音」的上下文）
+CTX_HINT = re.compile(r"语音|声音|嗓子")
+# 叫她别出声、嫌她不好好说话、不想听她说的（10-28 审查 media-1）：不算让她「说两句」
+_HUSH = re.compile(r"(别|不|少|甭|不要|不用|不准|不许|禁止|好好)(再|老|总|在)?(说|讲|开口|出声)|(不想|不要|不爱|懒得|别)(再)?听")
 # 对方不想要语音（上课、图书馆、开会…）
-NEG = re.compile(r"(别|不要|不用|甭|少|不想|不想要|不爱|不听|听不了|没法听|不方便听?)(再)?(给我)?(发|来|整|用|听)?(你的?)?(个|条)?语音"
+#   10-28 审查 media-1：补上「不准 / 不许 / 禁止 / 能不能不 / 别老」和光一个「不发语音」
+#   （「你怎么不发语音」「不发语音吗」是在要 不算）—— 以前这几句先被 ASK 里的「发…语音」认成在要语音
+#   光一个「不发语音」只认一句话开头 / 断句后（前面最多带「先 / 今天 / 以后…」）：「怎么还不发语音」「你从来不发语音」
+#   「要不发语音吧」「你不发语音我就…」是在催她发 不能当成别发（10-28 审查 media-1 复核：以前这几句会被静音 12 小时）
+NEG = re.compile(r"(别|不要|不用|甭|少|不想|不想要|不爱|不听|听不了|没法听|不方便听?|不准|不许|禁止|能不能不|可不可以不)"
+                 r"(再|老是?|总是?|一直|天天){0,2}(给我)?(发|来|整|用|听)?(你的?)?(个|条)?语音"     # 「别老是发语音」也算（10-28 审查 media-1 复核）
                  + _NOT + "|"
+                 r"(?:^|(?<=[\s,，.。!！?？~～、；;]))(先|就|那就|今天|今晚|现在|暂时|以后)?不(再)?(发|用)(你的?)?语音" + _NOT
+                 + r"(?![吗呢嘛?？]|了[吗嘛?？])|"
                  r"(在|正在)(上课|开会|图书馆).{0,6}语音")
 
 _permits = {}            # 对话 -> {"until": 截止, "left": 还能发几条}
@@ -103,6 +120,24 @@ def _save(s):
         STATE_FILE.write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
     except Exception:
         pass
+
+
+def muted_convs(now=None):
+    """现在还在「别发语音」里的对话（控制台快捷操作用 10-27）"""
+    now = now or time.time()
+    return [c for c, v in (_state().get("conv") or {}).items() if isinstance(v, dict) and float(v.get("mute_until") or 0) > now]
+
+
+def unmute_all():
+    """控制台「解除别发语音」：所有对话都放开 → 放开了几个"""
+    s = _state()
+    n = 0
+    for v in (s.get("conv") or {}).values():
+        if isinstance(v, dict) and v.pop("mute_until", None):
+            n += 1
+    if n:
+        _save(s)
+    return n
 
 
 def tts_ready():
@@ -140,8 +175,8 @@ def asked_for(texts, context=None):
     texts = [t for t in (texts or [])[-3:] if t]
     if any(ASK.search(t) for t in texts):
         return True
-    return bool(context) and any(ASK_CTX.search(t) for t in texts) and \
-        any(CTX_HINT.search(c or "") for c in context[-6:])
+    return bool(context) and any(ASK_CTX.search(t) and not _HUSH.search(t) for t in texts) and \
+        any(CTX_HINT.search(c or "") and not NEG.search(c or "") for c in context[-6:])   # 「别发语音了」不算在聊语音（10-28 审查 media-1 复核：以前接着「说两句」就解除静音）
 
 
 def plan(conv, scene, texts, last_is_voice=False, context=None):
@@ -574,18 +609,23 @@ def _tag(v, pat):
     return m.group(1) if m else ""
 
 
+_REC_LOCK = threading.Lock()   # 同一个听写模型一次只听一条（10-28 Codex #9：两条语音一起来时 两个线程同时用一个模型）
+
+
 def recognize(path):
     """听写一个音频文件 → {"text", "emo", "event", "secs"}；听不了返回 None"""
-    rec = _load()
+    with _REC_LOCK:                        # 第一次用时加载模型：别两个线程一起加载
+        rec = _load()
     if rec is None:
         return None
     a, sr = _read_audio(path)
     if a is None or not len(a):
         return None
-    st = rec.create_stream()
-    st.accept_waveform(sr, a)
-    rec.decode_stream(st)
-    r = st.result
+    with _REC_LOCK:
+        st = rec.create_stream()
+        st.accept_waveform(sr, a)
+        rec.decode_stream(st)
+        r = st.result
     raw = str(r)
     text = (getattr(r, "text", "") or "").strip()
     emo = _tag(getattr(r, "emotion", "") or raw, r"(HAPPY|SAD|ANGRY|NEUTRAL|FEARFUL|DISGUSTED|SURPRISED)")
@@ -599,7 +639,7 @@ async def hear(data, call, log=log_default):
     if (C.get("stt") or "sensevoice") == "off":
         return "[语音]"
     t0 = time.time()
-    path = None
+    path = tmp = None
     params = {k: str(data[k]) for k in ("file", "file_id") if data.get(k)}
     if params:
         try:
@@ -611,7 +651,8 @@ async def hear(data, call, log=log_default):
             elif d.get("base64"):
                 import base64
                 OUT_DIR.mkdir(parents=True, exist_ok=True)
-                path = OUT_DIR / "in_last.wav"
+                # 每条语音自己一个文件（10-28 Codex #9：以前都写 in_last.wav 两条一起来 后一条盖掉前一条 两条听成同一句）
+                path = tmp = OUT_DIR / f"in_{uuid.uuid4().hex[:12]}.wav"
                 path.write_bytes(base64.b64decode(d["base64"]))
             elif r is not None:
                 log("[听语音] get_record 没给文件:", str(r)[:160])
@@ -629,6 +670,12 @@ async def hear(data, call, log=log_default):
     except Exception as e:
         log("[听语音] 听写出错:", repr(e)[:120])
         return "[语音]"
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
     if res is None:
         log(f"[听语音] 没听成：{_rec_err or '读不出音频'}")
         return "[语音]"

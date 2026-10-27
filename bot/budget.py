@@ -7,7 +7,9 @@
 
   u     最近 24 小时花了多少钱（美元：DeepSeek token + MiniMax 语音 + 搜索，按 config → panel.prices 折算）
   u半   花到这么多 意愿就掉到一半左右（config → budget.half_usd，默认 0.3）
-  k     形状，小于 1：一开始掉得很快（很快到一半），之后越来越慢地往下掉（默认 0.6）
+  k     形状，小于 1：一开始掉得很快（很快到一半），之后越来越慢地往下掉（默认 0.6 省着花）
+        大于 1：前面几乎不掉 快花到 u半 才往下掉（按预算花）—— 作者 10-28 按每天 ¥15 的预算填 u半 1.69（≈ ¥12）、k 4：
+        花 ¥5 → 97%   ¥7 → 91%   ¥10 → 71%   ¥12 → 55%   ¥15 → 36%（那时被 @ 的还回 90%、接话 8%、插话 5%）
   底线  再怎么花也留着的意愿（默认 0.1）
 
   例（默认参数）：花 $0.05 → 77%   $0.1 → 69%   $0.3 → 55%   $0.6 → 46%   $1 → 39%   $2 → 32%   $5 → 24%
@@ -21,10 +23,12 @@
   冒泡/冷场试探/收尾/主动找人  w^3
 同一个人被跳过之后又来找她：每被跳过一次 概率开一次方（越执着越容易回）
 火力全开（控制台 / 老板私聊「火力全开」）：私聊、找她、接话、插话 都不掷了（插话还是 bot.py 那边挑着接）；冒泡/主动 照常
+控制台「回复意愿 从现在重新算」（10-27）：花费只从点的那一刻算起（统计里的钱不动）；过了统计窗口（24 小时）自动失效
 """
 import random
 import time
 
+import clock
 import control
 import stats
 
@@ -67,15 +71,54 @@ def curve(u, half=None, shape=None, floor=None):
     return floor + (1.0 - floor) / (1.0 + (u / half) ** shape)
 
 
-def usage():
-    return stats.spent(float(_cfg.get("window_hours", 24)))
+def reset_state(now=None, window=None):
+    """控制台「回复意愿 从现在重新算」（10-27）：{"ts": 点的时间, "base": 那一小时已经花了的} / None（没点 或者已经过了统计窗口）"""
+    r = control.rules().get("budget_reset") or {}
+    try:
+        ts = float(r.get("ts") or 0)
+    except (TypeError, ValueError):
+        return None
+    now = now or time.time()
+    if ts <= 0 or now - ts > float(window or _cfg.get("window_hours", 24)) * 3600:
+        return None
+    return {"ts": ts, "base": float(r.get("base") or 0), "by": r.get("by") or ""}
+
+
+def usage(now=None, hours_dict=None, window=None):
+    """最近 window_hours 小时花了多少（美元）；控制台点过「从现在重新算」→ 只算点了以后花的
+    （统计按整点记：点的那一小时 减掉点的时候这一小时已经花了的）。hours_dict：控制台自己读的 stats.json 里的 hours"""
+    now = now or time.time()
+    hours = float(window or _cfg.get("window_hours", 24))
+    hs = hours_dict if hours_dict is not None else (stats._load().get("hours") or {})
+    keys = {clock.strf("%Y-%m-%d %H", now - i * 3600) for i in range(max(1, int(hours)))}
+    r = reset_state(now, hours)
+    if not r:
+        return sum(v for k, v in hs.items() if k in keys)
+    hk = clock.strf("%Y-%m-%d %H", r["ts"])
+    return sum(v for k, v in hs.items() if k in keys and k > hk) + max(0.0, float(hs.get(hk, 0)) - r["base"])
+
+
+def reset_now(by="控制台", hours_dict=None):
+    """回复意愿从现在起重新算（不动统计里的花费 只是省 token 这条曲线从 0 开始）"""
+    now = time.time()
+    hs = hours_dict if hours_dict is not None else (stats._load().get("hours") or {})
+    base = float(hs.get(clock.strf("%Y-%m-%d %H", now), 0))
+    control._edit(lambda d: d.__setitem__("budget_reset", {"ts": now, "base": base, "by": str(by)[:20]}))
+    return status()
+
+
+def reset_clear():
+    control._edit(lambda d: d.pop("budget_reset", None))
+    return status()
 
 
 def status():
     u = usage()
+    r = reset_state()
     return {"enabled": bool(_cfg.get("enabled", True)), "spent": round(u, 4), "will": round(curve(u), 3),
             "half_usd": _cfg["half_usd"], "shape": _cfg["shape"], "floor": _cfg["floor"],
-            "window_hours": _cfg.get("window_hours", 24), "powers": dict(_cfg["powers"]), "full": control.full_state()}
+            "window_hours": _cfg.get("window_hours", 24), "powers": dict(_cfg["powers"]), "full": control.full_state(),
+            "reset": r, "spent_all": round(stats.spent(float(_cfg.get("window_hours", 24))), 4) if r else round(u, 4)}
 
 
 def allow(kind, owner=False, conv="", uid="", now=None):

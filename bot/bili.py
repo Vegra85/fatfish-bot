@@ -6,6 +6,7 @@
 """
 import json
 import random
+import re
 import time
 from pathlib import Path
 
@@ -107,6 +108,46 @@ def latest_pic():
         if i.get("pic"):
             return i["pic"]
     return None
+
+
+# 她回复里的封面标记：[[IMG]] / [[IMG:BV号]]（10-28 审查 media-10）
+IMG_MARK = re.compile(r"\[\[IMG(?:[:：]\s*([^\[\]\s]{1,24}))?\s*\]\]")
+BV = re.compile(r"BV[0-9A-Za-z]{10}")
+
+
+def _grams(s):
+    s = re.sub(r"[\W\d_]", "", str(s or "").lower())
+    return {s[k:k + 2] for k in range(len(s) - 1)}
+
+
+def pic_for(text="", bvid=None, n=8):
+    """[[IMG]] 发哪张封面（10-28 审查 media-10：以前一律发最新那条的 她聊的是别的视频时图文对不上）：
+    写了 BV 号 / 话里带着视频链接 → 那一条的；没写 → 最近 n 条里跟她这句话对得上的那条（只算那条独有的字 两个以上、不并列）；
+    最近只有一条 → 就是它；对不上 → None（宁可不发 也别发错）"""
+    items = [i for i in load_trends().get("items", []) if i.get("pic")][-n:]
+    if not items:
+        return None
+    ids = [bvid] if bvid and BV.fullmatch(str(bvid)) else BV.findall(text or "")
+    if ids:
+        for b in ids:
+            for i in reversed(items):
+                if i.get("bvid") == b:
+                    return i["pic"]
+        return None
+    if len(items) == 1:
+        return items[0]["pic"]
+    mine = _grams(f"{text or ''} {bvid or ''}")
+    gs = [_grams(" ".join([i.get("top") or "", i.get("take") or "", i.get("about") or ""] + list(i.get("videos") or [])))
+          for i in items]
+    best, score, tie = None, 0, False
+    for k, i in enumerate(items):
+        own = gs[k] - set().union(*(g for j, g in enumerate(gs) if j != k))
+        s = len(mine & own)
+        if s > score:
+            best, score, tie = i, s, False
+        elif s and s == score:
+            tie = True
+    return best["pic"] if best and score >= 2 and not tie else None
 
 
 def prune(t, hours=72):

@@ -5,13 +5,27 @@
   动图（多帧 GIF / WEBP）：均匀抽最多 6 帧 拼成一张 3×2 的图 角上标顺序
       —— 不然模型只看得到第一帧 动图表情包的「动作」全丢了（借鉴 qq-bridge 的做法）
   静态 GIF / WEBP：转成 PNG（有的模型不收）
-  特别大的图：长边缩到 max_edge（截图太大 本地识图会报错 也慢）
+  特别大的图：长边缩到 max_edge（截图太大 本地识图会报错 也慢）；长截图窄的那边至少留 TALL_MIN（10-28 审查 media-12）
   没装 Pillow 或者处理失败：原样返回 不影响原来的流程
 """
 import io
 
 GRID_MAX = 6
 TILE = 300
+# 长截图（一边比另一边长两倍多）：缩完窄的那边至少留这么宽（10-28 审查 media-12：以前只按长边缩 1080×6000 → 230×1280 字全糊了）
+TALL_MIN = 720
+TALL_PIXELS = 3_200_000      # 但总像素不超过这么多（大约 720×4400）
+TALL_EDGE = 5000             # 长边也别超过这么长（有的识图模型收不了太长的图）
+
+
+def _fit(w, h, max_edge):
+    """缩到多大：平常按长边缩到 max_edge；长截图保证窄的那边够宽（字看得清）—— 总像素、长边各有上限"""
+    s = max_edge / max(w, h)
+    short = min(w, h)
+    if short * s < TALL_MIN and max(w, h) > 2 * short:
+        s = max(s, min(TALL_MIN / short, (TALL_PIXELS / (w * h)) ** 0.5, TALL_EDGE / max(w, h)))
+    s = min(s, 1.0)
+    return max(1, round(w * s)), max(1, round(h * s))
 
 
 def _frames(im):
@@ -75,13 +89,13 @@ def prep(data, mime, max_edge=1600):
             im.seek(0)
             fr = im.convert("RGBA")
             if max(fr.size) > max_edge:
-                fr.thumbnail((max_edge, max_edge))
+                fr.thumbnail(_fit(*fr.size, max_edge))
             out = io.BytesIO()
             fr.save(out, "PNG")
             return out.getvalue(), "image/png", ""
         if max(im.size) > max_edge:
             im = im.convert("RGB")
-            im.thumbnail((max_edge, max_edge))
+            im.thumbnail(_fit(*im.size, max_edge))
             out = io.BytesIO()
             im.save(out, "JPEG", quality=90)
             return out.getvalue(), "image/jpeg", ""

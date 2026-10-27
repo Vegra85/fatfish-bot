@@ -40,12 +40,19 @@ _permits = {}                 # 对话 -> {"until", "left"}：这一轮有人要
 _dur = {}                     # 文件路径 -> (mtime, 秒数)
 
 # 对方让她唱
+# 10-28 审查 reply-6：「来首晴天」「再来一首七里香」（没有唱 / 歌两个字）以前不认 —— 没许可、提示里也没唱歌说明
+#   她照着聊天记录写了 [[唱:晴天]] 也唱不了；现在「来 / 点 + 首 + 歌名」也算（「来首诗」「后来首先」不算）
+# 没有「一」的「来首 / 点首」后面跟着「都 / 尔 / 页 / 先…」是首都、首尔、首页、首先（「你来首都了吗」「点首页」10-28 审查复查 reply-6）
+_LAI_SHOU = r"(^|[，。！？!?\s]|再|给我|帮我|你)(来|点)(?:一首|首(?!都|尔|页|先|次|付|选|富|充))(?!诗|词)"
 ASK = re.compile(
     r"(唱|哼)(一?首|一?个|一?段|两句|几句|一下|下|首歌|个歌|给我听|来听听|两嗓子|一嗓子|歌给我听|歌听听|歌来听)"
     r"|(来|整|点)(一?首|个|段)(歌|曲儿?|小曲)|唱歌(给我|给大家|给咱)?听|(给我|给大家|给咱们?)唱|你(来)?唱"
-    r"|点歌|献唱|清唱|开嗓|再唱|接着唱|唱(一遍|完)")
+    r"|点歌|献唱|清唱|开嗓|再唱|接着唱|唱(一遍|完)|" + _LAI_SHOU + r"[^\s，。！？!?]")
 # 只是聊到唱歌（问会不会唱、唱得怎么样…）：告诉她会唱哪些 唱不唱她自己看
-TALK = re.compile(r"唱|歌")
+TALK = re.compile(r"唱|歌|" + _LAI_SHOU)
+# 刚唱完他说「再来一首 / 再来一个 / 还想听 / 安可」：也是让她唱（10-28 审查 media-4：以前不认 她照着记录写了标记却没许可 唱不出来也不补话）
+ENCORE = re.compile(r"再来一?(?:首|个|遍|曲)|再来亿首|还想听|还要听|安可|encore|再整一?首|再唱一?(?:首|个|遍)|接着唱", re.I)
+ENCORE_SEC = 600                  # 唱完多久以内说「再来一个」还算在要歌
 # 不想听
 NEG = re.compile(r"(别|不要|不用|甭|少|停)(再)?唱了?|唱得?(太)?难听|别哼了")
 MARK = re.compile(r"\[\[\s*(?:唱歌|唱)\s*(?:[:：]\s*([^\[\]\n]{0,40}))?\]\]")
@@ -132,7 +139,9 @@ def find(name, pool=None):
         if want in ns:
             return s
     for s, ns in names:
-        if any(n and len(n) >= 2 and (n in want or want in n) for n in ns):
+        # 歌单名完整出现在点的歌名里（带了歌手、多写了几个字）算；反过来 点的只是歌单名的一部分 要差不多一样长才算
+        # （10-28 审查 media-11：以前「勇者」⊂「孤勇者」「猫」⊂「人是猫」都直接唱了歌单里那首 不去网上找）
+        if any(n and len(n) >= 2 and (n in want or (want in n and len(want) / len(n) >= 0.8)) for n in ns):
             return s
     return None
 
@@ -265,21 +274,45 @@ def _save(s):
         pass
 
 
+def muted_convs(now=None):
+    """现在还在「别唱了」里的对话（控制台快捷操作用 10-27）"""
+    now = now or time.time()
+    return [c for c, v in (_state().get("conv") or {}).items() if isinstance(v, dict) and float(v.get("mute_until") or 0) > now]
+
+
+def unmute_all():
+    """控制台「解除别唱了」：所有对话都放开 → 放开了几个"""
+    s = _state()
+    n = 0
+    for v in (s.get("conv") or {}).values():
+        if isinstance(v, dict) and v.pop("mute_until", None):
+            n += 1
+    if n:
+        _save(s)
+    return n
+
+
 # ───────────── 这一轮 ─────────────
 def plan(conv, scene, texts):
     """这一轮跟唱歌有没有关系 → None / sing（让她唱）/ talk（聊到唱歌）/ none（一首都不会）/ wait（刚唱过）/ cap / muted / off"""
     joined = " ".join(t for t in (texts or [])[-3:] if t)
-    if not joined or not TALK.search(joined):
+    if not joined:
+        return None
+    enc = bool(ENCORE.search(joined))
+    if not (enc or TALK.search(joined)):
         return None
     s = _state()
     cs = s["conv"].setdefault(conv, {})
     now = time.time()
+    encore = enc and now - float(cs.get("last", 0) or 0) < ENCORE_SEC    # 刚唱过 他说「再来一首」
+    if enc and not encore and not TALK.search(joined):
+        return None                                    # 没唱过的「再来一个」是在说别的
     if NEG.search(joined):
         cs["mute_until"] = now + 6 * 3600
         _save(s)
         _permits.pop(conv, None)
         return "muted"
-    asked = bool(ASK.search(joined))
+    asked = bool(ASK.search(joined)) or encore
     if not _cfg.get("enabled", True):
         return "off" if asked else None
     if not songs() and not _cfg.get("online", True):
@@ -366,9 +399,11 @@ def render(req, conv, log=print, short=False, song=None):
     if not song:
         if not pm or pm["until"] < time.time() or pm["left"] <= 0:
             log(f"[唱歌] {conv} 没人要她唱 这次不唱（她自己写了唱歌标记）")
+            _fail[conv] = {"name": name, "why": "没许可"}      # 机器人那边补一句（10-28 审查 reply-6：以前一句不补）
             return None
         if not name:
             log(f"[唱歌] {conv} 没说唱哪首 → 不唱（该先问对方想听什么）")
+            _fail[conv] = {"name": "", "why": "没歌名"}
             return None
         song = find(name)
         pm["left"] -= 1

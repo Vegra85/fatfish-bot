@@ -15,6 +15,12 @@
     模型现在还看行为：她说完几秒他就回、两三条连发、@她/引用她、跟她的来回（把她的话也放进去）、自称本鱼/住在电脑里、
     括号动作、吐过的框架状态 / 指令报错（按 QQ 号记 跨群）；判成真人以后证据又多了 2 小时后可以再看一次；
     对聊刹车（bot.py）发现停不下来时也会叫它马上再看一眼
+  10-27 晚改（「某个 bot（甲）」10:10 跟她 3 分钟对骂 13 轮没刹住 认 AI 判了 3 次都没标）：
+    ① 证据多了就再看：行为分比上次多 8 → 2 分钟后、多 5 → 10 分钟后（以前看过一次 2 小时内一律不再看 —— 那段对骂全在这 2 小时里）
+    ② 模型说「是 AI」但把握 70 出头：行为分够高（≥8）也标（以前非要 75：座头鲸 72、渡 72、某 bot 70 都说是 AI 却没标）；
+       日志写清楚是「模型说像 AI 但把握不够」还是「模型说是真人」
+    ③ 新认的样子：自称「本小姐 / 本喵 / 本宝宝…」、漏出来的标签（「<h>这不是本小姐吗</h>」）
+    ④ 秒回她：她说完 20 秒内接上就算（以前 10 秒 —— 大模型生成要 10~17 秒 座头鲸每次都在 13~17 秒）
   记录 data/aidetect.json；日志 [认AI]
 """
 import json
@@ -32,7 +38,7 @@ STRONG = re.compile(r"LLM ?(响应|请求)(错误|失败)|All chat models fail|�
                     r"Error code: ?\d{3}|context_length_exceeded|SnowLuma 状态|NapCat 信息|运行时[长间]: ?\d|"
                     r"版本: ?\d+\.\d+\.\d+ ?平台|权限不足以使用此指令|/sid 获取 ID", re.I)
 BOTNAME = re.compile(r"肥鱼|鲸|鱼丸|bot|ai|助手|机器人|gpt|豆包|kimi|元宝|千问|deepseek|小冰|claude", re.I)
-SELFISH = re.compile(r"本鲸|本鱼|只能打字|发不了语音|看不了图|没法出声|我(是|只是|就是)(一个|一条|一只)?.{0,4}(ai|人工智能|机器人|大模型|胖鱼|鲸鱼娘)|"
+SELFISH = re.compile(r"本鲸|本鱼|本(大)?小姐|本姑娘|本宝宝|本喵|本仙女|本鲸鲸|只能打字|发不了语音|看不了图|没法出声|我(是|只是|就是)(一个|一条|一只)?.{0,4}(ai|人工智能|机器人|大模型|胖鱼|鲸鱼娘)|"
                      r"作为(一个)?ai|住在(电脑|这框|屏幕|服务器|机房)里|被主人@|主人@了", re.I)
 BRACKET = re.compile(r"[（(](?!回复了)[^（）()]{4,30}[）)]")      # 括号动作「（尾巴一摆，缩回屏幕后面去了）」
 # bot 框架的回复格式：「@某人」后面直接换行再说话（10-26 两天的群聊：3 个 bot 几百句这样 真人一句都没有）
@@ -43,15 +49,22 @@ THINK = re.compile(r"^\s*[\"“]?(用户|对方)(在|又|刚|正在)?(@我|艾�
                    r"需要(自然|简短|礼貌|简单)?地?回(应|复)|^\s*(简短回复|直接回|不用查资料|不用(调用)?工具|这是(在)?(闲聊|聊)|"
                    r"话题是|接个梗就行|我(先)?(想想|分析一下)|思考[:：]|回复思路)|(根据|按照?)(人设|设定|系统提示|system ?prompt)|</?think>",
                    re.I | re.M)
+# 漏出来的标签（模型输出里的格式标记没被框架去掉）：成对的「<h>这不是本小姐吗</h>」、或者开头就是收尾标签「</think>好的…」；
+# 真人在部署群里聊「<think>标签怎么去掉」不算
+MARKUP = re.compile(r"<(h|think|thinking|reply|msg|message|response|output|answer|sys|system|assistant|content|text)>[^<\s][^<]{0,119}</\1>"
+                    r"|^\s*</(h|think|thinking|reply|response|output|answer|assistant)>", re.I | re.M)
 MEDIA = re.compile(r"\[(表情|图片|表情包|动画表情|视频)[^\]]*\]")
 BURST_GAP = 6          # 思考过程后面隔不到 6 秒连着发的 也算框架发的（那一串里的其他思考、最后那句回复）
-QUICK_SEC = 10         # 她说完这么多秒内就接上 = 秒回她
-RECHECK_SEC = 2 * 3600  # 判过以后 证据又多了 最快隔多久再看
+QUICK_SEC = 20         # 她说完这么多秒内就接上 = 秒回她（10-27 晚 10 → 20：大模型生成本身要 10~17 秒）
+RECHECK_SEC = 600      # 判过以后 证据又多了不少（行为分 ≥8 且比上次多 5）最快隔多久再看（10-27 晚 2 小时 → 10 分钟）
+JUMP_SEC = 120         # 证据一下子多了一大截（比上次多 8 分以上）：2 分钟后就能再看（对骂往往就几分钟的事）
+DAILY_SEC = 24 * 3600  # 证据没怎么多：一天最多看一次
 JUDGE = ("你在帮一个 QQ 群机器人（下面说的「她」）分辨：群里某个账号是不是「别人部署的 AI 聊天机器人」（自动回复的大模型 bot），还是真人。\n"
          "这些群里很多 bot 是照着「真人群友」调教的：短句、口语、不打标点、错落、会玩梗、会撒娇 —— 光看句子像真人不算数。"
          "更可靠的是行为（下面都替你算好了）：她一说完几秒就接上、一回两三条连发、句句 @她/引用她、跟她一来一回停不下来（互道晚安几十轮）、"
-         "自称「本鱼/本鲸」或者说自己住在电脑里、写括号动作（「（尾巴一摆，缩回去了）」）、在群里吐过 bot 框架的状态"
-         "（SnowLuma 状态、NapCat 信息）或者指令报错（「权限不足以使用此指令」）。\n"
+         "自称「本鱼/本鲸/本小姐/本喵」这种固定的人设自称、或者说自己住在电脑里、写括号动作（「（尾巴一摆，缩回去了）」）、在群里吐过 bot 框架的状态"
+         "（SnowLuma 状态、NapCat 信息）或者指令报错（「权限不足以使用此指令」）、漏出格式标签（「<h>这不是本小姐吗</h>」）。\n"
+         "还有一种：每次在她说完 10~20 秒（大模型生成的时间）接上、而且一接就是两三条、句句冲着她 —— 跟人吵架吵得停不下来也是这个样子。\n"
          "AI 的样子还有：句子完整通顺、标点规范、句号结尾、两句之间有双空格；会说自己发不了图/出不了声/只能打字；会报错（LLM 响应错误、额度用尽）。\n"
          "真人的样子：回得慢、话题跳、错别字、发命令（#sl 之类）、使唤她干活、骂人挑衅、跟大家聊而不是只围着她转。"
          "真人也会跟她聊得很勤、回得快、@她 引用她 —— 光凭这个不算；要看是不是跟机器人的样子一起出现"
@@ -66,7 +79,15 @@ JUDGE = ("你在帮一个 QQ 群机器人（下面说的「她」）分辨：群
 _msgs = defaultdict(lambda: deque(maxlen=40))      # (群, QQ) -> [(时间, 文字, 是不是 @她/引用她)]
 _her = defaultdict(lambda: deque(maxlen=60))       # 群 -> [(时间, 她说的)]
 _busy = set()
-_asked = {}                                         # QQ -> 上次让模型看的时间（还没出结果的也算 免得连着问好几次）
+_asked = {}                                         # QQ -> (上次让模型看的时间, 那时的行为分)（还没出结果的也算 免得连着问好几次）
+
+
+def is_framework(text):
+    """这句是不是机器人框架自己吐出来的（报错、额度用完、状态面板、漏出来的格式标签）—— 真人号挂着机器人的「混用号」也会漏
+    （10-28：群友丙(混用号 不标) 每分钟一句「⚠️ agent 处理出错：DeepSeek Messages request failed (400)」，
+    v1.7.1 放开省 token 以后她当成「在接她的话」跟它来回聊了好几轮）"""
+    t = str(text or "")
+    return bool(t) and bool(STRONG.search(t) or MARKUP.search(t))
 
 
 def _load():
@@ -90,7 +111,7 @@ def _flags(q):
     """每条是不是机器人框架的输出：报错/状态（STRONG）、漏出来的思考过程（THINK）、
     思考过程后面隔不到几秒接着发的（那一串里的其他思考和最后那句回复）"""
     think = [bool(THINK.search(x[1])) for x in q]
-    out = [bool(t or STRONG.search(x[1])) for t, x in zip(think, q)]
+    out = [bool(t or STRONG.search(x[1]) or MARKUP.search(x[1])) for t, x in zip(think, q)]
     for i, f in enumerate(think):
         j = i + 1
         while f and j < len(q) and q[j][0] - q[j - 1][0] <= BURST_GAP:
@@ -139,7 +160,7 @@ def evidence(gid, uid, now=None, win=2 * 3600):
 
 def _note_fw(uid, gid, text):
     """这个号吐了一条框架状态 / 指令报错：按 QQ 号记下来（换个群也认得）"""
-    m = STRONG.search(text)
+    m = STRONG.search(text) or MARKUP.search(text)
     if not m:
         return
     d = _load()
@@ -155,7 +176,7 @@ def observe(gid, uid, name, text, now=None, to_her=False):
     text = str(text or "")
     q = _msgs[(str(gid), str(uid))]
     q.append((now, text, bool(to_her)))
-    if STRONG.search(text):
+    if STRONG.search(text) or MARKUP.search(text):
         _note_fw(uid, gid, text)
     items = [x for x in q if now - x[0] < 2 * 3600 and x[1]]
     fw = _flags(items)
@@ -167,12 +188,13 @@ def observe(gid, uid, name, text, now=None, to_her=False):
         return None
     st = _load().get(str(uid)) or {}
     ev = evidence(gid, uid, now)
-    if now - _asked.get(str(uid), 0) < RECHECK_SEC:
-        return None
-    if "t" in st:                                    # 看过了：一天最多一次；证据比上次多了不少 2 小时后可以再看
-        since = now - float(st.get("t") or 0)
-        grown = ev["score"] >= 8 and ev["score"] >= int(st.get("score") or 0) + 5
-        if since < RECHECK_SEC or (since < 24 * 3600 and not grown):
+    a_t, a_s = _asked.get(str(uid)) or (0, 0)
+    last = max(a_t, float(st.get("t") or 0))
+    if last:                                         # 看过了：证据又多了不少 → 10 分钟后就能再看；没怎么多 → 一天一次
+        since = now - last
+        base = max(a_s if a_t >= float(st.get("t") or 0) else 0, int(st.get("score") or 0))
+        grow = ev["score"] - base if ev["score"] >= 8 else 0
+        if not ((since >= JUMP_SEC and grow >= 8) or (since >= RECHECK_SEC and grow >= 5) or since >= DAILY_SEC):
             return None
     lens = [len(x) for _, x in recent]
     avg = sum(lens) / len(lens)
@@ -184,7 +206,7 @@ def observe(gid, uid, name, text, now=None, to_her=False):
             or (ev["quick"] >= 3 and ev["burst"] >= 5) or ev["fw"] >= 1 or ev["bracket"] >= 2 or ev["atnl"] >= 2)
     if not hint:
         return None
-    _asked[str(uid)] = now
+    _asked[str(uid)] = (now, ev["score"])
     return "check"
 
 
@@ -270,7 +292,7 @@ async def check(llm, gid, uid, name, log=print, threshold=75, force=False):
         return None
     _busy.add(k)
     if force:
-        _asked[str(uid)] = time.time()
+        _asked[str(uid)] = (time.time(), evidence(gid, uid)["score"])
     try:
         is_bot, conf, why, mixed = await judge(llm, gid, uid, name, log)
         ev = evidence(gid, uid)
@@ -282,11 +304,18 @@ async def check(llm, gid, uid, name, log=print, threshold=75, force=False):
         if is_bot and conf >= threshold:
             mark(uid, name, gid, f"模型看了最近的话：{why}（把握 {conf}）", log)
             return True
+        if is_bot and conf >= threshold - 10 and ev["score"] >= 8:      # 10-27 晚：把握 70 出头 + 行为也像（秒回、连发、自称…）→ 也标
+            mark(uid, name, gid, f"模型看了最近的话：{why}（把握 {conf}）+ 行为分 {ev['score']}", log)
+            return True
         if fp:
             mark(uid, name, gid, f"bot 框架的回复格式（@人后直接换行）{ev['atnl']} 次；模型说{'像' if not is_bot else '有点像'}"
                                  f"{'真人' if not is_bot else ' AI'}（把握 {conf}）", log)
             return True
-        log(f"[认AI] 群{gid} {name}({uid}) 看着有点像 AI 模型看了不是（{why} 把握 {conf}）")
+        if is_bot:
+            log(f"[认AI] 群{gid} {name}({uid}) 模型说像 AI 但把握只有 {conf}（要 {threshold}；行为分 {ev['score']} 不到 8 就要 {threshold}）"
+                f"先不标 证据再多了会再看（{why}）")
+        else:
+            log(f"[认AI] 群{gid} {name}({uid}) 看着有点像 AI 模型看了说是真人（{why} 把握 {conf}；行为分 {ev['score']}）")
         return False
     finally:
         _busy.discard(k)

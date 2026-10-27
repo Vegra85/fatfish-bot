@@ -439,14 +439,15 @@ async def submit(job, desc, frame=None, log=print, kind="text"):
 
 
 async def wait(tid, log=print):
-    """等任务做完：返回 (结果, 失败原因)"""
-    t0 = (_load()["tasks"].get(tid) or {}).get("t") or time.time()
-    deadline = t0 + float(A["timeout_min"]) * 60
+    """等任务做完：返回 (结果, 失败原因)
+    10-28 审查 media-7：deadline 从开始等的时候算（重启后接着等的 以前按提交时间算 一进来就判超时、一次都不查）；
+      等太久了交给 _give_up：再查最后一次 还在排队就取消 取消不了的记上 charge（done 按估价记账、次数不还）"""
+    deadline = time.time() + float(A["timeout_min"]) * 60
     url = _base() + "/contents/generations/tasks/" + tid
     errs = 0
     while True:
         if time.time() > deadline:
-            return None, "等太久了 没做完"
+            return await _give_up(tid, url, log)
         await asyncio.sleep(float(A["poll_sec"]))
         try:
             r = await _client().get(url, headers=_hdr())
@@ -471,6 +472,42 @@ async def wait(tid, log=print):
         if st in ("failed", "cancelled", "canceled", "expired"):
             e = d.get("error") or {}
             return None, _explain(str(e.get("code") or st), _clean(e.get("message") or st))
+
+
+async def _give_up(tid, url, log=print):
+    """等太久了（10-28 审查 media-7）：再查最后一次 —— 做好了照样要；还在排队就调接口取消
+    （火山方舟 DELETE 这个任务：排队中的能取消 已经在做的不行）；取消不了 / 查不到状态的 在任务上记 charge：
+    那边多半还会做完扣钱 done() 就按估价记账、今天的次数不还（以前一律当没做 预算 budget_cny 算不进去）"""
+    st = ""
+    try:
+        r = await _client().get(url, headers=_hdr())
+        if r.status_code < 300:
+            d = r.json()
+            st = str(d.get("status") or "").lower()
+            if st in ("succeeded", "success"):
+                return d, ""
+            if st in ("failed", "cancelled", "canceled", "expired"):
+                e = d.get("error") or {}
+                return None, _explain(str(e.get("code") or st), _clean(e.get("message") or st))
+    except Exception as e:
+        log("[动画] 最后查一次进度出错:", _clean(repr(e))[:100])
+    cancelled = False
+    if st in ("queued", "pending"):
+        try:
+            r = await _client().delete(url, headers=_hdr())
+            cancelled = r.status_code < 300
+        except Exception as e:
+            log("[动画] 取消任务出错:", _clean(repr(e))[:100])
+    if cancelled:
+        log(f"[动画] …{tid[-6:]} 等太久了 还在排队 已经取消")
+    else:
+        t = _load()["tasks"].get(tid)
+        if t is not None:
+            t["charge"] = True
+            _save()
+        log(f"[动画] …{tid[-6:]} 等太久了 火山那边{'还在做' if st == 'running' else '状态不明（' + (st or '没查到') + '）'}"
+            " 取消不了 按估价记账")
+    return None, "等太久了 没做完"
 
 
 async def fetch(res, tid):
@@ -510,11 +547,16 @@ def done(tid, res=None, ok=True, why=""):
         s["last_error"] = ""
     else:
         d["failed"] += 1
-        _unbook(t)
+        if t.get("charge"):            # 等超时了 火山那边还在做（取消不了）：按估价记账、次数不还（10-28 审查 media-7）
+            cny = float(t.get("est") or est_cny())
+            s["spent"] = round(s["spent"] + cny, 4)
+            d["cny"] = round(d["cny"] + cny, 4)
+        else:
+            _unbook(t)
         s["last_error"] = f"{clock.strf('%m-%d %H:%M')} {why}"[:120]
     s["history"].append({"t": int(time.time()), "ok": ok, "conv": t.get("conv"), "uid": t.get("uid"),
                          "prompt": (t.get("prompt") or "")[:80],
-                         "tokens": tokens, "cny": cny if ok else 0, "why": why[:60]})
+                         "tokens": tokens, "cny": cny if ok or t.get("charge") else 0, "why": why[:60]})
     _save()
     return cny, tokens
 

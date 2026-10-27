@@ -275,6 +275,7 @@ def apply(gid, uid, name, rk, res, text, now=None, addressed=False):
         return {"ok": False, "why": "不是群主/管理员 改不了群里的设置"}
     who = ROLE.get(rk, "群友")
     cur = control.admin_slot(gid, now)
+    chain = control.admin_chain(gid, now)          # 生效的那条 + 垫在下面的上级那几条（10-28 审查 qzone-5）
     if act == "normal":
         if rk >= 3:                                  # 老板：群管设的、控制台设的 都放开
             if not control.boss_reset(gid):
@@ -284,8 +285,9 @@ def apply(gid, uid, name, rk, res, text, now=None, addressed=False):
         if not cur:
             return {"ok": False, "why": "现在没有群管设的限制" + ("（是控制台设的 群管放不开）"
                                                           if control.panel_mode(gid, now) != "normal" else "")}
-        if int(cur.get("rank") or 0) > rk:
-            return {"ok": False, "why": f"是{ROLE.get(int(cur['rank']), '')}「{cur.get('name')}」设的 {who}放不开"}
+        top = max(chain, key=lambda x: int(x.get("rank") or 0))      # 按整条链里级别最高的那条算（下面垫着群主的 管理员放不开）
+        if int(top.get("rank") or 0) > rk:
+            return {"ok": False, "why": f"是{ROLE.get(int(top['rank']), '')}「{top.get('name')}」设的 {who}放不开"}
         control.set_admin(gid, None)
         ack("normal")
         return {"ok": True, "kind": "group", "level": "normal",
@@ -293,19 +295,27 @@ def apply(gid, uid, name, rk, res, text, now=None, addressed=False):
                         ("（控制台设的还在）" if control.panel_mode(gid, now) != "normal" else "")}
 
     # 往紧了调：少说 / 只回@ / 静音
-    if cur and int(cur.get("rank") or 0) > rk and control._LV[act] < control._LV[cur["level"]]:
-        return {"ok": False, "why": f"{ROLE.get(int(cur['rank']), '')}「{cur.get('name')}」设的「{NAMES.get(cur['level'])}」更严 {who}放不松"}
+    # 10-28 审查 qzone-5：以前新的一条整个换掉旧的 —— 管理员「闭嘴一分钟」把群主设的一周「只回@」冲没了；
+    # 现在按整条链看：同级或更低的人设的他能换掉；比他级别高的那条（base）留着：同一档只延长时间 还算上级的；
+    # 比 base 更严的 → 新的一条垫着 base（prev），到点后回到 base
+    base = next((x for x in chain if int(x.get("rank") or 0) > rk), None)
+    if base and control._LV[act] < control._LV[base["level"]]:
+        return {"ok": False, "why": f"{ROLE.get(int(base['rank']), '')}「{base.get('name')}」设的「{NAMES.get(base['level'])}」更严 {who}放不松"}
     if isinstance(mins, int) and mins < 0:
         until = -1 if rk >= 3 else now + cap
     elif isinstance(mins, int) and mins > 0:
         until = now + (mins * 60 if rk >= 3 else min(mins * 60, cap))
     else:
         until = now + float(C.get("default_hours", 3)) * 3600
-    if cur and int(cur.get("rank") or 0) > rk and cur["level"] == act:      # 上级设过同一档：到点时间取晚的
-        cu = float(cur.get("until") or 0)
+    if base and base["level"] == act:              # 上级设过同一档：到点时间取晚的 其他照旧是上级那条（rank 不降）
+        cu = float(base.get("until") or 0)
         until = -1 if cu < 0 else max(until, cu)
-    entry = {"level": act, "until": until, "rank": rk, "by": uid, "name": str(name)[:20], "role": who,
-             "t": now, "said": said, "target": tgt}
+        entry = dict(base, until=until)
+    else:
+        entry = {"level": act, "until": until, "rank": rk, "by": uid, "name": str(name)[:20], "role": who,
+                 "t": now, "said": said, "target": tgt}
+        if base:
+            entry["prev"] = base
     control.set_admin(gid, entry)
     ack(act)
     return {"ok": True, "kind": "group", "level": act, "until": until,

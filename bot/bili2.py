@@ -297,7 +297,8 @@ async def scroll_session(llm_fn, cfg, hot_terms=None, log=print):
     t = bili.load_trends()
     if time.time() < t.get("blocked_until", 0):
         return None
-    seen = set(t.get("seen", []))
+    seen_order = list(dict.fromkeys(x for x in (t.get("seen") or []) if x))   # 按看的先后（新的在后）10-28 审查 media-15
+    seen = set(seen_order)
     c = Client(cfg.get("sessdata", ""))
     try:
         login = await c.ready()
@@ -376,10 +377,12 @@ async def scroll_session(llm_fn, cfg, hot_terms=None, log=print):
         takes.append(take)
         md.append(f"- [{v['title']}](https://www.bilibili.com/video/{v['bvid']}) · {v.get('up')} · 播放{v.get('play')}\n"
                   f"  - 讲了：{it.get('about', '')}\n  - 她：{take}\n  - 分享指数 {it.get('share_score', 0)}：{it.get('share_line', '')}")
-        seen.add(v["bvid"])
+        if v["bvid"] not in seen:
+            seen.add(v["bvid"])
+            seen_order.append(v["bvid"])
     if not takes:
         return None
-    t["seen"] = list(seen)[-300:]
+    t["seen"] = seen_order[-300:]      # 留最近看的 300 个（以前 list(set)[-300:] 是随便留 刚看过的也可能被丢 10-28 审查 media-15）
     day = clock.strf("%Y-%m-%d")
     t.setdefault("sessions", {})[day] = t.get("sessions", {}).get(day, 0) + 1
     t["updated"] = time.time()

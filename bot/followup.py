@@ -205,5 +205,8 @@ async def judge(llm, history, name, text, now, bot="大肥鱼", log=print):
     except Exception as e:
         log("[接话] 判断失败:", repr(e)[:100])
         return False
-    out = (out or "").strip()
-    return out.startswith("是") or (out[:3].find("是") >= 0 and "否" not in out[:3])
+    # 10-28 审查 intake-6：先去掉开头的引号、标点；「不是」「不」「否」开头的一律算否（以前「不是」里有「是」被当成了是）
+    out = re.sub(r"^[\s「」『』\"'“”‘’()（）\[\]【】*:：,，.。!！]+", "", out or "")
+    if re.match(r"否|不", out):
+        return False
+    return out.startswith("是") or (out[:3].find("是") >= 0 and "否" not in out[:3] and "不是" not in out[:4])

@@ -32,7 +32,7 @@ def call_of(uid, name="", mem=None):
     return ((mem or {}).get("alias") or {}).get(name) or ""
 
 
-def set_call(uid, call, name=""):
+def set_call(uid, call, name="", said=""):
     return call
 
 

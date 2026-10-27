@@ -12,6 +12,8 @@
     - 好感度（连外号）、动画次数和记录、梗里记下的他的原话、他发的图的描述缓存、心情记录里的名字
     - 共享印象：分不清哪条来自他 全清掉 过一会儿从剩下的聊天重新提炼
     - 控制台留的备份里有他的 也删
+    - 每天的 data 包（daily/data_*.zip）、记忆卫生迁移前的整份备份（memhyg_*）、迁移记录和报告、读坏另存的 .bad-*：
+      按上面一样的规矩改一遍（10-28 审查 memory-3：以前这些里他的东西原样都在 拿出来放回 data 就全回来了）
   记一笔什么时候删的（data/wiped.json 只有 QQ 号和时间）：重启补看漏掉的消息时 不会把删之前的又捡回来
   不动：控制台的规则（屏蔽 / 标成机器人 是老板定的）、bot.log（自己会滚掉）、QQ 自己的聊天记录（不归我们管）
 """
@@ -77,16 +79,18 @@ QUOTE = re.compile(r"^（回复了 .*?的「.*?」）", re.S)
 def collect(data, uid):
     """删之前收集：他用过的名字、她给他起的外号、他说过的话、他发过的图（好在别处把他抹掉）"""
     data, uid = Path(data), str(uid)
-    names, calls, texts, imgs = set(), set(), set(), set()
+    names, calls, texts, imgs, mids = set(), set(), set(), set(), set()      # mids：他发过的消息的 message_id（记忆的 src 里要抹掉 10-27）
     fav = (_rj(data / "favor.json", {}) or {}).get(uid) or {}
     if _ok_name(fav.get("name")):
         names.add(fav["name"].strip())
     if fav.get("call"):
         calls.add(str(fav["call"]).strip())
     pm = _rj(data / "memory" / f"private_{uid}.json", {}) or {}
-    for h in pm.get("history") or []:
+    for h in (pm.get("history") or []) + (pm.get("overflow") or []):
         if h.get("role") == "user" and _ok_name(h.get("name")):
             names.add(h["name"].strip())
+        if h.get("role") == "user" and h.get("mid") is not None:
+            mids.add(str(h["mid"]))
     calls |= {str(v).strip() for v in (pm.get("alias") or {}).values() if v}
 
     def take(h, mine):
@@ -98,6 +102,8 @@ def collect(data, uid):
         for x in h.get("imgs") or []:
             if x:
                 imgs.add(str(x[0]))
+        if h.get("mid") is not None:
+            mids.add(str(h["mid"]))
 
     for p in (data / "memory").glob("group_*.json"):
         m = _rj(p, {}) or {}
@@ -114,7 +120,11 @@ def collect(data, uid):
         for e in _jl(p):
             if e.get("role") == "user" and str(e.get("uid")) == uid:
                 take(e, names)
-    return {"names": names, "calls": calls, "texts": texts, "imgs": imgs}
+    for p in (data / "archive").glob(f"*/private_{uid}.jsonl"):
+        for e in _jl(p):
+            if e.get("role") == "user" and e.get("mid") is not None:
+                mids.add(str(e["mid"]))
+    return {"names": names, "calls": calls, "texts": texts, "imgs": imgs, "mids": mids}
 
 
 # ───────────── 改一份记忆 ─────────────
@@ -135,30 +145,42 @@ def scrub(t, names, texts=()):
 def _about(f, names, uid=""):
     if uid and str(f.get("uid") or "") == str(uid):          # 10-26 晚起记忆会记下是谁（QQ 号）的事
         return True
+    if uid and str(f.get("speaker") or "") == str(uid):      # 10-27 记忆卫生：他说的话记下的（speaker = 说话人 QQ）
+        return True
     s = str(f.get("text") or "") + " " + str(f.get("key") or "") + " " + str(f.get("who") or "")
     return any(n in s for n in names)
 
 
-def facts_about(m, names, uid=""):
-    """删掉关于他的记忆：有效的、旧的、墓碑里的都删（墓碑本身就是一句关于他的话）。返回删了几条有效的"""
+def facts_about(m, names, uid="", mids=None):
+    """删掉关于他的记忆：有效的、旧的（被取代的 / 归档的 / 归档的推断）、墓碑里的都删（墓碑本身就是一句关于他的话）。返回删了几条有效的
+    10-27：他说的话记下的（speaker 是他）也删；别人的记忆依据里（src）有他的消息 → 把他那几条 message_id 抹掉"""
     if not names and not uid:
         return 0
     fs = [f for f in m.get("facts") or [] if isinstance(f, dict)]
     dead = [f for f in fs if _about(f, names, uid)]
     if dead:
         m["facts"] = [f for f in fs if not _about(f, names, uid)]
+    if mids:
+        for f in m.get("facts") or []:
+            s = f.get("src") if isinstance(f, dict) else None
+            if isinstance(s, list) and any(str(x) in mids for x in s):
+                f["src"] = [x for x in s if str(x) not in mids]
+                if not f["src"]:
+                    f.pop("src")
     tt = m.get("tomb_text") or []
-    if tt and names:
-        m["tomb_text"] = [t for t in tt if not _about(t, names)]
+    if tt and (names or uid):                  # 10-28 审查 memory-2：墓碑也记着是谁（who / uid）了 按 QQ 号也删
+        m["tomb_text"] = [t for t in tt if not _about(t, names, uid)]
     return len([f for f in dead if f.get("status") == "active"])
 
 
-def conv_mem(m, uid, names, texts):
+def conv_mem(m, uid, names, texts, mids=None):
     """就地改一个群（或者别人私聊）的记忆：删他的话、抹掉别人话里的他、删关于他的记忆和外号
     群：提到他的前情提要整段删（他在场 里面都是他说的事）；别人的私聊：前情提要里只把名字换成「某人」"""
     uid = str(uid)
     group = m.get("type") == "group" or str(m.get("key", "")).startswith("group_")
     rep = {"msgs": 0, "scrubbed": 0, "facts": 0, "summary": 0, "alias": 0}
+    own = {str(h.get("mid")) for h in (m.get("history") or []) + (m.get("overflow") or [])
+           if h.get("role") == "user" and str(h.get("uid")) == uid and h.get("mid") is not None}
     for fld in ("history", "overflow"):
         if not m.get(fld):
             continue
@@ -175,7 +197,7 @@ def conv_mem(m, uid, names, texts):
                     rep["scrubbed"] += 1
             keep.append(h)
         m[fld] = keep
-    rep["facts"] = facts_about(m, names, uid)
+    rep["facts"] = facts_about(m, names, uid, set(mids or ()) | own)
     if m.get("summary") and any(n in m["summary"] for n in names):
         m["summary"] = "" if group else scrub(m["summary"], names)
         rep["summary"] = 1
@@ -212,6 +234,12 @@ def private_files(data, uid):
         rep["private_msgs"] = max(rep["private_msgs"], len(_jl(a)))
         a.unlink()
         rep["private_files"] += 1
+    for b in (data / "memory").glob(f"private_{uid}.json.bad-*"):     # 读坏时另存的那几份（10-28 审查 memory-3）
+        try:
+            b.unlink()
+            rep["private_files"] += 1
+        except OSError:
+            pass
     return rep
 
 
@@ -316,16 +344,93 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
     if md and names:
         n = 0
         for e in md.get("timeline") or []:
-            w = e.get("why") or ""
-            w2 = scrub(w, names)
-            if w2 != w:
-                e["why"] = w2
-                n += 1
+            for fld in ("why", "ev", "names"):              # ev / names：10-27 记忆卫生 心情时间线里记的「谁做了什么」
+                w = e.get(fld) or ""
+                w2 = scrub(w, names)
+                if w2 != w:
+                    e[fld] = w2
+                    n += 1
         if md.get("pending") and scrub(md["pending"], names) != md["pending"]:
             md["pending"] = scrub(md["pending"], names)
             n += 1
         if n:
             _wj(data / "mood2.json", md)
+    # 梦（10-27 遗忘曲线：梦是拿日记和群里快忘的事编的 照理不带名字 —— 万一带了 换成「某人」）
+    dr = _rj(data / "dreams.json")
+    if dr and names:
+        n = 0
+        for e in dr.get("entries") or []:
+            t = e.get("text") or ""
+            t2 = scrub(t, names)
+            if t2 != t:
+                e["text"] = t2
+                n += 1
+        if n:
+            _wj(data / "dreams.json", dr)
+            rep["dreams"] = n
+    # QQ 空间（10-27 v1.3.0）：她看过的他的说说、她赞 / 评 / 回过他的记录、访客里的他、报告和「最近」里提到他的
+    #（她留在他空间里的评论在 QQ 空间上 不归这里管 他自己能删）
+    qz = data / "qzone"
+    fd = _rj(qz / "feed.json")
+    if isinstance(fd, dict) and fd.get("items"):
+        keep = [x for x in fd["items"] if str(x.get("uin")) != uid]
+        if len(keep) != len(fd["items"]):
+            rep["qzone_posts"] = len(fd["items"]) - len(keep)
+            fd["items"] = keep
+            _wj(qz / "feed.json", fd)
+    st = _rj(qz / "state.json")
+    if isinstance(st, dict):
+        n = 0
+        for k in ("liked", "commented", "replied"):
+            d = st.get(k)
+            if isinstance(d, dict):
+                for t in [t for t, v in d.items() if isinstance(v, dict) and str(v.get("uin")) == uid]:
+                    d.pop(t, None)
+                    n += 1
+        vs = st.get("visitors") or []
+        keep = [v for v in vs if not (isinstance(v, dict) and str(v.get("uin")) == uid)]
+        n += len(vs) - len(keep)
+        st["visitors"] = keep
+        if (st.get("visit_mention") or {}).pop(uid, None) is not None:
+            n += 1
+        for m in st.get("mine") or []:
+            if isinstance(m, dict) and (m.get("rounds") or {}).pop(uid, None) is not None:
+                n += 1
+        evs = st.get("events") or []               # 「最近」里记了是谁的（qzone.event 的 uin）整条删 不光换名字（10-28 审查 qzone-11 复查）
+        keep = [e for e in evs if not (isinstance(e, dict) and str(e.get("uin") or "") == uid)]
+        if len(keep) != len(evs):
+            n += len(evs) - len(keep)
+            st["events"] = keep
+        for e in st.get("events") or []:
+            if isinstance(e, dict) and names and scrub(e.get("text") or "", names) != (e.get("text") or ""):
+                e["text"] = scrub(e.get("text") or "", names)
+                n += 1
+        if n:
+            _wj(qz / "state.json", st)
+            rep["qzone_records"] = n
+    if names:
+        n = 0
+        for f in (data / "qzone_reports").glob("*.md"):
+            try:
+                lines = f.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            keep, drop = [], False
+            for x in lines:                    # 「- 某人的说说」下面那行「  - 她：…」跟着一起删
+                if drop and x.startswith("  "):
+                    continue
+                drop = any(nm in x for nm in names) or uid in x
+                if not drop:
+                    keep.append(x)
+            if len(keep) != len(lines):
+                n += len(lines) - len(keep)
+                f.write_text("\n".join(keep) + "\n", encoding="utf-8")
+        if n:
+            rep["qzone_report_lines"] = n
+    # 记忆卫生一次性迁移的记录和报告（10-28 审查 memory-3）：逐条写着「私聊 他的QQ：原文」、名字 → QQ 号对应表
+    n = _scrub_memhyg(data, uid, names)
+    if n:
+        rep["memhyg_lines"] = n
     # 共享印象：分不清哪条是从他那来的 全清掉重新提炼
     sh = _rj(data / "shared.json")
     if sh and sh.get("notes"):
@@ -333,7 +438,8 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
         sh["notes"], sh["last_refresh"] = [], 0
         _wj(data / "shared.json", sh)
     # 按对话记的小状态（语音、表情包、冒泡）；认 AI 的判断记录（10-26：里面有他的名字和模型的判断）
-    for f in ("voice_state.json", "sticker_state.json", "speakup.json", "panel_cache.json", "aidetect.json"):
+    for f in ("voice_state.json", "sticker_state.json", "speakup.json", "panel_cache.json", "aidetect.json",
+              "places.json"):                            # places：他说过自己在哪（10-28 worldclock.py）
         d = _rj(data / f)
         if d is not None and _drop_keys(d, {uid, f"private_{uid}"}):
             _wj(data / f, d)
@@ -341,10 +447,11 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
         st = _rj(data / "anim_state.json")
         if st and anim_state(st, uid):
             _wj(data / "anim_state.json", st)
-    try:
-        (data / "voice" / "in_last.wav").unlink()   # 最后听的一条语音（可能是他的）
-    except OSError:
-        pass
+    for f in [data / "voice" / "in_last.wav"] + list((data / "voice").glob("in_*.wav")):   # 正在听 / 没删掉的语音（可能是他的）
+        try:
+            f.unlink()
+        except OSError:
+            pass
     # 控制台改东西前留的备份
     n = 0
     for d in backup_dirs:
@@ -359,6 +466,120 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
     if n:
         rep["backups"] = n
     return rep
+
+
+def _scrub_memhyg(data, uid, names):
+    """memhyg.json（dates / archived / kept）和 memhyg_report.md 里：他的私聊、带他名字或 QQ 号的那几条删掉 → 删了几条"""
+    data, uid = Path(data), str(uid)
+    num = re.compile(r"(?<!\d)" + re.escape(uid) + r"(?!\d)")
+
+    def hit(s):
+        s = str(s or "")
+        return bool(num.search(s)) or any(nm in s for nm in names)
+    n = 0
+    st = _rj(data / "memhyg.json")
+    if isinstance(st, dict):
+        for k in ("dates", "archived", "kept"):
+            lst = st.get(k)
+            if not isinstance(lst, list):
+                continue
+            keep = [x for x in lst if not (isinstance(x, dict) and (x.get("conv") == f"private_{uid}" or hit(x.get("old"))
+                                                                     or hit(x.get("new")) or hit(x.get("text"))))]
+            if len(keep) != len(lst):
+                n += len(lst) - len(keep)
+                st[k] = keep
+        if n:
+            _wj(data / "memhyg.json", st)
+    rp = data / "memhyg_report.md"
+    try:
+        lines = rp.read_text(encoding="utf-8").splitlines() if rp.exists() else []
+    except OSError:
+        lines = []
+    keep = [x for x in lines if not hit(x)]
+    if len(keep) != len(lines):
+        n += len(lines) - len(keep)
+        rp.write_text("\n".join(keep) + "\n", encoding="utf-8")
+    return n
+
+
+# ───────────── 备份里的他（10-28 审查 memory-3）─────────────
+def _snapshot(d):
+    import hashlib
+    out = {}
+    for f in Path(d).rglob("*"):
+        if f.is_file():
+            try:
+                out[str(f.relative_to(d))] = hashlib.md5(f.read_bytes()).hexdigest()
+            except OSError:
+                pass
+    return out
+
+
+def _wipe_copy(d, uid, names, texts=(), imgs=(), mids=()):
+    """一份 data 的拷贝（每天的包解出来的 / 记忆卫生迁移前的整份备份）按删数据一样的规矩改一遍 → 改了没有"""
+    d, uid = Path(d), str(uid)
+    c = collect(d, uid)                          # 备份那会儿他用的名字、说过的话也算上
+    names, texts = set(names or ()) | c["names"], set(texts or ()) | c["texts"]
+    imgs, mids = set(imgs or ()) | c["imgs"], set(mids or ()) | c["mids"]
+    before = _snapshot(d)
+    for p in (d / "memory").glob("*.json"):
+        if p.stem == f"private_{uid}":
+            continue                             # 下面 private_files 整个删
+        m = _rj(p)
+        if not isinstance(m, dict):
+            continue
+        m.setdefault("key", p.stem)
+        if conv_mem(m, uid, names, texts, mids)["changed"]:
+            _wj(p, m)
+    private_files(d, uid)
+    archives(d, uid, names, texts)
+    misc(d, uid, names, texts, imgs)
+    return _snapshot(d) != before
+
+
+def _wipe_zip(z, uid, names, texts=(), imgs=(), mids=()):
+    """每天的 data 包：解到临时文件夹 → 按规矩改 → 有改动才重新打包（先写临时文件再换过去 跟他无关的包一个字节都不动）"""
+    import tempfile
+    import zipfile
+    z = Path(z)
+    with tempfile.TemporaryDirectory(prefix="wipe-") as td:
+        td = Path(td)
+        with zipfile.ZipFile(z) as zf:
+            zf.extractall(td)
+        if not (td / "data").is_dir() or not _wipe_copy(td / "data", uid, names, texts, imgs, mids):
+            return False
+        tmp = z.with_name(z.name + ".wipe.tmp")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
+            for f in sorted(td.rglob("*")):
+                if f.is_file() and not f.name.endswith(".tmp"):
+                    out.write(f, f.relative_to(td).as_posix())
+        os.replace(tmp, z)
+    return True
+
+
+def backups(root, uid, names=(), texts=(), imgs=(), mids=()):
+    """备份里的他（10-28 审查 memory-3）：以前只删控制台的备份 —— 每天的 data 包留 14 天、记忆卫生迁移前的整份备份一直留着
+    里面他的私聊、好感、心情原样都在（她跟他说的是「删了就找不回来了」）
+    root = backup_20261024：daily/data_*.zip 和 memhyg_*（迁移前整份 data/memory 的拷贝）都按删数据一样的规矩改一遍"""
+    root, uid = Path(root), str(uid)
+    rep = {"backup_zips": 0, "backup_copies": 0, "backup_fail": 0}
+    for d in sorted(root.glob("memhyg_*")):
+        try:
+            if d.is_dir() and _wipe_copy(d, uid, names, texts, imgs, mids):
+                rep["backup_copies"] += 1
+        except Exception:
+            rep["backup_fail"] += 1
+    for z in sorted((root / "daily").glob("data_*.zip")):
+        try:
+            if _wipe_zip(z, uid, names, texts, imgs, mids):
+                rep["backup_zips"] += 1
+        except Exception:
+            rep["backup_fail"] += 1
+            try:
+                z.with_name(z.name + ".wipe.tmp").unlink()
+            except OSError:
+                pass
+    return {k: v for k, v in rep.items() if v}
 
 
 # ───────────── 记一笔：什么时候删的 ─────────────
@@ -436,7 +657,7 @@ def run_offline(data, uid, backup_dirs=()):
         if not isinstance(m, dict):
             continue
         m.setdefault("key", p.stem)
-        r = conv_mem(m, uid, c["names"], c["texts"])
+        r = conv_mem(m, uid, c["names"], c["texts"], c.get("mids"))
         if r["changed"]:
             _wj(p, m)
             for k in ("msgs", "facts", "summary", "scrubbed"):
@@ -446,6 +667,7 @@ def run_offline(data, uid, backup_dirs=()):
     rep.update(pf)
     rep.update(archives(data, uid, c["names"], c["texts"]))
     rep.update(misc(data, uid, c["names"], c["texts"], c["imgs"], backup_dirs))
+    rep.update(backups(data.parent / "backup_20261024", uid, c["names"], c["texts"], c["imgs"], c.get("mids")))   # 10-28 审查 memory-3
     mark(data, uid)
     rep["names"] = sorted(c["names"])
     return rep

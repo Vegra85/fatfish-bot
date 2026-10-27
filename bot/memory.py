@@ -17,6 +17,11 @@
 
 作者的做法（思路）：按对话存聊天 → 攒够一批让模型提炼「长期事实 / 近况 / 经历」三类、同一件事新的取代旧的
 → 聊天时按「新鲜度 + 重要度 + 情绪」挑几条、证据不够的不拿 → 放进提示词；忘掉的留墓碑 换个说法也不记回来。
+遗忘曲线（作者 v1.1.0 的思路）：每条记忆按类型 / 重要度 / 情绪 / 跟谁熟定个等级 → 初始半衰期（几天到几个月）；
+清晰度 = 0.5 ^ (距上次想起的天数 / 半衰期)：清楚的照常想起、模糊的要更多线索而且只能说「好像…」、太模糊的平时想不起来；
+真被聊到 = 想起一次 → 半衰期变长（快忘了才想起来加得多 刚聊过又聊加得少 12 小时只算一次）；
+夜里她睡着时 把同一个人快忘的几件事蒸馏成一句「大概印象」（新印象取代旧印象 一层层蒸馏）细节归档；还会拿日记和快忘的事做个梦。
+bot.py 会先看这里有没有 configure_forget / fading / wander_pick / recall 这些函数 —— 没有就不做（这个空壳就没有）。
 条目的格式见 control.add_fact（id / text / kind / imp / emo / date / ts / status …）。
 """
 import hashlib
@@ -72,7 +77,7 @@ def render2(mem, query="", cfg=None, speaker="", uid=""):
 
 
 def apply2(mem, items, supersede_ids=(), tombstones=None, daily_cap=8,
-           person_daily=0, person_max=0, max_active=0, names=None):
+           person_daily=0, person_max=0, max_active=0, names=None, close=None, lines=None):
     return []
 
 

@@ -8,6 +8,8 @@
 这个仓库给的是思路、工具和集成 —— 不是拿来就能用的成品 AI（10-26 小明 定的）：
   人设 persona.md 和「灵魂」类模块（PRIVATE 里那些）不导出，换成 tools/public_stubs/ 里的空壳（同样的函数 什么都不记）
   —— 下载的人照样能跑起来 灵魂要自己造。空壳缺了哪个就整个不导出（免得仓库跑不起来）
+  人设模板导出成 bot/persona.example.md（10-27 v1.2.0）：机器人 / 首次设置向导第一次运行时复制成 persona.md，
+  以后覆盖解压升级只换模板、不碰用户自己写的 persona.md
 
 宁可不导出 也不把隐私传上去：
   1. 只拷白名单里的文件（代码、bat、控制台网页）；聊天记录、记忆、日志、表情包图片、备份、config.json 都不拷
@@ -34,19 +36,21 @@ BOT = ROOT / "bot"
 DATA = BOT / "data"
 
 ROOT_FILES = ["启动.bat", "停止.bat", "run.bat", "修复启动.bat", "开机自启.bat", "控制台.bat", "重启机器人.bat", "导出到GitHub.bat",
-              "安装语音.bat", "安装本地AI.bat", "安装视频支持.bat", "导入表情包.bat", "整理表情包.bat"]
+              "安装语音.bat", "安装本地AI.bat", "安装视频支持.bat", "导入表情包.bat", "整理表情包.bat",
+              "首次设置.bat"]   # 首次设置.bat：10-27 v1.2.0 首次设置向导（打包群文件.bat 只给群主用 不导出）
 BOT_FILES = ["bot.py", "budget.py", "catchup.py", "clock.py", "control.py", "followup.py", "galgame.py", "imgprep.py",
              "localai.py", "machine.py", "media.py", "memory.py", "mood2.py", "rhythm.py", "shared.py", "slang.py",
              "soul.py", "speakup.py", "stats.py", "stickers.py", "style.py", "vision.py", "voice.py", "websearch.py",
              "bili.py", "bili2.py", "panel.py", "panel.html", "botloop.bat", "persona.md", "setup_voice.py",
              "apply_stickers.py", "import_nekowhale.py", "sticker_curate.py", "anim.py", "cross.py", "wipe.py", "sing.py",
              "music.py", "aidetect.py", "memewiki.py", "groupadmin.py", "safeio.py", "commit.py",
-             "version.py"]   # version.py：发布用的版本号（10-27 v1.0.0）
+             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py"]   # version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）
 # 不公开的「灵魂」：导出的是 tools/public_stubs/ 里同名的空壳（10-26）
 PRIVATE = {"persona.md", "soul.py", "memory.py", "mood2.py", "galgame.py", "cross.py", "slang.py", "style.py", "shared.py",
-           "commit.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）
+           "commit.py", "humor.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）
 STUBS = HERE / "public_stubs"
-TOOL_FILES = ["export_github.py"]
+PUBLIC_AS = {"persona.md": "persona.example.md"}   # 空壳换个名字导出（v1.2.0：人设模板 → 升级不冲掉用户的 persona.md）
+TOOL_FILES = ["export_github.py", "setup_wizard.py"]   # setup_wizard.py：首次设置向导（v1.2.0）；pack_qqbot.py 只给群主用 不导出
 HANDWRITTEN = {"README.md", "CHANGELOG.md", ".gitignore", ".gitattributes", "LICENSE",
                "requirements.txt"}   # 导出目录里手写的 不覆盖也不删
 SECRET_KEY = re.compile(r"key|token|sessdata|secret|password|cookie", re.I)
@@ -155,7 +159,7 @@ def build(cfg, nums, rules):
         if name in PRIVATE:
             if not (STUBS / name).exists():
                 raise SystemExit(f"tools/public_stubs/{name} 不在：「{name}」不公开 要有空壳才能导出（不然仓库跑不起来）")
-            files["bot/" + name] = read(STUBS / name)
+            files["bot/" + PUBLIC_AS.get(name, name)] = read(STUBS / name)
         elif (BOT / name).exists():
             files["bot/" + name] = read(BOT / name)
     for name in TOOL_FILES:

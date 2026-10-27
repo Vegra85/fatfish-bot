@@ -83,6 +83,7 @@
   "nick_gap_sec": 21600,
   "reply_wait_private": 2,
   "reply_wait_group": 3.5,
+  "private_think": "low",
   "reply_max_wait": 30,
   "follow_window_sec": 120,
   "native_vision": true,
@@ -93,7 +94,9 @@
   "group_reply_max_tokens": 450,
   "group_image_reply_prob": 0.3,
   "web_search": true,
-  "deepseek_search": true
+  "deepseek_search": true,
+  "owner_place": "英国",
+  "private_think_owner": "low"
  },
  "persona_file": "persona.md",
  "soul": {
@@ -104,12 +107,22 @@
   "diary_to_owner": false
  },
  "vision": {
-  "_说明": "识图：主模型本地 Ollama；本地没开/失败时用 fallback（智谱云端）",
-  "provider": "ollama",
-  "model": "qwen3-vl:8b-instruct-q8_0",
-  "max_per_hour": 40,
-  "max_chars": 90,
+  "_说明": "识图（10-27 晚 v1.5.0 小明：所有图交给 deepseek 看 不在意 token）：主模型 deepseek-flash（use_chat_key = 用 llm.deepseek 那把 key 不在这里再存一份）→ fallback 本地 Ollama qwen3-vl → fallback2 智谱 glm-4v-flash。self_ref：把她的头像当参考图一起给（认得出图里是不是她）；see_all：没人找她的群图也后台看；max_chars 描述字数（梗 / 跟你 / 坑 在最后）。花的钱记在统计「看图」下 不算进省 token 曲线",
+  "provider": "openai",
+  "use_chat_key": true,
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-flash",
+  "thinking": "disabled",
+  "self_ref": true,
+  "see_all": true,
+  "max_per_hour": 200,
+  "max_chars": 180,
+  "max_tokens": 600,
   "fallback": {
+   "provider": "ollama",
+   "model": "qwen3-vl:8b-instruct-q8_0"
+  },
+  "fallback2": {
    "provider": "openai",
    "base_url": "https://open.bigmodel.cn/api/paas/v4",
    "model": "glm-4v-flash",
@@ -144,6 +157,83 @@
   "group_max_active": 500,
   "skip_when_full": true
  },
+ "forget": {
+  "_说明": "遗忘曲线（10-27）：每条记忆按等级有个半衰期（天 L1~L5）清晰度 = 0.5^(距上次想起的天数/半衰期)；≥ fuzzy 清楚、fuzzy~faint 模糊（要更多线索 只能说「好像」）、< faint 想不起来。真被聊到 = 想起一次 半衰期变长（review_gap_hours 内只算一次）。close_favor 好感到这么多算熟人（等级 +1）。夜里 night_hours（北京时间几点到几点 她在睡觉）整理：同一个人快忘的（< gist_below）蒸馏成一句印象、忘得差不多（< archive_below）的归档（能找回）、做梦（dream）。wander 突然想起来（每轮概率 wander_prob、每个对话 wander_cooldown_hours 小时最多一次）。archive_search 问「还记得吗」想不起来时翻最近 archive_days 天的聊天记录",
+  "enabled": true,
+  "half_life": {
+   "1": 2,
+   "2": 5,
+   "3": 14,
+   "4": 45,
+   "5": 120
+  },
+  "fuzzy": 0.5,
+  "faint": 0.2,
+  "review_gap_hours": 12,
+  "close_favor": 40,
+  "night_hours": [
+   5,
+   9
+  ],
+  "gist": true,
+  "gist_below": 0.25,
+  "archive_below": 0.1,
+  "max_gist_per_night": 30,
+  "dream": true,
+  "wander": true,
+  "wander_prob": 0.08,
+  "wander_cooldown_hours": 6,
+  "archive_search": true,
+  "archive_days": 60
+ },
+ "memhyg": {
+  "_说明": "记忆卫生（10-27 小明 批的清单）：开机 delay_s 秒后做一次性迁移（先整份备份 data/memory → 旧记忆的相对时间换成日期 → 对人的推断让 DeepSeek 判一遍 推断的归档 → 报告 data/memhyg_report.md；做过的记在 data/memhyg.json 不重做）。migrate=false 不做",
+  "migrate": true,
+  "delay_s": 120
+ },
+ "qzone": {
+  "_说明": "QQ 空间（10-27 v1.3.0 qzone.py）：她醒着的时候每 read_every_min 分钟左右刷一次好友动态（看 / 点赞 / 评论；别人家的 AI、屏蔽的、说过「别看我空间」的不看），只看最近 read_days 天的、一次最多 read_max_posts 条；每天最多赞 like_daily、评 comment_daily（刷一次最多赞 like_per_read、评 comment_per_read）（好感 ≥ comment_min_favor 的才评）；私聊 / 群里能提她刷到的（mention_private / mention_group）；有人叫她看空间就当场去看（view_on_ask：本人叫看自己的；老板能叫看别人的 群里只说「私聊跟你说」）；每天 post_prob 的概率在 post_hours（北京时间）发一条说说（post_sources：diary 日记那句 / bili B站刷到的 / mood 心情和日常 / group 群里的趣事；post_right 1 = 所有人可见）；她说说下面的评论每天最多回 reply_daily 条、同一个人同一条最多 reply_rounds 轮；visitors 每天看一次访客。dry_run 里哪项是 true 就只记不做（控制台「QQ 空间」页能看到本来会怎么做）。改了要重启机器人",
+  "enabled": true,
+  "read": true,
+  "read_every_min": 120,
+  "read_days": 3,
+  "read_max_posts": 8,
+  "like": true,
+  "like_daily": 20,
+  "like_min_score": 2,
+  "like_per_read": 6,
+  "comment": true,
+  "comment_daily": 8,
+  "comment_min_favor": 20,
+  "comment_per_read": 2,
+  "mention_private": true,
+  "mention_group": true,
+  "view_on_ask": true,
+  "post": true,
+  "post_daily": 1,
+  "post_prob": 0.7,
+  "post_hours": [
+   13,
+   24
+  ],
+  "post_sources": [
+   "diary",
+   "bili",
+   "mood",
+   "group"
+  ],
+  "post_right": 1,
+  "reply": true,
+  "reply_daily": 10,
+  "reply_rounds": 2,
+  "visitors": true,
+  "dry_run": {
+   "like": false,
+   "comment": false,
+   "post": false,
+   "reply": false
+  }
+ },
  "speakup": {
   "_说明": "群里冷场冒泡。dry_run=true 只在日志里写本来会说什么 看着合适再改 false。groups 留空=她在的所有群",
   "enabled": true,
@@ -158,12 +248,15 @@
   "groups": []
  },
  "mood2": {
-  "_说明": "心情2.0：每轮聊完另起一次小调用判断心情。baseline 基准心情 / 半衰期（小时）/ 置信度够多少才把「刚才心里想的」告诉她",
+  "_说明": "心情2.0：每轮聊完另起一次小调用判断心情。baseline 基准心情 / 半衰期（小时）/ 置信度够多少才把「刚才心里想的」告诉她；as_facts（10-27 记忆卫生 默认开）：给她看的不是心情分数 / 情绪词 / 语气提示 而是最近真发生的几件事（event_count 几件、event_min 影响小于这个的不给）；关掉 = 原来那段",
   "enabled": true,
   "baseline": 70,
   "mood_half_life_h": 3,
   "emo_half_life_h": 1.5,
-  "voice_confidence": 60
+  "voice_confidence": 60,
+  "as_facts": true,
+  "event_count": 3,
+  "event_min": 0.3
  },
  "rhythm": {
   "_说明": "群聊节奏：她在群里说上话后会「在线」聊一阵（minutes 随机几分钟），期间没点她名的话也挑着接（reply_prob 概率、两句至少隔 min_gap_sec 秒、每轮最多 max_replies 句、光发图打 pic_factor 折）；冷场 idle_min 分钟后有 probe_prob 概率再试探一句；到点时如果大家还在聊 说句收尾话再潜水（exit_line）；收尾后 cooldown_min 分钟内不主动插话。enabled 改 false 回到原来的样子",
@@ -279,10 +372,10 @@
   }
  },
  "budget": {
-  "_说明": "省 token：回复意愿 w = floor + (1-floor)/(1+(最近window_hours小时花的美元/half_usd)^shape)；不同场合用 w 的不同次方 powers（private 私聊 / direct 被@叫名字引用 / follow 没@的接话 / chat 自己插话 / extra 冒泡主动找人）；老板不限，补回不算（10-26 起私聊每条都回 不过这一掷；powers.private 不再用）；10-26 峰谷计价后价格算准了（输出和高峰时段比以前估的贵）half_usd 从 0.3 调到 0.45 回复量跟以前差不多",
+  "_说明": "省 token：回复意愿 w = floor + (1-floor)/(1+(最近window_hours小时花的美元/half_usd)^shape)；不同场合用 w 的不同次方 powers（private 私聊 / direct 被@叫名字引用 / follow 没@的接话 / chat 自己插话 / extra 冒泡主动找人）；老板不限，补回不算（10-26 起私聊每条都回 不过这一掷；powers.private 不再用）；10-26 峰谷计价后价格算准了（输出和高峰时段比以前估的贵）half_usd 从 0.3 调到 0.45 回复量跟以前差不多；10-28 小明：不在意 token、DeepSeek 一天预算 ¥15 左右、群里也全放开 → half_usd 0.45 → 1.69（≈ ¥12）、shape 0.6 → 4：最近 24 小时花 ¥5 意愿 97%、¥7 91%、¥10 71%、¥12 55%、¥15 36%（那时被 @ 的还回 90%、接话 8%、插话 5%）",
   "enabled": true,
-  "half_usd": 0.45,
-  "shape": 0.6,
+  "half_usd": 1.69,
+  "shape": 4,
   "floor": 0.1,
   "window_hours": 24,
   "powers": {
@@ -294,7 +387,7 @@
   }
  },
  "peak": {
-  "_说明": "DeepSeek 峰谷价（10-26）：北京时间 周一到周五 9-12、14-18 是高峰 价格翻倍（weekdays 0=周一）。holidays 填法定节假日的北京日期（如 \"2027-01-01\"）当天全天按空闲算。defer=true：高峰时群里的记忆提炼、前情提要、学梗先攒着 过了高峰再做（群里没提炼的聊天攒到 defer_overflow 条才先提炼一批 免得挤掉）；私聊照常",
+  "_说明": "DeepSeek 峰谷价（10-26）：北京时间 周一到周五 9-12、14-18 是高峰 价格翻倍（weekdays 0=周一）。holidays 填法定节假日的北京日期（如 \"2027-01-01\"）当天全天按空闲算。defer=true：高峰时群里的记忆提炼、前情提要、学梗先攒着 过了高峰再做（群里没提炼的聊天攒到 defer_overflow 条才先提炼一批 免得挤掉）；私聊照常；10-28 小明 不在意 token → defer 关了（高峰时也马上提炼 贵一倍 但群里的事记得及时）",
   "enabled": true,
   "tz": 8,
   "weekdays": [
@@ -315,7 +408,7 @@
    ]
   ],
   "holidays": [],
-  "defer": true,
+  "defer": false,
   "defer_overflow": 200
  },
  "full_power": {
@@ -435,5 +528,38 @@
    "max_daily": 10,
    "grace_min": 60
   }
+ },
+ "humor": {
+  "_说明": "幽默（10-27 晚 v1.5.0 humor.py）：think = 回梗 / 回玩笑那一轮开 deepseek 思考（思考的钱记在「回梗思考」下 不算进省 token 曲线；think_tokens 开思考时多给的 token）；repeat = 复读跟风（min_people 个不同的人 window_sec 秒内发同一句 → prob 概率跟一句 每群每小时最多 max_per_hour 次 长于 max_len 字不跟）；prank = 冒充老板将计就计（先装作信了 flip_sec 秒后拆穿；owner_names 老板的名字 名片像这些 / 自称这些的都算）。enabled=false 全关",
+  "enabled": true,
+  "think": true,
+  "think_tokens": 4000,
+  "repeat": {
+   "enabled": true,
+   "min_people": 3,
+   "window_sec": 180,
+   "prob": 0.5,
+   "max_per_hour": 3,
+   "max_len": 30
+  },
+  "prank": {
+   "enabled": true,
+   "flip_sec": [
+    30,
+    60
+   ],
+   "owner_names": [
+    "小明"
+   ]
+  }
+ },
+ "make": {
+  "_说明": "做网页 / 代码（10-28 v1.7.0 maker.py）：私聊或群里 @ / 叫她 让她写网页、小游戏、SVG、脚本 → 先用自己的口气答应一句 另外开深度思考做完整 存成文件用 QQ 文件发。per_user_daily 每人每天最多几个（0 = 只给老板做）、daily 总共每天最多几个（老板不限）；max_tokens / effort / timeout_sec 做的那一轮的上限（含思考）、思考力度、最多等几秒。10-28 小明：不在意 token → 每人 15、每天 60（代码默认 6 / 40）",
+  "enabled": true,
+  "per_user_daily": 15,
+  "daily": 60,
+  "max_tokens": 32000,
+  "effort": "high",
+  "timeout_sec": 600
  }
 }

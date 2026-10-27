@@ -10,8 +10,8 @@ bot.py / panel.py 用到的：configure(cfg) / enabled() / rules() → 系统提
 / gate(...) 来了一条消息挡不挡 / hold(...) / away(...) / has(...) / note_call(...) / tick() 到点的约束
 / back_call(rec) / block(...) 这一轮给她看的 / consumed(...) / late_line(...) / status() / release(...) / forget_person(...)
 / 承诺表：due_tasks() / overdue(...) / apologies_due() / task_scene(...) / apology_scene(...) / task_done(...) / task_failed(...)
-  / apology_sent(...) / apology_failed(...) / find_task(...) / cancel_task(...) / mark_done(...) / panel_add(...)
-  / panel_edit(...) / tasks_view() / tasks_status() / reload()
+  / still(...) 还要不要做 / draft(...) / save_draft(...) 没发出去的那句 / apology_sent(...) / apology_failed(...) / find_task(...) / cancel_task(...) / mark_done(...) / panel_add(...)
+  / panel_edit(...) / tasks_view() / tasks_status() / reload() / parse_when(...) 几点 / pending_for(...) 他还没做的
 
 作者的做法（思路）：她自己说了接下来要做什么 → 回复的状态行里写 "do"（漏写了 让心情裁判顺便看一眼）→ 记进一张「承诺表」：
 1. 到点要做的事（「5 分钟后提醒你」「明早 8 点叫你」「每天催你睡」）：到点她用自己的话去做（群里 @ 他 / 私聊）；
@@ -94,7 +94,7 @@ def consumed(key, uid="", now=None):
     return None
 
 
-def late_line(first, last, now=None, scene="group"):
+def late_line(first, last, now=None, scene="group", kind=""):
     return ""
 
 
@@ -138,6 +138,18 @@ def task_failed(t, why, now=None, log=print):
     return "retry"
 
 
+def still(t, apology=False):
+    return False
+
+
+def draft(t, key, apology=False):
+    return None
+
+
+def save_draft(t, key, raw, apology=False):
+    return None
+
+
 def apology_sent(t, text="", now=None, log=print):
     return None
 
@@ -148,6 +160,14 @@ def apology_failed(t, why, now=None, log=print):
 
 def find_task(ref):
     return None
+
+
+def parse_when(at=None, mins=None, now=None):
+    return None
+
+
+def pending_for(uid):
+    return []
 
 
 def cancel_task(t, by="", log=print, now=None):

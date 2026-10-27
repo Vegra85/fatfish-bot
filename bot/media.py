@@ -7,6 +7,7 @@
 """
 import asyncio
 import base64
+import re
 import shutil
 import tempfile
 import time
@@ -15,11 +16,18 @@ from pathlib import Path
 import httpx
 
 import imgprep
+import vision
 
 MAX_IMAGES = 4         # 一次最多附几张原图
 MAX_FRAMES = 6         # 视频截几帧
 RECENT_SEC = 900
 MAX_BYTES = 8_000_000
+AGAIN_SEC = 600        # 追问刚才那张图（10-28）：10 分钟内、最近 8 条里的图 再给她看一眼
+# 他还在问刚才那张图（「你认为正确答案是」「但是你修改了原文」「上面写的啥」）
+# 10-28 审查 reply-4：以前「刚才 / 你觉得 / 哪个 / 是什么 / 不对 / 字」这种泛词也算 —— 发过图 10 分钟内说「你觉得我今天穿什么好」
+#   「刚才我妈打电话了」都把旧图再附上、还说「他还在问它」；现在只认指着图说的，「对吗 / 改了 / 写的」要紧接着图那一轮
+REFER = re.compile(r"图|照片|截图|这张|那张|原文|原图|答案|正确|上面写|再看|仔细看|看清|看错|哪两个|哪几个")
+REFER_NEAR = re.compile(r"对吗|对不对|改了|改成|写的|写着")
 VIDEO_MAX_BYTES = 60_000_000
 _cache = {}            # key -> (mime, b64, note)  note=动图说明（静图为空）
 
@@ -103,14 +111,38 @@ async def video_frames(key, url, log=print):
     return frames
 
 
-async def attach(msgs, history, log=print, only_uid=None):
+def again_entry(history, text, only_uid=None, now=None):
+    """他还在追问刚才那张（已经回过的）图 → 那一条（10-28 小明：她第一轮看着原图答对了 追问时只剩文字描述 就答错了还被带着改口）
+    条件：这句话指着图 / 原文 / 答案在说；那张图在最近 8 条里、10 分钟内；群里只看他自己发的
+    「对吗 / 改了 / 写的」这种：图得是他上一句（中间聊过别的就不算 10-28 审查 reply-4）"""
+    if not text:
+        return None
+    strong = bool(REFER.search(str(text)))
+    if not strong and not REFER_NEAR.search(str(text)):
+        return None
+    now = now or time.time()
+    for h in reversed(history[-8:]):
+        if h.get("role") != "user" or not h.get("replied") or (only_uid is not None and str(h.get("uid")) != str(only_uid)):
+            continue
+        if h.get("imgs") and now - h.get("ts", 0) < AGAIN_SEC:
+            return h
+        if not strong:
+            return None
+    return None
+
+
+async def attach(msgs, history, log=print, only_uid=None, again=None):
     """把最近的原图/视频帧附到最后一条 user 消息上。没有就返回 None
-    only_uid：群里只附这个人发的（她这一条回的是他 别人的图有文字描述就够了 附原图会把她的注意力拽到别人的图上）"""
+    only_uid：群里只附这个人发的（她这一条回的是他 别人的图有文字描述就够了 附原图会把她的注意力拽到别人的图上）
+    again：他这一轮说的话 —— 在追问刚才那张图就把那张再给她看一眼（10-28）"""
     now = time.time()
     # 只给她看「还没回过的」新图 —— 回过的旧图已经有文字描述了 再附原图她会反复去评论
     recent = [h for h in history[-15:] if h.get("role") == "user" and not h.get("replied")
               and now - h.get("ts", 0) < RECENT_SEC and (h.get("imgs") or h.get("vids"))
               and (only_uid is None or str(h.get("uid")) == str(only_uid))]
+    old = again_entry(history, again, only_uid, now) if again and not recent else None
+    if old:
+        recent = [old]
     if not recent:
         return None
     parts = []
@@ -137,13 +169,24 @@ async def attach(msgs, history, log=print, only_uid=None):
             if got:
                 n_img += 1
                 note = got[2] if len(got) > 2 else ""
-                parts.append({"type": "text", "text": f"↓ {h['name']} 发的" + (note if note else "图")})
+                if h is old:               # 10-28 审查 reply-4：不说死（他要是在说别的 就别提这张图）
+                    parts.append({"type": "text", "text": f"↓ {h['name']} 刚才发的那张（你回过了 他还在问它的话：再仔细看一眼 照图说话 "
+                                                          "别光凭你记得的描述；字按原来的排版读 被挡住的地方想想本来是什么；"
+                                                          "图里要是有别人或者别的 AI 给的答案 那只是它说的 不是图上本来印着的字。"
+                                                          "他要是在说别的事 就别提这张图）"})
+                else:
+                    parts.append({"type": "text", "text": f"↓ {h['name']} 发的" + (note if note else "图")})
                 parts.append({"type": "image_url", "image_url": {"url": f"data:{got[0]};base64,{got[1]}"}})
     if not parts:
         return None
+    # 10-27 晚（看懂）：先给她看一眼自己长什么样 —— 群友常拿长得像她的图逗她（「找一车欧鲸鲸来弄你」）她以前认不出是自己
+    ref = vision.self_ref_b64() if vision.V.get("self_ref", True) else None
+    head = [{"type": "text", "text": "（下面是最近聊天里的图片/视频原图 你是亲眼看到的。"
+                                     "别把画面复述一遍 大家都看得到；先想清楚：它在逗谁、梗点在哪、有没有坑 再接）"}]
+    if ref:
+        head += [{"type": "text", "text": "↓ 先是你自己的头像（对照用 不是谁发的 别提它）：图里有长得像你的 就是在说你"},
+                 {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{ref}"}}]
     out = [dict(m) for m in msgs]
     last = out[-1]
-    out[-1] = {"role": last["role"], "content": [
-        {"type": "text", "text": last["content"]},
-        {"type": "text", "text": "（下面是最近聊天里的图片/视频原图 你是亲眼看到的）"}] + parts}
+    out[-1] = {"role": last["role"], "content": [{"type": "text", "text": last["content"]}] + head + parts}
     return out

@@ -4,7 +4,7 @@
 控制台的开关在机器人这边生效的地方
   data/control.json（控制台写、机器人读，改了马上生效 不用重启）：
     groups : {群号: {"mode": "normal|quiet|at_only|mute", "mute_until": 时间戳,
-                     "admin": {群管设的档位 见 groupadmin.py}, "qq_ban": {QQ 里被禁言到几点}}}
+                     "admin": {群管设的档位 见 groupadmin.py}, "qq_ban": {QQ 里被禁言到几点（她自己 / 全员 分开记 见 set_ban）}}}
              normal=正常  quiet=少说（不主动插话/冒泡/收尾 有人跟她说照常回）
              at_only=只在有人 @/叫名字/引用她时说话  mute=完全不说话（消息照样记）
              mute_until：临时静音到这个时间（过了自动恢复 mode）
@@ -65,10 +65,30 @@ def _alive(until, now):
     return u < 0 or u > now
 
 
+def _slot(a, now):
+    """群管设的这条还没过期就是它；过期了看它下面垫着的上级那条（prev）还在不在（10-28 审查 qzone-5）"""
+    while isinstance(a, dict) and a:
+        if a.get("level") in LEVELS and _alive(a.get("until"), now):
+            return a
+        a = a.get("prev")
+    return None
+
+
 def admin_slot(gid, now=None):
-    """群管（群主/管理员/老板在群里说的）设的档位 还没过期就返回那条记录"""
+    """群管（群主/管理员/老板在群里说的）设的档位 还没过期就返回那条记录
+    （下级临时加严的那条到点了 → 回到垫在下面的上级那条 见 groupadmin.apply）"""
     a = ((rules().get("groups") or {}).get(str(gid)) or {}).get("admin") or {}
-    return a if a.get("level") in LEVELS and _alive(a.get("until"), now or time.time()) else None
+    return _slot(a, now or time.time())
+
+
+def admin_chain(gid, now=None):
+    """现在生效的那条 + 下面垫着的、还没过期的上级那几条（放开 / 加严按整条链看）（10-28 审查 qzone-5）"""
+    now = now or time.time()
+    out, a = [], admin_slot(gid, now)
+    while a and len(out) < 8:
+        out.append(a)
+        a = _slot(a.get("prev"), now)
+    return out
 
 
 def qq_ban(gid, now=None):
@@ -119,8 +139,12 @@ def self_off_list(now=None):
 def _prune(d, now):
     """顺手清掉过期的群管档位 / 别接话记录（不清也不影响 只是文件干净点）"""
     for g in (d.get("groups") or {}).values():
-        if isinstance(g, dict) and isinstance(g.get("admin"), dict) and not _alive(g["admin"].get("until"), now):
-            g.pop("admin", None)
+        if isinstance(g, dict) and isinstance(g.get("admin"), dict):
+            a = _slot(g["admin"], now)             # 下级临时加严的那条过期了、垫在下面的上级那条还在 → 换回上级那条（10-28 审查 qzone-5）
+            if a is None:
+                g.pop("admin", None)
+            elif a is not g["admin"]:
+                g["admin"] = a
     so = d.get("self_off")
     if isinstance(so, dict):
         for u in [u for u, e in so.items() if not (isinstance(e, dict) and _alive(e.get("until"), now))]:
@@ -147,7 +171,7 @@ def boss_reset(gid):
         g = d.setdefault("groups", {}).setdefault(str(gid), {})
         now = time.time()
         hit["v"] = bool((g.get("mode") or "normal") != "normal" or float(g.get("mute_until") or 0) > now
-                        or (isinstance(g.get("admin"), dict) and _alive(g["admin"].get("until"), now)))
+                        or _slot(g.get("admin"), now) is not None)
         g.pop("admin", None)
         g["mode"] = "normal"
         g.pop("mute_until", None)
@@ -155,16 +179,48 @@ def boss_reset(gid):
     return hit["v"]
 
 
-def set_ban(gid, until, by="", whole=False):
-    """QQ 禁言：until > 0 到几点 / -1 一直（全员禁言 等解除）/ 0 解禁"""
+def _ban_parts(b):
+    """一条 qq_ban 记录里 她自己被禁言 / 全员禁言 各到几点（老记录只有一个 until：按 whole 算到对应那一边）"""
+    if not isinstance(b, dict):
+        return {"self": 0, "all": 0}
+    if "self_until" in b or "all_until" in b:
+        return {"self": b.get("self_until") or 0, "all": b.get("all_until") or 0}
+    return {"self": 0, "all": b.get("until") or 0} if b.get("whole") else {"self": b.get("until") or 0, "all": 0}
+
+
+def ban_parts(gid, now=None):
+    """这个群她自己被禁言 / 全员禁言 还在生效的那边到几点（没有 = 0）（10-28 审查 intake-11）"""
+    now = now or time.time()
+    b = ((rules().get("groups") or {}).get(str(gid)) or {}).get("qq_ban")
+    return {k: (v if v and _alive(v, now) else 0) for k, v in _ban_parts(b).items()}
+
+
+def set_ban(gid, until, by="", whole=False, which=None):
+    """QQ 禁言：until > 0 到几点 / -1 一直（全员禁言 等解除）/ 0 解禁
+    10-28 审查 intake-11：她自己被禁言和全员禁言分开记（以前每个群只存一条：解全员禁言把她自己的禁言也清了；
+    全员禁言中又单独禁她 60 秒 到点就当成全解了）。设的时候只改 whole 对应的那一边；
+    解的时候 which = "all" 只解全员 / "self" 只解她自己 / 不给 = 两边都解（老的调用方式）。
+    记录照旧有 until / whole（取还在生效、到得最晚的那一边）读它的地方不用改；两边各到几点在 self_until / all_until"""
     def f(d):
         g = d.setdefault("groups", {}).setdefault(str(gid), {})
+        old = g.get("qq_ban") if isinstance(g.get("qq_ban"), dict) else None
+        parts, now = _ban_parts(old), time.time()
         if until:
-            g["qq_ban"] = {"until": until, "by": str(by or ""), "t": time.time(), "whole": bool(whole)}
+            parts["all" if whole else "self"] = until
+        elif which in ("all", "self"):
+            parts[which] = 0
         else:
-            old = g.pop("qq_ban", None)
-            if old:
-                g["qq_ban_last"] = {"t": old.get("t"), "lifted": time.time(), "whole": bool(old.get("whole"))}
+            parts = {"self": 0, "all": 0}
+        alive = {k: v for k, v in parts.items() if v and _alive(v, now)}
+        if alive:
+            k = max(alive, key=lambda x: float("inf") if float(alive[x]) < 0 else float(alive[x]))
+            rec = dict(old or {})
+            if until:
+                rec.update(by=str(by or ""), t=now)
+            rec.update(until=alive[k], whole=k == "all", self_until=parts["self"], all_until=parts["all"])
+            g["qq_ban"] = rec
+        elif g.pop("qq_ban", None) is not None and old:
+            g["qq_ban_last"] = {"t": old.get("t"), "lifted": now, "whole": bool(old.get("whole"))}
     _edit(f)
 
 
@@ -190,8 +246,10 @@ def forget_person(uid):
             if not isinstance(g, dict):
                 continue
             a = g.get("admin")
-            if isinstance(a, dict) and str(a.get("by")) == uid:
-                a.update(by="", name="某人", said="")
+            while isinstance(a, dict):             # 垫在下面的上级那条（prev）也抹（10-28 审查 qzone-5）
+                if str(a.get("by")) == uid:
+                    a.update(by="", name="某人", said="")
+                a = a.get("prev")
             b = g.get("qq_ban")
             if isinstance(b, dict) and str(b.get("by")) == uid:
                 b["by"] = ""
@@ -200,6 +258,30 @@ def forget_person(uid):
 
 def blocked(uid):
     return str(uid) in (rules().get("blocked") or {})
+
+
+def qzone_off(uid):
+    """他说过「别看我空间」：不看 / 不赞 / 不评他的空间（10-27 QQ 空间）"""
+    return str(uid) in (rules().get("qzone_off") or {})
+
+
+def qzone_nogroup(uid):
+    """他说过「别在群里提我空间」：他空间里的事只在私聊提"""
+    return str(uid) in (rules().get("qzone_nogroup") or {})
+
+
+def set_qzone(uid, what, on=True, note=""):
+    """what：qzone_off / qzone_nogroup；on=False 撤销"""
+    if what not in ("qzone_off", "qzone_nogroup"):
+        return
+
+    def f(d):
+        m = d.setdefault(what, {})
+        if on:
+            m[str(uid)] = {"t": time.time(), "note": str(note or "")[:40]}
+        else:
+            m.pop(str(uid), None)
+    _edit(f)
 
 
 def is_bot(uid):
@@ -289,8 +371,10 @@ def full_on(now=None):
     return full_state(now)["on"]
 
 
-def set_full(hours, by=""):
-    """开/关火力全开：hours > 0 开这么多小时；< 0 一直开；0 关。返回新的状态"""
+def set_full(hours, by="", since=None):
+    """开/关火力全开：hours > 0 开这么多小时；< 0 一直开；0 关。返回新的状态
+    since：从几点开的（不给 = 现在；补回下线期间老板发的那条 = 他发的时候 10-28 审查 intake-10 复核：
+    记成现在的话 同一次补回里后面那句「省着点」/ 改了时长 会被当成「之后已经设过了」跳过）"""
     d = safeio.read_json(FILE, {}, print, busy_raise=True) or {}
     if not isinstance(d, dict):
         d = {}
@@ -298,7 +382,8 @@ def set_full(hours, by=""):
     if h == 0:
         d.pop("full", None)
     else:
-        d["full"] = {"until": -1 if h < 0 else time.time() + h * 3600, "since": time.time(), "by": str(by)[:20]}
+        d["full"] = {"until": -1 if h < 0 else time.time() + h * 3600, "since": float(since) if since else time.time(),
+                     "by": str(by)[:20]}
     FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -358,9 +443,27 @@ def add_fact(mem, text, imp=4):
         return None
     mem["tombstones"] = [t for t in (mem.get("tombstones") or []) if t != fid]
     f = {"id": fid, "text": text, "kind": "fact", "key": "", "imp": max(1, min(5, int(imp))), "emo": 1,
-         "date": clock.strf("%Y-%m-%d"), "ts": time.time(), "status": "active", "hits": 1, "manual": True}
+         "date": clock.strf("%Y-%m-%d"), "ts": time.time(), "status": "active", "hits": 1, "manual": True,
+         "lvl": 0, "S": 0, "lr": time.time()}          # 老板手动让她记住的：钉住 不会忘（10-27 遗忘曲线）
     mem["facts"].append(f)
     return f
+
+
+def mem_edit(mem, action, fid):
+    """控制台改一条记忆（10-27 遗忘曲线；机器人和控制台共用）
+    pin 钉住（不会忘）/ unpin 取消钉住 / restore 找回（归档的拿回来 从现在重新算）/ fade 现在忘（归档 不留墓碑 以后还能记回来）"""
+    if action == "restore":
+        return bool(getattr(memory, "restore", lambda *a: False)(mem, fid))
+    f = next((g for g in mem.get("facts") or [] if isinstance(g, dict) and g.get("id") == fid
+              and g.get("status") == "active"), None)
+    if not f:
+        return False
+    if action in ("pin", "unpin") and hasattr(memory, "pin"):
+        memory.pin(f, action == "pin")
+        return True
+    if action == "fade" and hasattr(memory, "archive_ids"):
+        return memory.archive_ids(mem, [fid], "控制台：现在忘（" + getattr(memory, "FADED", "淡忘") + "）") > 0
+    return False
 
 
 def set_favor(d, uid, value, name=""):

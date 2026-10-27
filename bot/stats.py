@@ -141,31 +141,43 @@ def add(key, n=1):
     flush()
 
 
-def llm(usage, model="", tag=""):
-    """一次大模型调用的 token（DeepSeek 返回的 usage）；tag = 哪个功能用的（聊天回复/心情裁判/学梗…）"""
+def llm(usage, model="", tag="", budget=True, free_reason=False):
+    """一次大模型调用的 token（DeepSeek 返回的 usage）；tag = 哪个功能用的（聊天回复/心情裁判/学梗…）
+    budget=False：花的钱照样记在统计里 但不算进省 token 的曲线（看图 10-27 晚 小明：单独记账）
+    free_reason=True：这次开了思考 —— 思考那部分 token 记在「回梗思考」下面、也不算进曲线（回复本身照算）
+    free_reason="做东西·思考" 这种字：思考那部分记在这个名字下面（10-28 审查 panel-5：以前谁开的思考都记成「回梗思考」）"""
     u = usage or {}
     try:
         hit = int(u.get("prompt_cache_hit_tokens") or 0)
         miss = u.get("prompt_cache_miss_tokens")
         miss = int(miss) if miss is not None else max(0, int(u.get("prompt_tokens") or 0) - hit)
         out = int(u.get("completion_tokens") or 0)
-    except (TypeError, ValueError):
+        rs = int(((u.get("completion_tokens_details") or {}).get("reasoning_tokens")) or 0) if free_reason else 0
+    except (TypeError, ValueError, AttributeError):
         return
+    rs = max(0, min(rs, out))
     d = _load()["days"].setdefault(_day(), {})
     d["llm_calls"] = d.get("llm_calls", 0) + 1
     d["tok_hit"] = d.get("tok_hit", 0) + hit
     d["tok_miss"] = d.get("tok_miss", 0) + miss
     d["tok_out"] = d.get("tok_out", 0) + out
-    b = d.setdefault("by", {}).setdefault(str(tag or "其他")[:16], {})
-    for k, v in (("calls", 1), ("miss", miss), ("hit", hit), ("out", out)):
-        b[k] = b.get(k, 0) + v
     pk = peak_now()
-    if pk:                                        # 高峰时段的那部分 token 另记一份（控制台按这个算翻倍的钱）
+    parts = [(str(tag or "其他")[:16], 1, miss, hit, out - rs)]
+    if rs:
+        parts.append((free_reason[:16] if isinstance(free_reason, str) else "回梗思考", 0, 0, 0, rs))
+    for tg, calls, mi, hi, ou in parts:
+        b = d.setdefault("by", {}).setdefault(tg, {})
+        for k, v in (("calls", calls), ("miss", mi), ("hit", hi), ("out", ou)):
+            b[k] = b.get(k, 0) + v
+        if pk:                                    # 高峰时段的那部分 token 另记一份（控制台按这个算翻倍的钱）
+            for k, v in (("miss", mi), ("hit", hi), ("out", ou)):
+                b[k + "_pk"] = b.get(k + "_pk", 0) + v
+    if pk:
         for k, v in (("miss", miss), ("hit", hit), ("out", out)):
             d["tok_" + k + "_pk"] = d.get("tok_" + k + "_pk", 0) + v
-            b[k + "_pk"] = b.get(k + "_pk", 0) + v
-    cny = (miss * _prices["cny_miss"] + hit * _prices["cny_hit"] + out * _prices["cny_out"]) / 1e6
-    _spend(_usd(cny * (_prices["peak_mult"] if pk else 1.0)))
+    if budget:                                    # 省 token 曲线只算「该算」的那部分
+        cny = (miss * _prices["cny_miss"] + hit * _prices["cny_hit"] + (out - rs) * _prices["cny_out"]) / 1e6
+        _spend(_usd(cny * (_prices["peak_mult"] if pk else 1.0)))
     global _dirty
     _dirty = True
     flush()
