@@ -1,5 +1,7 @@
 # 只在自己电脑上有、不进仓库的东西：key、聊天记录、记忆、好感度、日志、表情包图片、模型
 bot/config.json
+# 你自己的人设（仓库里只放模板 bot/persona.example.md，v1.2.0 起）
+bot/persona.md
 bot/data/
 bot/mood.json
 bot/avatar.png
