@@ -185,6 +185,17 @@ def build(cfg, nums, rules):
     return files
 
 
+_ASCII_NAME = re.compile(r"[A-Za-z0-9_.\-]+")
+
+
+def _name_in(nm, line):
+    """名字在这一行里吗。纯英文 / 数字的名字按整词找（10-28：两个字母的英文名按字母串找 代码里到处都撞上）；
+    大小写照旧要一样；中文的照旧按字找"""
+    if _ASCII_NAME.fullmatch(nm):
+        return re.search(rf"(?<![A-Za-z0-9]){re.escape(nm)}(?![A-Za-z0-9])", line) is not None
+    return nm in line
+
+
 def scan(files, nums, names, secrets):
     probs = []
     for rel, t in files.items():
@@ -201,7 +212,7 @@ def scan(files, nums, names, secrets):
                 if re.search(rf"(?<!\d){n}(?!\d)", line):
                     probs.append(f"{rel}:{i} 有 QQ号/群号 {n[:3]}…")
             for nm in names:
-                if nm in line:
+                if _name_in(nm, line):
                     probs.append(f"{rel}:{i} 有认识的人的名字「{nm}」")
             for pat, what in PATTERNS:
                 if re.search(pat, line):
