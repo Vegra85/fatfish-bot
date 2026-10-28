@@ -9,11 +9,11 @@
   省 token 的曲线还是按美元（人民币 ÷ usd_cny），每次调用按「当时」是不是高峰算
 """
 import json
-import os
 import time
 from pathlib import Path
 
 import clock
+import safeio
 
 ROOT = Path(__file__).resolve().parent
 FILE = ROOT / "data" / "stats.json"
@@ -24,6 +24,8 @@ KEEP_HOURS = 72
 _d = None
 _dirty = False
 _last = 0.0
+_ok = False          # 盘上那份读到过没有（没读到过 = 不能写回去 免得冲掉以前的统计）（10-28 Gemini 复查 #11）
+_busy_at = 0.0
 # 价格（config → panel.prices 覆盖）：DeepSeek（deepseek-flash）每百万 token 空闲时段 没命中缓存 / 命中 / 输出（人民币），
 # 高峰时段 × peak_mult；DeepSeek 搜索、读网页 每千次成功请求（人民币）；MiniMax 语音每百万字（美元）；usd_cny 美元换人民币
 _prices = {"cny_miss": 1.0, "cny_hit": 0.02, "cny_out": 4.0, "peak_mult": 2.0,
@@ -108,15 +110,41 @@ def spent(hours=24, now=None):
     return sum(v for k, v in (_load().get("hours") or {}).items() if k in keys)
 
 
+def _merge(base, extra, add=True):
+    """读不到盘那会儿攒在内存里的计数 并进读到的那份（计数相加；心情这种采样 盘上没有才补上）"""
+    for k, v in extra.items():
+        b = base.get(k)
+        if isinstance(v, dict):
+            if b is None:
+                base[k] = v
+            elif isinstance(b, dict):
+                _merge(b, v, add and k != "mood")
+        elif b is None:
+            base[k] = v
+        elif add and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in (b, v)):
+            base[k] = round(b + v, 7) if isinstance(b, float) or isinstance(v, float) else b + v
+
+
 def _load():
-    global _d
+    """以前：读不出来（被占着 / 断电后变成一串 \\x00）就悄悄当成空的、一直缓存着，20 秒内一 flush 90 天统计只剩今天、连 .bad 都没有
+    现在：坏了先另存 .bad；一直打不开 → 这会儿的计数先攒在内存里、隔 30 秒再读、读到了并进去；没读到过不写盘（10-28 Gemini 复查 #11）"""
+    global _d, _ok, _busy_at
     if _d is None:
+        _ok, _busy_at = False, 0.0
+    if not _ok and time.time() - _busy_at > 30:
         try:
-            _d = json.loads(FILE.read_text(encoding="utf-8"))
-        except Exception:
-            _d = {}
-        _d.setdefault("days", {})
-        _d.setdefault("mood", {})
+            disk = safeio.read_json(FILE, None, print, busy_raise=True)
+        except safeio.Busy:
+            _busy_at = time.time()
+        else:
+            base = disk if isinstance(disk, dict) else {}
+            if _d:
+                _merge(base, _d)
+            _d, _ok = base, True
+    if _d is None:
+        _d = {}
+    _d.setdefault("days", {})
+    _d.setdefault("mood", {})
     return _d
 
 
@@ -202,6 +230,8 @@ def flush(force=False):
     if not (_dirty or force) or (not force and time.time() - _last < 20):
         return
     d = _load()
+    if not _ok:                                   # 盘上那份还没读到过：先不写（10-28 Gemini 复查 #11）
+        return
     _sample_mood()
     cut = clock.strf("%Y-%m-%d", time.time() - KEEP_DAYS * 86400)
     for k in [k for k in d["days"] if k < cut]:
@@ -212,10 +242,7 @@ def flush(force=False):
     for k in [k for k in (d.get("hours") or {}) if k < hcut]:
         del d["hours"][k]
     try:
-        FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, FILE)
+        safeio.write_json(FILE, d, indent=None)   # 临时文件带进程号、换不过去等一下再换、写完 fsync（以前断电会变成一串 \x00）
         _dirty, _last = False, time.time()
     except Exception:
         pass

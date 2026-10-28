@@ -155,7 +155,19 @@
   "group_person_daily": 5,
   "group_person_max": 30,
   "group_max_active": 500,
-  "skip_when_full": true
+  "skip_when_full": true,
+  "reinforce": {
+   "enabled": true,
+   "mention_gain": 1,
+   "use_gain": 0.5,
+   "growth": 1.5,
+   "max_half_life": 365,
+   "bonus_k": 0.04,
+   "bonus_max": 0.1,
+   "annotate_min": 3,
+   "no_bonus_recent": 3,
+   "inherit": 0.5
+  }
  },
  "forget": {
   "_说明": "遗忘曲线（10-27）：每条记忆按等级有个半衰期（天 L1~L5）清晰度 = 0.5^(距上次想起的天数/半衰期)；≥ fuzzy 清楚、fuzzy~faint 模糊（要更多线索 只能说「好像」）、< faint 想不起来。真被聊到 = 想起一次 半衰期变长（review_gap_hours 内只算一次）。close_favor 好感到这么多算熟人（等级 +1）。夜里 night_hours（北京时间几点到几点 她在睡觉）整理：同一个人快忘的（< gist_below）蒸馏成一句印象、忘得差不多（< archive_below）的归档（能找回）、做梦（dream）。wander 突然想起来（每轮概率 wander_prob、每个对话 wander_cooldown_hours 小时最多一次）。archive_search 问「还记得吗」想不起来时翻最近 archive_days 天的聊天记录",
@@ -550,7 +562,20 @@
    ],
    "owner_names": [
     "小明"
-   ]
+   ],
+   "pranks": true,
+   "auto": true,
+   "level": "normal",
+   "person_daily": 1,
+   "group_gap_hours": 3,
+   "owner_factor": 0.5,
+   "order_gap_min": 10,
+   "reveal_sec": [
+    60,
+    150
+   ],
+   "undo_sec": 110,
+   "late_drop_min": 30
   }
  },
  "make": {

@@ -14,7 +14,6 @@
         有人说「别唱了」→ 这个对话 6 小时不唱；QQ 不收太长的语音 → 自动剪成 short_sec（默认 60 秒）再发一次
 """
 import hashlib
-import json
 import random
 import re
 import shutil
@@ -23,6 +22,7 @@ import time
 from pathlib import Path
 
 import clock
+import safeio
 
 ROOT = Path(__file__).resolve().parent
 SONG_DIR = ROOT / "songs"
@@ -81,9 +81,9 @@ def _sid(file_name):
 
 def _read_index():
     try:
-        d = json.loads(INDEX.read_text(encoding="utf-8"))
-    except Exception:
-        d = {}
+        d = safeio.read_json(INDEX, None, print, busy_raise=True)   # 读坏了先另存 .bad
+    except safeio.Busy:            # 一直打不开：这次只按文件夹里的算、不存（10-28 Gemini 复查：以前当成空的 一存 歌名、别名、截取的开始结束、默认歌全没了）
+        return safeio.Unsaved(songs=[])
     if not isinstance(d, dict):
         d = {}
     d.setdefault("songs", [])
@@ -107,11 +107,11 @@ def index():
 
 def save_index(d):
     """只有控制台调（机器人只读）"""
+    if isinstance(d, safeio.Unsaved):
+        return
     SONG_DIR.mkdir(parents=True, exist_ok=True)
     out = {"songs": [{k: v for k, v in s.items() if k not in ("exists", "auto", "secs")} for s in d.get("songs") or []]}
-    tmp = INDEX.with_suffix(".tmp")
-    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(INDEX)
+    safeio.write_json(INDEX, out)
 
 
 def songs():
@@ -256,9 +256,10 @@ def _prune(keep=40):
 # ───────────── 每天几次 / 刚唱过 ─────────────
 def _state():
     try:
-        s = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        s = {}
+        s = safeio.read_json(STATE_FILE, None, print, busy_raise=True)   # 读坏了先另存 .bad（10-28 Gemini 复查：以前悄悄当成空的）
+    except safeio.Busy:            # 一直打不开：谁说过「别唱了」、今天唱了几次都不知道 → 这一轮不唱、不存
+        return safeio.Unsaved(day=clock.strf("%Y-%m-%d"), count=10 ** 6, conv={})
+    s = s if isinstance(s, dict) else {}
     day = clock.strf("%Y-%m-%d")
     if s.get("day") != day:
         s.update(day=day, count=0)
@@ -267,9 +268,10 @@ def _state():
 
 
 def _save(s):
+    if isinstance(s, safeio.Unsaved):
+        return
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
+        safeio.write_json(STATE_FILE, s)   # 原子写（10-28 Gemini 复查：以前直接覆盖着写 被硬杀在半中间 所有「别唱了」和今天的次数清掉）
     except Exception:
         pass
 
@@ -281,8 +283,10 @@ def muted_convs(now=None):
 
 
 def unmute_all():
-    """控制台「解除别唱了」：所有对话都放开 → 放开了几个"""
+    """控制台「解除别唱了」：所有对话都放开 → 放开了几个 / None（状态文件一时打不开 没改上）"""
     s = _state()
+    if isinstance(s, safeio.Unsaved):      # 一时打不开：什么都没放开（别说放开了 10-28 Gemini 复查；第二轮复查：返回 None 让控制台照实说）
+        return None
     n = 0
     for v in (s.get("conv") or {}).values():
         if isinstance(v, dict) and v.pop("mute_until", None):
@@ -481,7 +485,10 @@ def safe_name(t, n=40):
 
 
 def add_file(name, ext, data, meta=None):
-    """存一首歌 → 歌单里的那一条"""
+    """存一首歌 → 歌单里的那一条（歌单一时打不开 → RuntimeError：别把歌放进去了却登记不上 10-28 Gemini 复查）"""
+    d = index()                            # 读一次一直用这份（10-28 Gemini 第二轮复查：以前写完歌再读第二遍 那次打不开就悄悄没登记）
+    if isinstance(d, safeio.Unsaved):
+        raise RuntimeError("songs.json 正被别的程序占着 没登记上（等一下再传）")
     SONG_DIR.mkdir(parents=True, exist_ok=True)
     ext = ext.lower() if ext.lower() in AUDIO_EXT else ".mp3"
     base = safe_name(name)
@@ -491,7 +498,6 @@ def add_file(name, ext, data, meta=None):
         p = SONG_DIR / f"{base}_{i}{ext}"
         i += 1
     p.write_bytes(data)
-    d = index()
     d["songs"] = [s for s in d["songs"] if s.get("file") != p.name]
     e = {"id": _sid(p.name), "name": str(name or base)[:40], "file": p.name, "aliases": [], "credit": "",
          "enabled": True, "added": clock.strf("%Y-%m-%d %H:%M")}
@@ -506,6 +512,8 @@ def add_file(name, ext, data, meta=None):
 def remove(sid):
     """删一首：文件挪到 songs\\_删掉的（找得回来）"""
     d = index()
+    if isinstance(d, safeio.Unsaved):      # 歌单一时打不开：别挪了文件却删不掉那条（10-28 Gemini 复查）
+        return None                        # None = 没改上（False = 没有这首歌）（10-28 Gemini 第二轮复查：以前控制台说「没有这首歌」）
     s = next((x for x in d["songs"] if x.get("id") == sid), None)
     if not s:
         return False

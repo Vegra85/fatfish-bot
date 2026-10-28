@@ -4,7 +4,6 @@
 大肥鱼的 B 站冲浪模块
   抓取热门 / 热搜 / 高赞评论  →  让她自己"看"  →  提炼成她的话
 """
-import json
 import random
 import re
 import time
@@ -13,6 +12,7 @@ from pathlib import Path
 import httpx
 
 import clock
+import safeio
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
@@ -88,17 +88,17 @@ class Bili:
 # ───────────────────────── 存储 ─────────────────────────
 
 def load_trends():
-    if TRENDS.exists():
-        try:
-            return json.loads(TRENDS.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"items": [], "keywords": [], "sessions": {}, "updated": 0}
+    try:
+        d = safeio.read_json(TRENDS, None, print, busy_raise=True)   # 读坏了先另存 .bad
+    except safeio.Busy:            # 一直打不开：这次当今天刷够了（别从 0 算又去刷、又花模型钱）、不存（10-28 Gemini 复查）
+        return safeio.Unsaved({"items": [], "keywords": [], "sessions": {clock.strf("%Y-%m-%d"): 10 ** 6}, "updated": 0})
+    return d if isinstance(d, dict) else {"items": [], "keywords": [], "sessions": {}, "updated": 0}
 
 
 def save_trends(t):
-    TRENDS.parent.mkdir(parents=True, exist_ok=True)
-    TRENDS.write_text(json.dumps(t, ensure_ascii=False, indent=1), encoding="utf-8")
+    if isinstance(t, safeio.Unsaved):
+        return
+    safeio.write_json(TRENDS, t)   # 原子写（10-28 Gemini 复查：以前直接覆盖着写 重启时被硬杀在半中间就坏了）
 
 
 def latest_pic():

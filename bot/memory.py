@@ -110,3 +110,28 @@ def forget_idx(mem, idx_list):
 
 def cleanup(mem):
     return 0
+
+
+# ───────────── 记忆强化（10-28 v1.9.4）：公开版没有 —— 同签名的空壳 bot.py 调了也不出错 ─────────────
+LAST_PICKED = []
+LAST_BOOST = []
+
+
+def configure_reinforce(cfg):
+    return None
+
+
+def rn(f):
+    return 0.0
+
+
+def half_life(f):
+    return 0.0
+
+
+def note_use(mem, ids, reply, now=None, names=(), uid="", mid=None):
+    return []
+
+
+def remember_injected(mem, ids):
+    return None

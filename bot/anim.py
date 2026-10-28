@@ -18,7 +18,6 @@ key 只放在 config.json 的 anim.api_key，日志里不出现
 import asyncio
 import base64
 import io
-import json
 import re
 import time
 from pathlib import Path
@@ -26,6 +25,7 @@ from pathlib import Path
 import httpx
 
 import clock
+import safeio
 
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT / "data" / "anim_state.json"
@@ -94,28 +94,34 @@ def _day():
     return clock.strf("%Y-%m-%d")             # 北京时间的一天（10-27）
 
 
+def _fill(s):
+    for k, v in (("spent", 0.0), ("count", 0), ("days", {}), ("tasks", {}), ("history", []),
+                 ("pause_until", 0), ("pause_why", ""), ("last_error", "")):
+        s.setdefault(k, v)
+    return s
+
+
 def _load():
     global _st
     if _st is None:
         try:
-            _st = json.loads(STATE.read_text(encoding="utf-8"))
-        except Exception:
-            _st = {}
-        for k, v in (("spent", 0.0), ("count", 0), ("days", {}), ("tasks", {}), ("history", []),
-                     ("pause_until", 0), ("pause_why", ""), ("last_error", "")):
-            _st.setdefault(k, v)
+            st = safeio.read_json(STATE, None, print, busy_raise=True)   # 读坏了先另存 .bad
+        except safeio.Busy:        # 一直打不开：花了多少、今天做了几条都不知道 → 这次先不做、不缓存、不存
+            tmp = _fill(safeio.Unsaved())          # （10-28 Gemini 复查：以前当成全新的 花费和名额从 0 算、没等完的任务清空）
+            tmp["pause_until"], tmp["pause_why"] = time.time() + 600, "记账文件一时打不开"
+            return tmp
+        _st = _fill(st if isinstance(st, dict) else {})
     return _st
 
 
 def _save():
-    s = _load()
+    if _st is None:                        # 还没读到过盘上那份：不写（10-28 Gemini 复查）
+        return
+    s = _st
     keep = sorted(s["days"])[-40:]
     s["days"] = {k: s["days"][k] for k in keep}
     s["history"] = s["history"][-40:]
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = STATE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
-    tmp.replace(STATE)
+    safeio.write_json(STATE, s)            # 原子写 + fsync（以前断电会变成空文件 → 花费从 0 算）
 
 
 def _today():
@@ -554,8 +560,9 @@ def done(tid, res=None, ok=True, why=""):
         else:
             _unbook(t)
         s["last_error"] = f"{clock.strf('%m-%d %H:%M')} {why}"[:120]
-    s["history"].append({"t": int(time.time()), "ok": ok, "conv": t.get("conv"), "uid": t.get("uid"),
-                         "prompt": (t.get("prompt") or "")[:80],
+    wiped = bool(t.get("wiped"))           # 做的时候他删了数据：记录里不留他（10-28 Gemini 第三轮复查）
+    s["history"].append({"t": int(time.time()), "ok": ok, "conv": "" if wiped else t.get("conv"),
+                         "uid": "" if wiped else t.get("uid"), "prompt": "" if wiped else (t.get("prompt") or "")[:80],
                          "tokens": tokens, "cny": cny if ok or t.get("charge") else 0, "why": why[:60]})
     _save()
     return cny, tokens

@@ -9,29 +9,29 @@
     她上次冒泡没人理 → 下次更难开口（不对着空气连发）
   试运行（dry_run）：只把「本来要说的话」写进日志 不真发
 """
-import json
 import random
 import time
 from pathlib import Path
 
 import clock
+import safeio
 
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT / "data" / "speakup.json"
 
 
 def load():
-    if STATE.exists():
-        try:
-            return json.loads(STATE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
+    try:
+        d = safeio.read_json(STATE, None, print, busy_raise=True)   # 读坏了先另存 .bad
+    except safeio.Busy:            # 一直打不开：这次当没有、不存（10-28 Gemini 复查）
+        return safeio.Unsaved({})
+    return d if isinstance(d, dict) else {}
 
 
 def save(d):
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    if isinstance(d, safeio.Unsaved):
+        return
+    safeio.write_json(STATE, d)   # 原子写（10-28 Gemini 复查：以前直接覆盖着写 重启时被硬杀在半中间就坏了）
 
 
 def peak(now=None):
@@ -42,7 +42,10 @@ def peak(now=None):
 
 def roll(gid, mem, cfg):
     """掷骰子：返回 (要不要说, 说明)"""
-    st = load().get(gid, {})
+    d = load()
+    if isinstance(d, safeio.Unsaved):      # 冒泡记录一时打不开：今天冒了几次都不知道 → 这次不冒（10-28 Gemini 复查）
+        return False, "冒泡记录一时打不开"
+    st = d.get(gid, {})
     now = time.time()
     hist = mem.get("history") or []
     last_any = max((h.get("ts", 0) for h in hist), default=0)

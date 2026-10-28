@@ -21,6 +21,11 @@
        日志写清楚是「模型说像 AI 但把握不够」还是「模型说是真人」
     ③ 新认的样子：自称「本小姐 / 本喵 / 本宝宝…」、漏出来的标签（「<h>这不是本小姐吗</h>」）
     ④ 秒回她：她说完 20 秒内接上就算（以前 10 秒 —— 大模型生成要 10~17 秒 座头鲸每次都在 13~17 秒）
+  10-28 v1.9.4（巡检：别人家的一条鱼每次 1~3 秒连发两三句再跟一张图、吐过 SnowLuma 状态，模型先判真人（把握 70）、
+    后来判「混用号」不标，她跟它来回了一个半小时 25 轮；对聊刹车按 10 分钟 8 轮算 慢一点的长对聊刹不住）：
+    ⑤ 新认的样子：几秒内连发的字后面紧跟一张图（bot 的「文字 + 配图」回复格式）
+    ⑥ 模型说混用号 / 把握不够的真人，但 2 小时里跟她秒接来回 ≥8 次、又一直连发（或者文字后面跟图）→ 照样标：
+       混用号的本人不会跟她秒回地一来一回（判断提示里本来就这么写）
   记录 data/aidetect.json；日志 [认AI]
 """
 import json
@@ -30,6 +35,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 import control
+import safeio
 
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT / "data" / "aidetect.json"
@@ -54,6 +60,7 @@ THINK = re.compile(r"^\s*[\"“]?(用户|对方)(在|又|刚|正在)?(@我|艾�
 MARKUP = re.compile(r"<(h|think|thinking|reply|msg|message|response|output|answer|sys|system|assistant|content|text)>[^<\s][^<]{0,119}</\1>"
                     r"|^\s*</(h|think|thinking|reply|response|output|answer|assistant)>", re.I | re.M)
 MEDIA = re.compile(r"\[(表情|图片|表情包|动画表情|视频)[^\]]*\]")
+PIC = re.compile(r"^\s*(\[(图片|视频)[^\]]*\]\s*)+$")       # 只有图 / 视频（表情、表情包不算 —— 真人打完字跟个表情包很常见 复查）
 BURST_GAP = 6          # 思考过程后面隔不到 6 秒连着发的 也算框架发的（那一串里的其他思考、最后那句回复）
 QUICK_SEC = 20         # 她说完这么多秒内就接上 = 秒回她（10-27 晚 10 → 20：大模型生成本身要 10~17 秒）
 RECHECK_SEC = 600      # 判过以后 证据又多了不少（行为分 ≥8 且比上次多 5）最快隔多久再看（10-27 晚 2 小时 → 10 分钟）
@@ -80,6 +87,9 @@ _msgs = defaultdict(lambda: deque(maxlen=40))      # (群, QQ) -> [(时间, 文�
 _her = defaultdict(lambda: deque(maxlen=60))       # 群 -> [(时间, 她说的)]
 _busy = set()
 _asked = {}                                         # QQ -> (上次让模型看的时间, 那时的行为分)（还没出结果的也算 免得连着问好几次）
+_asked_prev = {}                                    # QQ -> 这次问之前的 _asked（没判成时放回去）
+_fail = {}                                          # QQ -> 上次叫模型看出错的时间（10-28 Gemini 复查 #12）
+FAIL_SEC = 600                                      # 出错以后隔多久再看（模型挂着时别他说一句就再叫一次）
 
 
 def is_framework(text):
@@ -92,17 +102,17 @@ def is_framework(text):
 
 def _load():
     try:
-        return json.loads(STATE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+        d = safeio.read_json(STATE, None, print, busy_raise=True)   # 读坏了先另存 .bad
+    except safeio.Busy:            # 一直打不开：这次当没有、不存（10-28 Gemini 复查：以前当成空的 写回只剩这一个号 判过的全要重新花钱判）
+        return safeio.Unsaved()
+    return d if isinstance(d, dict) else {}
 
 
 def _save(d):
+    if isinstance(d, safeio.Unsaved):
+        return
     try:
-        STATE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STATE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(STATE)
+        safeio.write_json(STATE, d)
     except Exception:
         pass
 
@@ -151,11 +161,19 @@ def evidence(gid, uid, now=None, win=2 * 3600):
           "selfref": sum(1 for x in plain if SELFISH.search(x[1])),
           "atnl": sum(1 for x in q if ATNL.search(x[1])),
           "bracket": sum(1 for x in plain if BRACKET.search(x[1])),
+          # 几秒内连发的字后面紧跟一条只有图 / 表情的（bot 的「文字 + 配图」格式 10-28 v1.9.4）
+          "pic_tail": sum(1 for a, b in zip(q, q[1:]) if b[0] - a[0] <= 3.5 and PIC.match(b[1]) and _words(a[1])),
           "fw": int(st.get("fw") or 0), "fw_eg": str(st.get("fw_eg") or "")}
     # 真人也会跟她聊得勤、回得快、@她 —— 这两样只算一点；连发、自称、括号动作、框架输出算得重
     ev["score"] = (min(ev["quick"], 10) // 2 + min(ev["to_her"], 10) // 4 + min(ev["burst"], 10) // 2
-                   + 2 * min(ev["selfref"], 5) + 2 * min(ev["bracket"], 5) + 3 * min(ev["fw"], 3) + 3 * min(ev["atnl"], 3))
+                   + 2 * min(ev["selfref"], 5) + 2 * min(ev["bracket"], 5) + 3 * min(ev["fw"], 3) + 3 * min(ev["atnl"], 3)
+                   + 2 * min(ev["pic_tail"], 4))
     return ev
+
+
+def chatty_bot(ev):
+    """跟她秒接来回停不下来 + 一直连发 / 文字后面跟图：混用号的本人、真人都不会这样（10-28 v1.9.4）"""
+    return ev.get("quick", 0) >= 8 and (ev.get("burst", 0) >= 6 or ev.get("pic_tail", 0) >= 3)
 
 
 def _note_fw(uid, gid, text):
@@ -203,9 +221,13 @@ def observe(gid, uid, name, text, now=None, to_her=False):
     burst = sum(1 for (a, _), (b, _) in zip(recent, recent[1:]) if b - a < 4) / max(1, len(recent) - 1)
     hint = (strong >= 1 or bool(BOTNAME.search(name or "")) or dbl >= 2 or ev["selfref"] >= 1
             or (avg >= 22 and period >= 0.3) or (burst >= 0.3 and avg >= 15)
-            or (ev["quick"] >= 3 and ev["burst"] >= 5) or ev["fw"] >= 1 or ev["bracket"] >= 2 or ev["atnl"] >= 2)
+            or (ev["quick"] >= 3 and ev["burst"] >= 5) or ev["fw"] >= 1 or ev["bracket"] >= 2 or ev["atnl"] >= 2
+            or (ev["pic_tail"] >= 3 and ev["burst"] - ev["pic_tail"] >= 3))     # 光是字后面跟图不够：字本身也得连发（复查）
     if not hint:
         return None
+    if now - _fail.get(str(uid), 0) < FAIL_SEC:      # 上次叫模型看出错了：隔 10 分钟再看（10-28 Gemini 复查 #12）
+        return None
+    _asked_prev[str(uid)] = _asked.get(str(uid))
     _asked[str(uid)] = (now, ev["score"])
     return "check"
 
@@ -218,6 +240,8 @@ def _ev_text(ev):
         out.append(f"这个号（按 QQ 号算 不管哪个群）吐过 {ev['fw']} 次 bot 框架的状态 / 指令报错（例：{ev['fw_eg']}）")
     if ev["atnl"]:
         out.append(f"{ev['atnl']} 句是「@某人」后面直接换行再说话（bot 框架的回复格式 真人几乎不会这样）")
+    if ev.get("pic_tail"):
+        out.append(f"{ev['pic_tail']} 次是几秒内连发的字后面紧跟一张图 / 表情（bot 的「文字 + 配图」回复格式）")
     return "；".join(out)
 
 
@@ -225,7 +249,7 @@ async def judge(llm, gid, uid, name, log=print):
     """让模型看这个人最近的话、跟她的来回、算好的行为 → (是不是 AI, 把握, 理由, 混用号)"""
     q = list(_msgs[(str(gid), str(uid))])[-24:]
     if not q:
-        return False, 0, "", False
+        return None                                     # 没有消息可看：不算判过（10-28 Gemini 复查 #12）
     fw = _flags(q)
     lines, prev = [], q[0][0]
     for x, f in zip(q, fw):
@@ -257,14 +281,18 @@ async def judge(llm, gid, uid, name, log=print):
     try:
         out = await llm(JUDGE, [{"role": "user", "content": body}], temperature=0, max_tokens=80)
         m = re.search(r"\{.*\}", out or "", re.S)
-        j = json.loads(m.group(0)) if m else {}
+        j = json.loads(m.group(0)) if m else None
     except Exception as e:
         log(f"[认AI] 判断 {name} 失败：{repr(e)[:80]}")
-        return False, 0, "", False
+        return None                    # 出错 ≠ 判成真人（10-28 Gemini 复查 #12：以前当成「真人 把握 0」记下 24 小时不再看、还冲掉原来的判断）
+    if not isinstance(j, dict) or "bot" not in j:     # 回的 JSON 里没有「是不是 AI」（{}、中文键）：也不算判过（10-28 Gemini 复查 #12 复查）
+        log(f"[认AI] 判断 {name} 模型回的看不懂：{str(out or '')[:60]}")
+        return None
     try:
-        conf = int(float(j.get("confidence") or 0))
+        conf = int(float(str(j.get("confidence") if j.get("confidence") is not None else 0).rstrip("%")))
     except (TypeError, ValueError):
-        conf = 0
+        log(f"[认AI] 判断 {name} 模型给的把握看不懂：{str(j.get('confidence'))[:20]}")
+        return None
     return bool(j.get("bot")), conf, str(j.get("why") or "")[:30], bool(j.get("mixed"))
 
 
@@ -294,9 +322,27 @@ async def check(llm, gid, uid, name, log=print, threshold=75, force=False):
     if force:
         _asked[str(uid)] = (time.time(), evidence(gid, uid)["score"])
     try:
-        is_bot, conf, why, mixed = await judge(llm, gid, uid, name, log)
+        got = await judge(llm, gid, uid, name, log)
+        if got is None:                                 # 没判成：原来的判断留着、这次不算，10 分钟后再看（10-28 Gemini 复查 #12）
+            prev = _asked_prev.pop(str(uid), None)
+            if prev:
+                _asked[str(uid)] = prev
+            else:
+                _asked.pop(str(uid), None)
+            _fail[str(uid)] = time.time()
+            log(f"[认AI] 群{gid} {name}({uid}) 这次没判成 不算（原来的判断留着）")
+            return None
+        is_bot, conf, why, mixed = got
         ev = evidence(gid, uid)
         fp = ev["atnl"] >= 3 and not mixed              # 框架的回复格式出现好几次：模型说像真人也标（真人几乎不会这样）
+        # 模型说混用号 / 没把握的真人 但跟她秒接来回停不下来、一直连发：照样标（10-28 v1.9.4 巡检看到的那条鱼）
+        # 只盖「混用号」和模型自己都没把握的「真人」（≤ 50）—— 真人跟她聊得勤 模型 60~70 说是真人的不动（复查：以前 < 75 都盖 真人会被永久标成 AI）
+        talky = chatty_bot(ev) and (mixed or (not is_bot and conf <= 50))
+        if talky:
+            record(uid, name, True, conf, why, False, ev["score"])
+            mark(uid, name, gid, f"模型说{'混用号' if mixed else '像真人'}（{why} 把握 {conf}）但 2 小时里跟她秒接来回 {ev['quick']} 次、"
+                                 f"连发 {ev['burst']} 次、字后面跟图 {ev['pic_tail']} 次", log)
+            return True
         record(uid, name, (is_bot or fp) and not mixed, conf, why, mixed, ev["score"])
         if mixed:                                       # 真人号挂着机器人：平时是本人在聊 不标
             log(f"[认AI] 群{gid} {name}({uid}) 像是真人号挂着机器人（{why} 把握 {conf}）不标")

@@ -106,7 +106,7 @@ def release(key, kinds=None, log=print, why=""):
     return 0
 
 
-def forget_person(uid, names=()):
+def forget_person(uid, names=(), weak=()):
     return 0
 
 

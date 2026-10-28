@@ -30,7 +30,7 @@ NE_HEADERS = {"User-Agent": UA, "Referer": "https://music.163.com/", "Cookie": "
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 MAX_BYTES = 40 * 1024 * 1024
 # 不是原曲的版本（点歌的人自己写了这些词的除外）
-NOT_ORIG = re.compile(r"伴奏|纯音乐|\binst\b|instrumental|翻唱|\bcover\b|翻自|\bdj\b|remix|改编|教学|吉他|钢琴|尤克里里|口琴|小提琴|"
+NOT_ORIG = re.compile(r"伴奏|纯音乐|\binst\b|instrumental|翻唱|\bcover\b|翻自|\bdj\b|remix|改编|教学|吉他|钢琴|尤克(?:里){2}|口琴|小提琴|"
                       r"架子鼓|指弹|弹唱|合集|串烧|混剪|鬼畜|reaction|片段|\bcut\b|舞蹈|翻跳|练习|试唱|ai翻唱|ai版|ai cover|模仿|"
                       r"女声版|男声版|降调|升调|加速|倍速|慢速|铃声|教程|歌词版|动态歌词|循环|1小时|一小时|10小时", re.I)
 PREFER = re.compile(r"原唱|官方|mv|高音质|无损|hi-?res|完整版|官方版|official|音乐", re.I)

@@ -44,10 +44,10 @@ BOT_FILES = ["bot.py", "budget.py", "catchup.py", "clock.py", "control.py", "fol
              "bili.py", "bili2.py", "panel.py", "panel.html", "botloop.bat", "persona.md", "setup_voice.py",
              "apply_stickers.py", "import_nekowhale.py", "sticker_curate.py", "anim.py", "cross.py", "wipe.py", "sing.py",
              "music.py", "aidetect.py", "memewiki.py", "groupadmin.py", "safeio.py", "commit.py",
-             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py"]   # version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）
+             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py", "prank.py"]   # version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）
 # 不公开的「灵魂」：导出的是 tools/public_stubs/ 里同名的空壳（10-26）
 PRIVATE = {"persona.md", "soul.py", "memory.py", "mood2.py", "galgame.py", "cross.py", "slang.py", "style.py", "shared.py",
-           "commit.py", "humor.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）
+           "commit.py", "humor.py", "prank.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）；prank.py 恶作剧（10-28 v1.10.0）
 STUBS = HERE / "public_stubs"
 PUBLIC_AS = {"persona.md": "persona.example.md"}   # 空壳换个名字导出（v1.2.0：人设模板 → 升级不冲掉用户的 persona.md）
 TOOL_FILES = ["export_github.py", "setup_wizard.py"]   # setup_wizard.py：首次设置向导（v1.2.0）；pack_qqbot.py 只给群主用 不导出

@@ -7,7 +7,7 @@
 
 > 作者每天在跑的版本：Windows 11 + Python 3.15。API key、聊天记录、记忆都不在仓库里。
 >
-> 当前版本 **v1.9.2**（2026-10-28）· [更新日志](CHANGELOG.md) · 版本号写在 `bot/version.py`（开机日志和控制台左下角都能看到）
+> 当前版本 **v1.10.2**（2026-10-28）· [更新日志](CHANGELOG.md) · 版本号写在 `bot/version.py`（开机日志和控制台左下角都能看到）
 
 ![控制台总览（演示数据）](docs/screenshots/overview.png)
 

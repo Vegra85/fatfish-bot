@@ -338,7 +338,7 @@ details>summary::-webkit-details-marker{display:none}
 // 侧边栏：分四组（10-27 她的名字主题）
 const NAV = [
   ["概况", [["overview", "总览", "home"], ["calendar", "日历", "calendar"], ["stats", "统计", "chart"]]],
-  ["她", [["memory", "记忆和好感", "heart"], ["persona", "人设", "card"], ["stickers", "表情包", "smile"], ["sing", "唱歌", "music"], ["qzone", "QQ 空间", "star"]]],
+  ["她", [["memory", "记忆和好感", "heart"], ["persona", "人设", "card"], ["stickers", "表情包", "smile"], ["sing", "唱歌", "music"], ["qzone", "QQ 空间", "star"], ["prank", "恶趣味", "mask"]]],
   ["聊天", [["people", "群和人", "users"], ["send", "代发消息", "send"]]],
   ["设置", [["settings", "功能开关", "sliders"], ["usage", "用量和余额", "wallet"], ["logs", "日志", "list"], ["tools", "工具", "wrench"]]],
 ];
@@ -375,6 +375,7 @@ const ICONS = {
   alert: '<path d="M12 4.5 3.5 19h17z"/><path d="M12 10v4M12 16.6v.01"/>',
   check: '<path d="m5.5 12.5 4 4 9-9"/>',
   star: '<path d="M12 4.2l2.3 4.8 5.2.7-3.8 3.6.9 5.2-4.6-2.5-4.6 2.5.9-5.2L4.5 9.7l5.2-.7z"/>',
+  mask: '<path d="M4 7.5c2.6-1.6 5.3-2.2 8-2.2s5.4.6 8 2.2c0 5.6-3.4 10.2-8 10.2S4 13.1 4 7.5z"/><path d="M8 10.2c.8-.6 1.7-.6 2.5 0M13.5 10.2c.8-.6 1.7-.6 2.5 0M9.5 14c1.6 1 3.4 1 5 0"/>',
 };
 function icon(n, cls = "ic") {
   const p = ICONS[n];
@@ -410,7 +411,8 @@ async function wipeFlow(uid, name) {
   if (!pv.ok) { toast(pv.error || "读不到", true); return false; }
   if (!confirm(`真的删掉「${name || uid}」的所有数据？\n\n会删：${pv.text}\n群里别人提到他的地方会换成「某人」；共享印象会清掉重新提炼。\n\n真删 不留备份 找不回来。`)) return false;
   const r = await api("/api/wipe", {uid});
-  toast(r.ok ? "删好了：" + (r.text || "") + (r.offline ? "（机器人没开 直接删的文件）" : "") : (r.error || "没删成"), !r.ok);
+  const part = r.ok && r.partial;   // 有几个文件打不开 没删干净：按出错的样子显示（10-28 Gemini 第三轮复查：以前也写「删好了」 3 秒就没了）
+  toast(r.ok ? (part ? "没删干净：" : "删好了：") + (r.text || "") + (r.offline ? "（机器人没开 直接删的文件）" : "") : (r.error || "没删成"), !r.ok || part);
   return r.ok;
 }
 function toast(msg, bad = false) {
@@ -1011,6 +1013,9 @@ const SETTINGS = [
     ["forget.half_life.5", "L5 很重要：半衰期（天）", "重大的事；名字 / 生日 / 有人说「记住」的直接钉住 不会忘", "num", 1, 3650, 5],
     ["forget.close_favor", "好感到多少算熟人", "熟人（还有你）的事等级 +1 记得久一点", "num", 0, 100, 5],
     ["forget.night_hours", "夜里整理的时间", "北京时间几点到几点（她在睡觉、DeepSeek 空闲价）：快忘的蒸馏成印象、忘得差不多的归档、做个梦", "pair", 0, 24, 1],
+    ["memory2.reinforce.enabled", "记忆强化", "别人再提起同一件事（+1）、她回复里真用上了（+0.5）→ 记得更久、想起来时排前面一点；提过好几次的她会知道「他提过好几次」。病、感情、钱、家里这类只记得久 不往前排", "bool"],
+    ["memory2.reinforce.growth", "每强化一次 半衰期至少 ×几", "半衰期至少 = 等级的初始半衰期 × 这个数的 n 次方", "num", 1, 3, 0.1],
+    ["memory2.reinforce.max_half_life", "强化撑着的半衰期最多几天", "", "num", 30, 3650, 5],
     ["forget.gist", "快忘的蒸馏成一句印象", "同一个人有好几件事快忘了 → 合成一句「大概印象」（新的取代旧的 一层层蒸馏）细节归档（能找回）；关掉 = 直接归档", "bool"],
     ["forget.max_gist_per_night", "一晚最多蒸馏几个人", "每个人调一次模型（约 ¥0.002）", "num", 0, 200, 1],
     ["forget.dream", "做梦", "夜里整理完 拿当天的日记和一件快忘的旧事做个梦 第二天可能说「昨晚梦到…」（梦到的旧事算想起一次）", "bool"],
@@ -1421,8 +1426,9 @@ function clarHTML(f) {           // 一条记忆清不清楚：一根小条 + �
   const pct = f.state === "pinned" ? 100 : Math.round((f.clarity || 0) * 100);
   const left = f.state === "pinned" ? "不会忘" : f.state === "clear" ? `还能记清 ${dayTxt(f.to_fuzzy)} · 约 ${dayTxt(f.to_faint)} 后想不起来`
     : f.state === "fuzzy" ? `已经模糊 · 约 ${dayTxt(f.to_faint)} 后想不起来` : "平时想不起来（他明着问、提示够多才隐约记得）";
-  return `<div class="clar ${f.state}" title="清晰度 ${pct}%${f.S ? " · 半衰期 " + f.S + " 天" : ""}${f.rv ? " · 想起过 " + f.rv + " 次（每次都记得更牢）" : ""}">
-    <span class="bar"><i style="width:${pct}%"></i></span><b class="badge ${ST_BADGE[f.state]}">${ST_NAME[f.state]}</b><span>${left}</span></div>`;
+  const rf = f.rn ? `强化 ${+f.rn.toFixed(1)} 次` : "";   // 记忆强化（10-28 v1.9.4）：别人再提 +1、她用到 +0.5
+  return `<div class="clar ${f.state}" title="清晰度 ${pct}%${f.S ? " · 半衰期 " + f.S + " 天" : ""}${f.rv ? " · 想起过 " + f.rv + " 次（每次都记得更牢）" : ""}${rf ? " · " + rf + (f.last_reinforce ? "（上次 " + f.last_reinforce.slice(5) + "）" : "") : ""}">
+    <span class="bar"><i style="width:${pct}%"></i></span><b class="badge ${ST_BADGE[f.state]}">${ST_NAME[f.state]}</b><span>${left}${f.S && f.state !== "pinned" ? ` · 半衰期 ${dayTxt(f.S)}` : ""}</span>${rf ? `<span class="badge acc">${rf}</span>` : ""}</div>`;
 }
 function lvBadge(f) {
   if (f.lvl == null) return "";
@@ -1728,6 +1734,149 @@ VIEWS.qzone = async main => {
     b.removeAttribute("disabled"); b.textContent = old;
     toast(r.ok ? (r.msg || "好了") + (r.text ? "：" + r.text : "") : (r.error || "没成"), !r.ok);
     draw();
+  };
+  await draw();
+};
+
+/* ───────── 恶趣味（10-28 v1.10.0 prank.py）───────── */
+VIEWS.prank = async main => {
+  main.innerHTML = `<style>#pk select,#pk input[type=text]{max-width:100%}</style><h1>恶趣味</h1><p class="sub">她会自己挑时机轻轻整人一下（对所有人；整完很快拆穿）；你也能在这里点单：挑人 → 挑玩法 → 补一句要求 → 先预览再发。
+    看着像小孩的、正在难过的、在聊病 / 感情 / 钱 / 家里的不整；钱、隐私、私聊里的事、冒充你这些红线不拿来整</p><div id="pk"></div>`;
+  let D = null, PV = null, FORM = null;    // FORM：重画之前点单表单里填的（复查：以前点一下「多常整」 写的要求就没了）
+  const SRC = {auto: "她自己", order: "点单", blocked: "拦下了"};
+  const saveForm = () => { if ($("#pkscope")) FORM = {scope: $("#pkscope").value, g: $("#pkg").value, p: $("#pkp").value, pr: $("#pkpr").value,
+      card: $("#pkcard").value, note: $("#pknote").value, when: $("#pkwhen").value, at: $("#pkat").value, direct: $("#pkdirect").checked}; };
+  const draw = async () => {
+    saveForm();
+    D = await api("/api/prank");
+    const box = $("#pk"); if (!box) return;
+    if (D.ok === false) { box.innerHTML = `<div class="card">${esc(D.error || "读不到")}</div>`; return; }
+    if (!D.enabled) { box.innerHTML = '<div class="card"><h2>恶作剧关着</h2><p class="small muted">config → humor.prank.enabled（要重启机器人）</p></div>'; return; }
+    const cards = (D.cards || []).filter(c => c.on);
+    const gsel = (D.groups || []).map(g => `<option value="${esc(g.id)}">${esc(g.name || "群 " + g.id)}</option>`).join("");
+    const psel = (D.privates || []).map(x => `<option value="${esc(x.uid)}">${esc(x.name)}${x.owner ? "（你）" : ""}${x.bot ? "（机器人）" : ""}</option>`).join("");
+    const now = Date.now() / 1000;
+    box.innerHTML = `
+      ${D.online ? "" : '<div class="card alert">机器人没开：能改设置和玩法卡；预览 / 发 / 撤回 / 点单要机器人开着</div>'}
+      ${D.busy ? '<div class="card alert">prank_state.json 一时打不开（被别的程序占着）—— 这会儿改不了 等一下刷新</div>' : ""}
+      ${D.cards_busy ? '<div class="card alert">prank_cards.json 一时打不开 —— 下面显示的是默认的玩法卡；先别点「存玩法卡」（会盖掉你加的） 等一下刷新</div>' : ""}
+      <div class="card"><div class="row"><h2 style="margin:0">她自己整人</h2><span class="spacer"></span>
+        <label class="sw" title="关掉 = 她不自己整人（点单照样能用）"><input type="checkbox" id="pkauto" ${D.auto ? "checked" : ""}><span></span></label></div>
+        <div class="row" style="margin-top:10px"><span>多常整：</span>${(D.levels || []).map(([k, n]) => `<button class="btn small ${D.level === k ? "primary" : ""}" data-lv="${k}">${n}</button>`).join("")}
+        <span class="small muted">每人每天最多 1 次（你一半的概率）· 每个群 3 小时最多 1 次 · 今天整了 ${num(D.today)} 次</span></div></div>
+      <div class="card"><h2>点单</h2>
+        <div class="row"><select id="pkscope"><option value="gp">群里的某个人</option><option value="g">整个群</option><option value="p">私聊的人</option></select>
+          <select id="pkg">${gsel}</select><select id="pkp"></select><select id="pkpr" style="display:none">${psel}</select></div>
+        <div class="row" style="margin-top:8px"><select id="pkcard">${cards.map(c => `<option value="${esc(c.id)}" title="${esc(c.desc)}">${esc(c.name)}</option>`).join("")}</select>
+          <input type="text" id="pknote" maxlength="80" placeholder="补一句要求（可空）比如：吹他的新头像" style="flex:1;min-width:220px"></div>
+        <div class="small muted" id="pkdesc" style="margin-top:6px"></div>
+        <div class="row" style="margin-top:8px"><select id="pkwhen"><option value="now">现在</option><option value="next" id="pknext">他下次说话时</option><option value="at">定个时间</option></select>
+          <input type="datetime-local" id="pkat" style="display:none"><label class="small" id="pkdirl"><input type="checkbox" id="pkdirect"> 直接发（不预览）</label>
+          <span class="spacer"></span><button class="btn primary" id="pkgo">预览</button></div>
+        <div id="pkpv"></div></div>
+      <div class="card"><h2>最近整的</h2>${(D.records || []).length ? D.records.map(r => {
+          const canUndo = !r.undone && (r.mids || []).length && now - r.t < (D.undo_sec || 110) && D.online;
+          return `<div class="fact"><span class="t"><b>${esc(r.name || "大家")}</b> <span class="small muted">${hm(r.t)} · ${SRC[r.src] || esc(r.src)}${r.card_name ? " · " + esc(r.card_name) : ""}</span>
+            <div>${r.blocked ? `<span class="muted">没整：${esc(r.blocked)}</span>` : esc(r.text)}</div></span>
+            <span class="acts">${r.undone ? '<span class="badge">撤回了</span>' : r.src === "blocked" ? "" : r.revealed ? '<span class="badge good">拆穿了</span>' : '<span class="badge warn">还没拆穿</span>'}
+            ${canUndo ? `<button class="btn small danger" data-undo="${esc(r.id)}">撤回</button>` : ""}</span></div>`; }).join("") : '<div class="empty">还没整过谁</div>'}
+        <div class="small muted" style="margin-top:6px">发出去 2 分钟内能撤回（QQ 的规矩）</div></div>
+      ${(D.orders || []).length ? `<div class="card"><h2>等着的点单</h2>${D.orders.map(o => `<div class="fact"><span class="t"><b>${esc(o.name || o.uid || "大家")}</b>
+          <span class="small muted">${o.timing === "next" ? "他下次说话时" : "定在 " + hm(o.at)} · ${esc((D.cards.find(c => c.id === (o.card || (o.pv || {}).card)) || {}).name || o.card || "")}</span>
+          ${o.pv && o.pv.segs ? `<div>${esc(o.pv.segs.join(" / "))}</div>` : o.note ? `<div class="small">要求：${esc(o.note)}</div>` : ""}</span>
+          <span class="acts"><button class="btn small" data-cancel="${esc(o.id)}">取消</button></span></div>`).join("")}</div>` : ""}
+      <div class="card"><h2>玩法卡（${(D.cards || []).length}）</h2><p class="small muted" style="margin-top:0">她自发的时候从开着的卡里挑几张当灵感（不是剧本）；点单用你挑的那张。改完点「存玩法卡」（马上生效 不用重启）</p>
+        <div id="pkcards">${(D.cards || []).map((c, i) => cardRow(c, i)).join("")}</div>
+        <div class="row" style="margin-top:8px"><button class="btn small" id="pkadd">加一张</button><span class="spacer"></span><button class="btn small primary" id="pksave">存玩法卡</button></div></div>
+      <div class="card"><h2>免整名单</h2><p class="small muted" style="margin-top:0">他说「别整我」就进来（以后都不整他）；整完他说「别闹」只是今天不整</p>
+        ${Object.entries(D.no_prank || {}).map(([u, x]) => `<div class="fact"><span class="t">${esc(nameOf(u))} <span class="small muted">${nameOf(u) !== u ? esc(u) + " · " : ""}${esc(x.why || "")}${x.t ? " · " + hm(x.t) : ""}</span></span>
+          <span class="acts"><button class="btn small" data-unp="${esc(u)}">删</button></span></div>`).join("") || (Object.keys(D.kids || {}).length ? "" : '<div class="empty">没有</div>')}
+        ${Object.keys(D.kids || {}).map(u => `<div class="fact"><span class="t">${esc(nameOf(u))} <span class="small muted">${nameOf(u) !== u ? esc(u) + " · " : ""}看着像小孩（他自己说过年纪 / 年级）</span></span>
+          <span class="acts"><button class="btn small" data-unp="${esc(u)}" title="认错了就点这个">删</button></span></div>`).join("")}
+        ${Object.keys(D.cooling || {}).length ? `<div class="small muted" style="margin-top:6px">今天说过「别闹」的：${Object.keys(D.cooling).map(u => esc(nameOf(u))).join("、")}</div>` : ""}
+        <div class="row" style="margin-top:8px"><input type="text" id="pknp" placeholder="QQ 号" style="width:160px"><button class="btn small" id="pknpadd">加进免整名单</button></div></div>`;
+    if (FORM) {                      // 重画以后 把刚才填的放回去
+      $("#pkscope").value = FORM.scope; if ([...$("#pkg").options].some(o => o.value === FORM.g)) $("#pkg").value = FORM.g;
+      $("#pkpr").value = FORM.pr || $("#pkpr").value; $("#pknote").value = FORM.note || ""; $("#pkwhen").value = FORM.when || "now";
+      $("#pkat").value = FORM.at || ""; $("#pkdirect").checked = !!FORM.direct;
+    }
+    fillPeople();
+    if (FORM && [...$("#pkp").options].some(o => o.value === FORM.p)) $("#pkp").value = FORM.p;
+    if (FORM && [...$("#pkcard").options].some(o => o.value === FORM.card)) $("#pkcard").value = FORM.card;
+    showDesc(); whenUI();
+    $("#pkscope").onchange = () => { fillPeople(); };
+    $("#pkg").onchange = fillPeople; $("#pkcard").onchange = showDesc; $("#pkwhen").onchange = whenUI;
+  };
+  const nameOf = u => { for (const g of D.groups || []) { const x = (g.people || []).find(y => y.uid === u); if (x) return x.name; } const p = (D.privates || []).find(y => y.uid === u); return p ? p.name : u; };
+  const cardRow = (c, i) => `<div class="fact" data-ci="${i}"><span class="t">
+      <div class="row"><input type="text" data-f="name" value="${esc(c.name)}" maxlength="12" style="width:110px"><input type="text" data-f="desc" value="${esc(c.desc)}" maxlength="160" style="flex:1;min-width:200px"></div>
+      <div class="row" style="margin-top:4px"><input type="text" data-f="eg" value="${esc(c.eg || "")}" maxlength="120" placeholder="例子（可空）" style="flex:1;min-width:200px">
+        <label class="small"><input type="checkbox" data-f="group" ${c.group ? "checked" : ""}> 群里</label><label class="small"><input type="checkbox" data-f="private" ${c.private ? "checked" : ""}> 私聊</label>
+        <select data-f="level"><option value="1" ${c.level == 1 ? "selected" : ""}>轻</option><option value="2" ${c.level == 2 ? "selected" : ""}>中</option><option value="3" ${c.level == 3 ? "selected" : ""}>重</option></select>
+        <input type="hidden" data-f="id" value="${esc(c.id)}"></div></span>
+      <span class="acts"><label class="sw" title="开着 = 能用"><input type="checkbox" data-f="on" ${c.on ? "checked" : ""}><span></span></label></span></div>`;
+  const fillPeople = () => {
+    const sc = $("#pkscope").value, g = (D.groups || []).find(x => x.id === $("#pkg").value);
+    const cur = $("#pkcard").value, okc = (D.cards || []).filter(c => c.on && (sc === "p" ? c.private : c.group));   // 只列这个场合能用的卡（复查）
+    $("#pkcard").innerHTML = okc.map(c => `<option value="${esc(c.id)}" title="${esc(c.desc)}">${esc(c.name)}</option>`).join("") || '<option value="">（没有能用的卡）</option>';
+    if (okc.some(c => c.id === cur)) $("#pkcard").value = cur;
+    $("#pknext").disabled = sc === "g";             // 整个群没有「他下次说话时」（复查）
+    showDesc();
+    $("#pkg").style.display = sc === "p" ? "none" : ""; $("#pkp").style.display = sc === "gp" ? "" : "none"; $("#pkpr").style.display = sc === "p" ? "" : "none";
+    $("#pkp").innerHTML = ((g && g.people) || []).map(x => `<option value="${esc(x.uid)}">${esc(x.name)}${x.bot ? "（机器人）" : ""}</option>`).join("") || '<option value="">（这个群最近没人说话）</option>';
+    whenUI();
+  };
+  const showDesc = () => { const c = (D.cards || []).find(x => x.id === $("#pkcard").value); $("#pkdesc").textContent = c ? c.desc + (c.eg ? "  例：" + c.eg : "") : ""; };
+  const whenUI = () => {
+    if ($("#pkwhen").value === "next" && $("#pkscope").value === "g") $("#pkwhen").value = "now";
+    const w = $("#pkwhen").value; $("#pkat").style.display = w === "at" ? "" : "none"; $("#pkdirl").style.display = w === "now" ? "" : "none";
+    $("#pkgo").textContent = w === "next" ? "存下（他说话时整）" : $("#pkdirect").checked && w === "now" ? "直接发" : "预览";
+  };
+  const order = () => {
+    const sc = $("#pkscope").value;
+    const o = {scene: sc === "p" ? "private" : "group", gid: sc === "p" ? "" : $("#pkg").value, uid: sc === "gp" ? $("#pkp").value : sc === "p" ? $("#pkpr").value : "",
+               card: $("#pkcard").value, note: $("#pknote").value.trim()};
+    o.name = o.uid ? nameOf(o.uid) : ""; return o;
+  };
+  const atTs = () => { const v = $("#pkat").value; if (!v) return 0; const [d, t] = v.split("T"), [y, m, dd] = d.split("-").map(Number), [H, M] = t.split(":").map(Number); return bjts(y, m, dd, H, M); };
+  const showPV = (r, o, w) => {
+    $("#pkpv").innerHTML = `<div class="card" style="margin-top:10px;background:var(--panel2,transparent)"><div class="small muted">她会这么说${r.bot ? "（对方是机器人：只发这一句 不跟着拆穿）" : ""}${r.kind === "pending" ? "（还没拆穿 他接话 / 过一会儿她自己拆穿）" : ""}：</div>
+      ${r.segs.map(x => `<div style="padding:4px 0">${esc(x)}</div>`).join("")}
+      <div class="row" style="margin-top:8px">${w === "at" ? `<button class="btn primary" id="pksch">定在 ${esc(hm(atTs()))} 发</button>` : '<button class="btn primary" id="pksend">发送</button>'}
+        <button class="btn" id="pkagain">重写一个</button><button class="btn" id="pkdrop">不发了</button></div></div>`;
+    PV = {pid: r.pid, o, w};
+  };
+  $("#pk").addEventListener("change", e => { if (e.target.id === "pkdirect") whenUI(); if (e.target.id === "pkauto") api("/api/prank", {op: "settings", auto: e.target.checked}).then(r => toast(r.ok ? (e.target.checked ? "她会自己整人了" : "她不自己整人了（点单照样能用）") : r.error || "没改成", !r.ok)); });
+  $("#pk").onclick = async e => {
+    const t = e.target;
+    const lv = t.closest("[data-lv]"); if (lv) { const r = await api("/api/prank", {op: "settings", level: lv.dataset.lv}); toast(r.ok ? "改好了" : r.error || "没改成", !r.ok); return draw(); }
+    const un = t.closest("[data-undo]"); if (un) { if (!confirm("撤回这次整人发的消息？")) return; const r = await api("/api/prank", {op: "undo", rid: un.dataset.undo}); toast(r.ok ? `撤回了 ${r.n} 条` : r.error || "没撤回", !r.ok); return draw(); }
+    const ca = t.closest("[data-cancel]"); if (ca) { const r = await api("/api/prank", {op: "cancel", id: ca.dataset.cancel}); toast(r.ok ? "取消了" : "没找到", !r.ok); return draw(); }
+    const up = t.closest("[data-unp]"); if (up) { const r = await api("/api/prank", {op: "no_prank", uid: up.dataset.unp, on: false}); toast(r.ok ? "删了（以后又能整他了）" : r.error || "没改成", !r.ok); return draw(); }
+    if (t.id === "pknpadd") { const r = await api("/api/prank", {op: "no_prank", uid: $("#pknp").value.trim(), on: true}); toast(r.ok ? "加好了" : r.error || "QQ 号不对", !r.ok); return draw(); }
+    if (t.id === "pkadd") { $("#pkcards").insertAdjacentHTML("beforeend", cardRow({id: "", name: "", desc: "", eg: "", group: true, private: true, level: 1, on: true}, (D.cards || []).length + Math.random())); return; }
+    // 新卡的 id：时间 + 序号（复查：以前「my + 第几行」跟以前存过的撞上 新卡被当成重复的丢掉）
+    if (t.id === "pksave") {
+      const cs = [...document.querySelectorAll("#pkcards [data-ci]")].map((row, i) => { const g = f => row.querySelector(`[data-f="${f}"]`);
+        return {id: g("id").value || ("my" + Date.now().toString(36) + i), name: g("name").value.trim(), desc: g("desc").value.trim(), eg: g("eg").value.trim(), group: g("group").checked, private: g("private").checked, level: +g("level").value, on: g("on").checked}; })
+        .filter(c => c.name && c.desc);
+      const r = await api("/api/prank", {op: "cards_save", cards: cs}); toast(r.ok ? `存好了 ${r.cards.length} 张` : r.error || "没存上", !r.ok); return draw();
+    }
+    if (t.id === "pkdrop") { $("#pkpv").innerHTML = ""; PV = null; return; }
+    const busy = async (b, fn) => { b.setAttribute("disabled", ""); const old = b.textContent; b.textContent = "稍等…"; try { return await fn(); } finally { b.removeAttribute("disabled"); b.textContent = old; } };
+    if (t.id === "pkgo" || t.id === "pkagain") {
+      const o = t.id === "pkagain" && PV ? PV.o : order(), w = t.id === "pkagain" && PV ? PV.w : $("#pkwhen").value;
+      if (o.scene === "group" && !o.gid) return toast("先挑个群", true);
+      if ((o.scene === "private" || $("#pkscope").value === "gp") && !o.uid) return toast("先挑个人", true);
+      if (w === "next") { const r = await busy(t, () => api("/api/prank", {op: "next", ...o})); toast(r.ok ? `存下了：${o.name} 下次说话时整他` : r.error || "没存上", !r.ok); return draw(); }
+      if (w === "at" && (atTs() < Date.now() / 1000 + 30 || atTs() > Date.now() / 1000 + 7 * 86400)) return toast("时间要在半分钟以后、7 天以内（北京时间）", true);
+      if (w === "now" && $("#pkdirect").checked && t.id === "pkgo") { const r = await busy(t, () => api("/api/prank", {op: "send", direct: true, ...o})); toast(r.ok ? "发了：" + (r.sent || []).join(" / ") : r.error || "没发成", !r.ok); return draw(); }
+      const r = await busy(t, () => api("/api/prank", {op: "preview", ...o}));
+      if (!r.ok) { $("#pkpv").innerHTML = ""; return toast(r.error || "没写出来", true); }
+      return showPV(r, o, w);
+    }
+    if (t.id === "pksend" && PV) { const r = await busy(t, () => api("/api/prank", {op: "send", pid: PV.pid})); toast(r.ok ? "发了" : r.error || "没发成", !r.ok); PV = null; $("#pkpv").innerHTML = ""; return draw(); }
+    if (t.id === "pksch" && PV) { const r = await busy(t, () => api("/api/prank", {op: "schedule", pid: PV.pid, at: atTs()})); toast(r.ok ? "定好了" : r.error || "没定上", !r.ok); PV = null; $("#pkpv").innerHTML = ""; return draw(); }
   };
   await draw();
 };

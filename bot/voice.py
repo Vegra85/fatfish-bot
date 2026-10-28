@@ -23,6 +23,7 @@ from pathlib import Path
 import httpx
 
 import clock
+import safeio
 
 ROOT = Path(__file__).resolve().parent
 OUT_DIR = ROOT / "data" / "voice"
@@ -104,9 +105,10 @@ def log_default(*a):
 
 def _state():
     try:
-        s = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        s = {}
+        s = safeio.read_json(STATE_FILE, None, print, busy_raise=True)   # 读坏了先另存 .bad（10-28 Gemini 复查：以前悄悄当成空的）
+    except safeio.Busy:            # 一直打不开：谁说过「别发语音」、今天发了几条都不知道 → 这一轮不发语音、不存
+        return safeio.Unsaved(day=clock.strf("%Y-%m-%d"), count=10 ** 6, chars=0, conv={})
+    s = s if isinstance(s, dict) else {}
     day = clock.strf("%Y-%m-%d")
     if s.get("day") != day:
         s.update(day=day, count=0, chars=0)
@@ -115,9 +117,10 @@ def _state():
 
 
 def _save(s):
+    if isinstance(s, safeio.Unsaved):
+        return
     try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
+        safeio.write_json(STATE_FILE, s)   # 原子写（10-28 Gemini 复查：以前直接覆盖着写 重启时被硬杀在半中间 下次读就是坏的 → 所有「别发语音」清掉）
     except Exception:
         pass
 
@@ -129,8 +132,10 @@ def muted_convs(now=None):
 
 
 def unmute_all():
-    """控制台「解除别发语音」：所有对话都放开 → 放开了几个"""
+    """控制台「解除别发语音」：所有对话都放开 → 放开了几个 / None（状态文件一时打不开 没改上）"""
     s = _state()
+    if isinstance(s, safeio.Unsaved):      # 一时打不开：什么都没放开（别说放开了 10-28 Gemini 复查；第二轮复查：返回 None 让控制台照实说）
+        return None
     n = 0
     for v in (s.get("conv") or {}).values():
         if isinstance(v, dict) and v.pop("mute_until", None):

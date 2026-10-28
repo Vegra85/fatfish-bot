@@ -171,9 +171,11 @@ def stated(text):
 
 # ───────────── 谁在哪（他自己说的）─────────────
 def _load():
+    import safeio
     try:
-        import safeio
-        d = safeio.read_json(STORE, {})
+        d = safeio.read_json(STORE, {}, None, busy_raise=True)
+    except safeio.Busy:            # 一直打不开：这次当没记过、也不能存（10-28 Gemini 复查：以前记一个新的就把所有人在哪冲掉）
+        return safeio.Unsaved()
     except Exception:
         d = {}
     return d if isinstance(d, dict) else {}
@@ -192,6 +194,8 @@ def remember(uid, place, scene="private", said="", now=None):
               "ts": float(now or time.time()), "said": str(said or "")[:60]}
     try:
         import safeio
+        if isinstance(d, safeio.Unsaved):
+            return False
         safeio.write_json(STORE, d)
     except Exception:
         return False
@@ -208,6 +212,8 @@ def forget(uid):
         return False
     try:
         import safeio
+        if isinstance(d, safeio.Unsaved):
+            return False
         safeio.write_json(STORE, d)
     except Exception:
         pass

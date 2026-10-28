@@ -69,21 +69,49 @@ class Busy(OSError):
     """文件一直被别的程序占着 读不了（不是坏了 别当成空的再存回去）"""
 
 
+class Unsaved(dict):
+    """读不出来（被占着）时临时给的数据：这一轮拿来看可以，绝不能存回去（10-28 Gemini 复查：
+    以前一直打不开就当成空的 再整份写回 —— 好感、梗库、说到做到、空间记录、统计都可能被冲掉）"""
+
+
+def update_json(path, fn, default=None, log=None):
+    """读来改：读 → fn(数据) 就地改 → 原子写回，返回改好的数据。
+    一直打不开 → 这次不改、返回 None；读坏了 → 已经留了 .bad，从 default 开始（跟 read_json 一样）；fn 返回 False → 不写"""
+    try:
+        d = read_json(path, None, log, busy_raise=True)
+    except Busy:
+        return None
+    if d is None:
+        d = json.loads(json.dumps(default)) if default is not None else {}
+    if fn(d) is False:
+        return d
+    write_json(path, d)
+    return d
+
+
+_BUSY = {}            # 文件 → 上次「一直打不开」的时间（10 秒内再读只试一次 不再等：别让每次读都卡住整只机器人 0.75 秒）
+
+
 def read_json(path, default=None, log=None, busy_raise=False):
     """读 JSON。没有这个文件 → default；读坏了 → 留一份 .bad 再 default；
-    一时打不开（被占着）→ 等一下再读；一直打不开 → busy_raise=True 就抛 Busy（记忆文件用：免得当成空的存回去把记忆冲掉）"""
+    一时打不开（被占着）→ 等一下再读；一直打不开 → busy_raise=True 就抛 Busy（记忆文件用：免得当成空的存回去把记忆冲掉）
+    10 秒内刚「一直打不开」过的：只试一次、不等（10-28 Gemini 复查：读不到的那段时间里 一轮回复要读几十次 每次都等 0.75 秒）"""
     p = Path(path)
     raw = None
-    for i in range(6):
+    tries = 1 if time.time() - _BUSY.get(str(p), 0) < 10 else 6
+    for i in range(tries):
         try:
             raw = p.read_bytes()
+            _BUSY.pop(str(p), None)
             break
         except FileNotFoundError:
             return default
         except OSError as e:
-            if i == 5:
-                if log:
-                    log(f"[存档] {p.name} 一直打不开（{e!r:.60}）")
+            if i == tries - 1:
+                if tries > 1:
+                    _BUSY[str(p)] = time.time()
+                    if log:
+                        log(f"[存档] {p.name} 一直打不开（{e!r:.60}）")
                 if busy_raise:
                     raise Busy(f"{p.name} 打不开") from e
                 return default

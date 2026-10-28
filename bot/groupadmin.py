@@ -287,6 +287,12 @@ def apply(gid, uid, name, rk, res, text, now=None, addressed=False):
                                                           if control.panel_mode(gid, now) != "normal" else "")}
         top = max(chain, key=lambda x: int(x.get("rank") or 0))      # 按整条链里级别最高的那条算（下面垫着群主的 管理员放不开）
         if int(top.get("rank") or 0) > rk:
+            base = next((x for x in chain if int(x.get("rank") or 0) > rk), None)
+            if int(cur.get("rank") or 0) <= rk and base:   # 最上面那层是他（或比他低的人）加的：撤掉这层 回到上级那档（10-28 Gemini 复查：
+                control.set_admin(gid, base)              # 以前整条拒掉 管理员撤不掉自己加的「闭嘴」）
+                ack("partial")
+                return {"ok": True, "kind": "group", "level": base["level"],
+                        "what": f"{who}撤了加的那层 → 回到{ROLE.get(int(base['rank']), '')}「{base.get('name')}」设的「{NAMES.get(base['level'])}」"}
             return {"ok": False, "why": f"是{ROLE.get(int(top['rank']), '')}「{top.get('name')}」设的 {who}放不开"}
         control.set_admin(gid, None)
         ack("normal")
@@ -307,10 +313,12 @@ def apply(gid, uid, name, rk, res, text, now=None, addressed=False):
         until = now + (mins * 60 if rk >= 3 else min(mins * 60, cap))
     else:
         until = now + float(C.get("default_hours", 3)) * 3600
-    if base and base["level"] == act:              # 上级设过同一档：到点时间取晚的 其他照旧是上级那条（rank 不降）
-        cu = float(base.get("until") or 0)
-        until = -1 if cu < 0 else max(until, cu)
-        entry = dict(base, until=until)
+    cu = float(base.get("until") or 0) if base else 0
+    if base and base["level"] == act and (cu < 0 or until <= cu):
+        entry, until = base, cu            # 上级设的同一档管得更久：不另写（rank 不降、到点时间不缩短）
+    elif base and base["level"] == act:    # 他要的比上级那条更久：多出来的那段算他自己的（他能撤 到点回到上级那档）
+        entry = {"level": act, "until": until, "rank": rk, "by": uid, "name": str(name)[:20], "role": who,   # （10-28 Gemini 复查：
+                 "t": now, "said": said, "target": tgt, "prev": base}     # 以前并进上级那条 名字、原话都成了群主的 他也撤不掉）
     else:
         entry = {"level": act, "until": until, "rank": rk, "by": uid, "name": str(name)[:20], "role": who,
                  "t": now, "said": said, "target": tgt}
@@ -342,6 +350,9 @@ def scene_line(gid, uid, card, now=None):
         _acks.pop(k, None)
         if ack["level"] == "normal":
             out.append("（他刚才这句是让你恢复正常说话 已经恢复了：回一句很短的就行 像真人群友那样 别解释系统。）")
+        elif ack["level"] == "partial":                 # 他撤了自己加的那层 上级设的还在（10-28 Gemini 复查：以前说「已经恢复了」跟上面那句对不上）
+            out.append("（他刚才这句是让你恢复说话：他自己加的那层撤了，但上面写的那位设的还在 —— 回一句很短的、"
+                       "说清楚还得照那位的来（别说「能说话了」）别解释系统。）")
         elif ack["level"] == "self_off":
             out.append("（他刚才这句是让你别主动接他的话 你已经照做了：以后他不 @你 你就不插他的话。"
                        "这次回一句很短的就行（可以小小嘟囔一下）别解释系统。）")

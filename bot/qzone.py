@@ -211,7 +211,8 @@ def strip_html(h):
 
 
 def _vis(m):
-    """看得到的范围：limited = 部分好友可见 / 仅自己可见 / 部分好友不可见（这种不在群里提）"""
+    """看得到的范围：limited = 部分好友可见 / 仅自己可见 / 部分好友不可见；friends = QQ 好友可见（这两种都不在群里提：
+    群里有不是他好友的人 10-28 Gemini 复查）"""
     for k in ("ugc_right", "ugcright", "right"):
         try:
             v = int(m.get(k))
@@ -219,6 +220,8 @@ def _vis(m):
             continue
         if v in (16, 64, 128):
             return "limited"
+        if v == 4:
+            return "friends"
     try:
         if int(m.get("secret") or 0):
             return "limited"
@@ -637,7 +640,12 @@ def load():
     m = _mtime(STATE)
     if _S["d"] is not None and m == _S["m"]:
         return _S["d"]
-    s = safeio.read_json(STATE, None, print)
+    try:
+        s = safeio.read_json(STATE, None, print, busy_raise=True)
+    except safeio.Busy:                    # 一直打不开：这一轮当成歇着（不刷、不赞、不评、不存）（10-28 Gemini 复查：
+        tmp = safeio.Unsaved(_empty_state())   # 以前当成空的 一存就把赞过 / 评过 / 回过、「太频繁」歇到几点全冲掉 → 重复评论、提前恢复）
+        tmp["pause_until"], tmp["pause_why"] = time.time() + 600, "状态文件一时打不开"
+        return tmp
     if not isinstance(s, dict):
         s = {}
     base = _empty_state()
@@ -647,6 +655,8 @@ def load():
 
 
 def save(s):
+    if isinstance(s, safeio.Unsaved):      # 读不出来时临时给的：不能存（10-28 Gemini 复查）
+        return
     now = time.time()
     for k in ("seen", "liked", "commented", "replied", "take_fail"):             # 只留 30 天
         d = s.get(k)
@@ -757,13 +767,18 @@ def feed_load():
     m = _mtime(FEED)
     if _F["d"] is not None and m == _F["m"]:
         return _F["d"]
-    d = safeio.read_json(FEED, None, print)
+    try:
+        d = safeio.read_json(FEED, None, print, busy_raise=True)
+    except safeio.Busy:                    # 一直打不开：这次当没有、不存（10-28 Gemini 复查：以前当成空的 一存 7 天看过的说说全没了）
+        return safeio.Unsaved(json.loads(json.dumps(_F["d"])) if _F["d"] is not None else {"items": []})
     d = d if isinstance(d, dict) and isinstance(d.get("items"), list) else {"items": []}
     _F.update(d=d, m=m)
     return d
 
 
 def feed_save(d):
+    if isinstance(d, safeio.Unsaved):
+        return
     cut = time.time() - 7 * 86400
     d["items"] = [x for x in d.get("items") or [] if float(x.get("read") or 0) >= cut][-300:]
     DIR.mkdir(parents=True, exist_ok=True)
@@ -1008,7 +1023,7 @@ def view_block(who, items, err="", self_view=True, group=False, descs=None, hidd
         return (f"\n# 你刚想去看「{name}」的 QQ 空间 但没看成\n原因：{err}。照实说没看成（可以说原因）"
                 "别编他空间里有什么。\n")
     if not items and hidden:
-        return (f"\n# 你刚去看了「{name}」的 QQ 空间\n最近 {hidden} 条都是他设了部分好友可见的：群里别提内容"
+        return (f"\n# 你刚去看了「{name}」的 QQ 空间\n最近 {hidden} 条都不是谁都能看的（QQ 好友可见 / 部分好友可见）：群里别提内容"
                 "（可以说想聊的话私聊）。\n")
     if not items:
         return f"\n# 你刚去看了「{name}」的 QQ 空间\n里面一条说说都没有（或者都看不到）。照实说。\n"
@@ -1024,7 +1039,12 @@ def view_block(who, items, err="", self_view=True, group=False, descs=None, hidd
             line += f"（配了 {len(p['imgs'])} 张图 没看清）"
         if p.get("cmtnum"):
             line += f" · {p['cmtnum']} 条评论"
+        if p.get("vis", "public") != "public" and not group:
+            line += "（不是谁都能看的：" + ("部分好友可见）" if p.get("vis") == "limited" else "QQ 好友可见）")
         out.append(line)
+    if not group and not self_view and any(p.get("vis", "public") != "public" for p in items[:5]):
+        # 老板私聊看别人的空间：不是谁都能看的那几条也给（小明 10-28 定 v1.9.4）—— 只在这儿跟老板说 别带到群里 / 别人那
+        out.append("标着「不是谁都能看的」那几条：只在这个私聊里跟老板说，别带到群里、也别跟别人提。")
     if group and not self_view:
         out.append("这是你替老板看的别人的空间：群里别说内容 只说一句「私聊跟你说」。")
     elif group:
@@ -1032,7 +1052,7 @@ def view_block(who, items, err="", self_view=True, group=False, descs=None, hidd
     else:
         out.append("挑你最有感觉的一两条聊 别一条条念。")
     if hidden:
-        out.append(f"（另外 {hidden} 条是他设了部分好友可见的 没给你：群里别提。）")
+        out.append(f"（另外 {hidden} 条不是谁都能看的（QQ 好友可见 / 部分好友可见）没给你：群里别提。）")
     return "\n".join(out) + "\n"
 
 

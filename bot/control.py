@@ -295,14 +295,13 @@ def is_human(uid):
 
 def _edit(fn):
     """读 control.json → fn(d) 改 → 原子写回（机器人这边改：自动认出的 AI、火力全开…）"""
-    d = safeio.read_json(FILE, {}, print, busy_raise=True) or {}   # 读坏了先另存一份 .bad；被占着就别改（免得冲掉别的设置）
+    d = safeio.read_json(FILE, None, print, busy_raise=True)    # 读坏了先另存一份 .bad；被占着就别改（免得冲掉别的设置）
     if not isinstance(d, dict):
-        d = {}
+        # 没有这个文件 → 从空的开始；读坏了（手改多了个逗号 / 写到一半断电）→ 从上次读好的那份开始
+        # （10-28 Gemini 复查：以前从空的开始 自动认出一个 AI 就把拉黑的人、群管档位、叫醒全冲掉了）
+        d = json.loads(json.dumps(_c.get("d") or {})) if FILE.exists() else {}
     fn(d)
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, FILE)
+    safeio.write_json(FILE, d)             # 临时文件带进程号、另一边正开着时等一下再换、fsync（以前 os.replace 一次不成就抛 这次的改动丢了）
     _c["m"] = None
     return d
 
@@ -375,20 +374,15 @@ def set_full(hours, by="", since=None):
     """开/关火力全开：hours > 0 开这么多小时；< 0 一直开；0 关。返回新的状态
     since：从几点开的（不给 = 现在；补回下线期间老板发的那条 = 他发的时候 10-28 审查 intake-10 复核：
     记成现在的话 同一次补回里后面那句「省着点」/ 改了时长 会被当成「之后已经设过了」跳过）"""
-    d = safeio.read_json(FILE, {}, print, busy_raise=True) or {}
-    if not isinstance(d, dict):
-        d = {}
     h = float(hours or 0)
-    if h == 0:
-        d.pop("full", None)
-    else:
-        d["full"] = {"until": -1 if h < 0 else time.time() + h * 3600, "since": float(since) if since else time.time(),
-                     "by": str(by)[:20]}
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, FILE)
-    _c["m"] = None
+
+    def f(d):
+        if h == 0:
+            d.pop("full", None)
+        else:
+            d["full"] = {"until": -1 if h < 0 else time.time() + h * 3600, "since": float(since) if since else time.time(),
+                         "by": str(by)[:20]}
+    _edit(f)                               # 跟别的改法一样走 _edit（10-28 Gemini 复查：以前自己写一遍 不重试）
     return full_state()
 
 

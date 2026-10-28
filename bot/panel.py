@@ -37,6 +37,7 @@ import clock  # noqa: E402  （北京时间 10-27：以后总时区以北京时�
 import commit  # noqa: E402  （说到做到 / 承诺表：控制台「日历」）
 import memory  # noqa: E402  （遗忘曲线 10-27：每条记忆清不清楚、还能记多久）
 import qzone  # noqa: E402  （QQ 空间 10-27 v1.3.0：控制台「QQ 空间」页）
+import prank  # noqa: E402  （恶作剧 / 恶趣味 10-28 v1.10.0：控制台「恶趣味」页）
 import safeio  # noqa: E402  （读改写数据文件：读坏了先另存 .bad、一时打不开就不改 10-28 审查 panel-1）
 
 ROOT = Path(__file__).resolve().parent
@@ -234,13 +235,25 @@ def ws_clients():
         return []
     if time.time() - _ws["t"] < 5:
         return _ws["v"]
-    port = napcat_addr()[1]
+    host, port = napcat_addr()
+    local = {"127.0.0.1", "localhost", "::1", "[::1]"}
+    want = local if host.lower() in local else {host.lower()}
+    if host.lower() not in local and not re.fullmatch(r"[\d.]+", host):    # 写的是主机名：netstat 只给数字地址 → 先解析（解析不出来就只比端口）
+        try:
+            want |= {ai[4][0] for ai in socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)}
+        except OSError:
+            want = None
+    me = str(os.getpid())
     v = []
     try:
         for line in run_cmd(["netstat", "-ano", "-p", "TCP"], timeout=10)[1].splitlines():
             p = line.split()
-            if len(p) >= 5 and p[0].upper() == "TCP" and p[2].endswith(f":{port}") and p[-1].isdigit() \
-                    and p[-1] != "0" and "TIME_WAIT" not in line:
+            if len(p) < 5 or p[0].upper() != "TCP" or not p[-1].isdigit() or p[-1] in ("0", me) or "TIME_WAIT" in line:
+                continue
+            rhost, _, rport = p[2].rpartition(":")
+            # 对端要是 NapCat 那个地址 + 端口（10-28 Gemini 复查 #24：以前只比端口 —— 浏览器开着局域网里别的 3001 端口的网页
+            # 控制台就说「机器人卡住了」、不让启动）；控制台自己不算；状态那一列各语言不一样 不按 ESTABLISHED 认
+            if rport == str(port) and (want is None or rhost.lower().strip("[]") in {w.strip("[]") for w in want}):
                 v.append(int(p[-1]))
     except Exception:
         v = []
@@ -661,7 +674,29 @@ def wipe_person(uid):
         return {"ok": False, "error": "机器人开着但这会儿没回话 等一会儿再删（怕跟它同时改文件）"}
     with _lock:
         rep = wipe.run_offline(DATA, uid, [BACKUP])
-    return {"ok": True, "offline": True, "report": rep, "text": wipe.describe(rep)}
+        busy = list(rep.get("busy") or [])
+        try:                               # 说到做到 / 控制台规则里的他：在线删会删 离线这条路以前漏了（10-28 Gemini 第三轮复查）
+            commit.reload()
+            strong = rep["strong_names"] if "strong_names" in rep else (rep.get("names") or [])
+            commit.forget_person(uid, strong, weak=set(rep.get("names") or []) - set(strong))
+        except Exception as e:
+            plog(f"[删数据] commit.json 里 {uid} 的记录没删掉: {e!r:.100}")
+            busy.append("commit.json")
+        try:
+            control.forget_person(uid)
+        except Exception as e:
+            plog(f"[删数据] control.json 里 {uid} 的记录没删掉: {e!r:.100}")
+            busy.append("control.json")
+        if not prank.forget_person(uid):   # 恶作剧的记录 / 免整名单 / 等着整他的单（10-28 v1.10.0）
+            busy.append("prank_state.json")
+        if busy:
+            rep["busy"] = busy
+    text = wipe.describe(rep)
+    if rep.get("busy"):                    # 一直打不开的文件里他的东西没删到（10-28 Gemini 第二轮复查：以前照样说删完了）
+        text += f"；这几个这会儿打不开 没删到：{'、'.join(rep['busy'])[:120]}（等一下再删一次）"
+    if rep.get("mark_fail"):
+        text += "；删除时间没记上（wiped.json 打不开）：机器人重启补看消息时可能把他删之前的私聊又记回来 —— 等一下再删一次"
+    return {"ok": True, "offline": True, "report": rep, "partial": bool(rep.get("busy") or rep.get("mark_fail")), "text": text}
 
 
 def favor_list():
@@ -1121,6 +1156,11 @@ def _fg_cfg():
             memory.configure_forget(cfg().get("forget") or {})
         except Exception:
             pass
+    if _fg_on() and hasattr(memory, "configure_reinforce"):      # 记忆强化的半衰期下限也按 config 算（10-28 v1.9.4）
+        try:
+            memory.configure_reinforce((cfg().get("memory2") or {}).get("reinforce") or {})
+        except Exception:
+            pass
 
 
 def _fact_view(f, now):
@@ -1134,8 +1174,11 @@ def _fact_view(f, now):
     try:
         memory.ensure_level(f)
         out["lvl"] = memory.lvl(f)
-        out["S"] = round(float(f.get("S") or 0), 1)
+        out["S"] = round(float(memory.half_life(f) if hasattr(memory, "half_life") else f.get("S") or 0), 1)   # 强化撑着的下限也算（10-28 v1.9.4）
         out["clarity"] = round(memory.clarity(f, now), 3)
+        if hasattr(memory, "rn"):                   # 记忆强化（10-28 v1.9.4）：强化了几次、上次哪天
+            out["rn"] = memory.rn(f)
+            out["last_reinforce"] = f.get("last_reinforce") or ""
         out["state"] = memory.state(f, now)
         a, b = memory.days_left(f, now)
         out["to_fuzzy"], out["to_faint"] = (None if a is None else round(a, 1)), (None if b is None else round(b, 1))
@@ -1339,6 +1382,75 @@ def qzone_view():
             "dry_posts": list(reversed(s.get("dry_posts") or []))[:10]}
 
 
+def prank_targets():
+    """「恶趣味」页挑人：每个群最近说过话的人（新的在前）+ 私聊过的人"""
+    cache = jread(CACHE, {}) or {}
+    cache = cache if isinstance(cache, dict) else {}
+    gs = cache.get("groups") if isinstance(cache.get("groups"), dict) else {}
+    gnames = {k: (v.get("name") if isinstance(v, dict) else "") or "" for k, v in gs.items()}
+    favor = jread(FAVOR, {}) or {}
+    favor = favor if isinstance(favor, dict) else {}
+    bots = set((control_data().get("bots") or {}).keys())
+    groups, privs = [], []
+    for p in sorted(MEM_DIR.glob("group_*.json")):
+        gid = p.stem.split("_", 1)[1]
+        m = jread(p, {}) or {}
+        if not isinstance(m, dict):            # 文件里不是一个对象（坏了）：跳过 别让整页 500（复查）
+            continue
+        who = {}
+        for h in reversed([x for x in (m.get("history") or []) if isinstance(x, dict)][-400:]):
+            u = str(h.get("uid") or "")
+            if h.get("role") == "user" and u and u not in who and len(who) < 40:
+                who[u] = {"uid": u, "name": str(h.get("name") or u)[:24], "bot": u in bots}
+        groups.append({"id": gid, "name": gnames.get(gid, ""), "last": m.get("last_active") or 0, "people": list(who.values())})
+    for p in sorted(MEM_DIR.glob("private_*.json")):
+        uid = p.stem.split("_", 1)[1]
+        m = jread(p, {}) or {}
+        if not isinstance(m, dict):
+            continue
+        fv = favor.get(uid) if isinstance(favor.get(uid), dict) else {}
+        nm = fv.get("name") or next((h.get("name") for h in reversed(m.get("history") or [])
+                                     if isinstance(h, dict) and h.get("role") == "user" and h.get("name")), "") or uid
+        privs.append({"uid": uid, "name": str(nm)[:24], "last": m.get("last_active") or 0, "bot": uid in bots,
+                      "owner": uid == str(cfg().get("owner_qq") or "")})
+    groups.sort(key=lambda x: -(x["last"] or 0))
+    privs.sort(key=lambda x: -(x["last"] or 0))
+    return {"groups": groups, "privates": privs}
+
+
+def prank_view():
+    prank.configure(((cfg().get("humor") or {}).get("prank")) or {})
+    r = bot_api("prank", {"op": "status"}, timeout=8)
+    online = r is not None
+    if not online:                         # 机器人没开：直接读文件（预览 / 发 / 撤回要机器人开着）
+        r = prank.status()
+    r["online"] = online
+    r.update(prank_targets())
+    return r
+
+
+def prank_act(b):
+    op = str(b.get("op") or "")
+    prank.configure(((cfg().get("humor") or {}).get("prank")) or {})
+    r = bot_api("prank", {k: v for k, v in b.items() if k != "token"}, timeout=150 if op in ("preview", "send") else 15)
+    if r is not None:
+        return r
+    hb = jread(HEARTBEAT, {}) or {}
+    if isinstance(hb, dict) and time.time() - float(hb.get("ts") or 0) < 60:   # 机器人开着 只是这会儿没回话（模型慢）：别自己改文件 跟它抢（复查）
+        return {"ok": False, "error": "机器人开着但这会儿没回话（模型可能慢）—— 等一会儿刷新看看发没发 / 再点一次"}
+    with _lock:                            # 机器人没开：改设置 / 玩法卡 / 免整名单 / 取消点单 直接改文件
+        if op == "settings":
+            return {"ok": prank.set_settings(b.get("auto"), b.get("level"))}
+        if op == "cards_save":
+            out = prank.save_cards(b.get("cards"))
+            return {"ok": True, "cards": out} if out else {"ok": False, "error": "没存上（一张能用的卡都没有 / 文件打不开）"}
+        if op == "no_prank":
+            return {"ok": prank.no_prank(b.get("uid"), bool(b.get("on")))}
+        if op == "cancel":
+            return {"ok": prank.cancel_order(str(b.get("id") or ""))}
+    return {"ok": False, "error": "机器人没开：预览 / 发 / 撤回 / 点单要机器人开着（先在总览里启动）"}
+
+
 def qzone_act(b):
     what = str(b.get("what") or "")
     if what in ("unoff", "ungroup"):
@@ -1386,7 +1498,10 @@ def quick_action(b):
             return {"ok": True, "offline": True, "msg": "恢复按实际花费算了"}
         if what == "mood_reset":
             p = DATA / "mood2.json"
-            m2 = jread(p, {}) or {}
+            try:                           # 一时打不开：照实说没改上（10-28 Gemini 第二轮复查：以前当成没有 回「心情回到平常了」）
+                m2 = safeio.read_json(p, {}, plog, busy_raise=True) or {}
+            except safeio.Busy:
+                return {"ok": False, "error": "mood2.json 正被别的程序占着 没改上（等一下再点）"}
             if m2:
                 base = float((cfg().get("mood2") or {}).get("baseline", 70))
                 m2["mood"] = base
@@ -1406,7 +1521,10 @@ def quick_action(b):
             n = 0
             for fn in ("voice_state.json", "sing_state.json"):
                 p = DATA / fn
-                s = jread(p, {}) or {}
+                try:                       # 一时打不开：照实说没改上（10-28 Gemini 第二轮复查：以前说「放开了 0 个」）
+                    s = safeio.read_json(p, {}, plog, busy_raise=True) or {}
+                except safeio.Busy:
+                    return {"ok": False, "error": f"{fn} 正被别的程序占着 没改上（等一下再点）" + (f"；已经放开了 {n} 个" if n else "")}
                 k = 0
                 for v in (s.get("conv") or {}).values():
                     if isinstance(v, dict) and v.pop("mute_until", None):
@@ -1441,6 +1559,8 @@ def songs_view():
 def song_save(b):
     with _lock:
         d = sing.index()
+        if isinstance(d, safeio.Unsaved):  # songs.json 一时打不开：别拿空的存回去（10-28 Gemini 复查）
+            return {"ok": False, "error": "songs.json 正被别的程序占着 没改上（等一下再改）"}
         x = next((s for s in d["songs"] if s.get("id") == b.get("id")), None)
         if not x:
             return {"ok": False, "error": "没有这首歌（刷新一下）"}
@@ -1485,7 +1605,10 @@ def song_upload(b):
         return {"ok": False, "error": "只收 mp3 / m4a / wav / flac / ogg 这些音频"}
     name = str(b.get("name") or "").strip() or Path(fn).stem
     with _lock:
-        e = sing.add_file(name, ext, raw, {"credit": str(b.get("credit") or "").strip()[:120]})
+        try:
+            e = sing.add_file(name, ext, raw, {"credit": str(b.get("credit") or "").strip()[:120]})
+        except RuntimeError as ex:         # 歌单一时打不开（10-28 Gemini 复查）
+            return {"ok": False, "error": str(ex)}
     return {"ok": True, "song": e}
 
 
@@ -1863,6 +1986,8 @@ class H(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "data": memory_list()})
             if u.path == "/api/qzone":
                 return self._json(qzone_view())
+            if u.path == "/api/prank":
+                return self._json(prank_view())
             if u.path == "/api/memory/forget":
                 return self._json(forget_view())
             if u.path == "/api/memory/detail":
@@ -2021,6 +2146,8 @@ class H(BaseHTTPRequestHandler):
             return quick_action(b)
         if u == "/api/qzone":
             return qzone_act(b)
+        if u == "/api/prank":
+            return prank_act(b)
         if u == "/api/favor":
             return favor_set(str(b.get("uid")), int(b.get("favor")))
         if u == "/api/wipe":
@@ -2068,6 +2195,8 @@ class H(BaseHTTPRequestHandler):
         if u == "/api/songs/delete":
             with _lock:
                 ok = sing.remove(str(b.get("id") or ""))
+            if ok is None:                 # 歌单一时打不开（10-28 Gemini 第二轮复查：以前说「没有这首歌」）
+                return {"ok": False, "error": "songs.json 正被别的程序占着 没删（等一下再点）"}
             return {"ok": ok} if ok else {"ok": False, "error": "没有这首歌"}
         if u == "/api/tool":
             name = b.get("name")
