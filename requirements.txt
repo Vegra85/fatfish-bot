@@ -5,6 +5,6 @@ tzdata
 # 动图拼帧、表情包工具
 pillow
 
-# 本地听语音（SenseVoice）：双击 安装语音.bat 会自己装这两个
+# 本地听语音（SenseVoice）：大肥鱼.bat → 6「安装」→「安装语音」会自己装这两个
 # sherpa-onnx
 # numpy
