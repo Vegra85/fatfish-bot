@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """
 大肥鱼控制台（本机网页）
-  双击 C:\\QQBot\\控制台.bat → 自动打开 http://127.0.0.1:8765
+  双击 C:\\QQBot\\大肥鱼.bat 选「打开控制台」（v1.12.0 起；以前是 控制台.bat）→ 自动打开 http://127.0.0.1:8765
   只有这台电脑能打开；关掉黑窗口就关掉控制台（机器人不受影响）
   机器人开着：通过它的本机接口操作（代发、改记忆好感、重启、试音…）
   机器人没开：照样能改设置、看日志、看记忆、看统计
-  自动更新（10-26）：控制台.bat 起的是一个「管家」进程 真正的网页服务是它的子进程；
+  自动更新（10-26）：菜单「打开控制台」起的是一个「管家」进程 真正的网页服务是它的子进程；
     panel.py（或它用到的 control.py/budget.py…）改了 → 子进程自己退出 管家马上用新代码再起一个（网页不用关）
-    双击 控制台.bat 时 已经开着一个旧版本/卡住的控制台 → 把旧的关掉换成新的（只关命令行里有 panel.py 的进程）
+    再开一次控制台时 已经开着一个旧版本/卡住的控制台 → 把旧的关掉换成新的（只关命令行里有 panel.py 的进程）
 """
 import json
 import os
@@ -38,6 +38,7 @@ import commit  # noqa: E402  （说到做到 / 承诺表：控制台「日历」
 import memory  # noqa: E402  （遗忘曲线 10-27：每条记忆清不清楚、还能记多久）
 import qzone  # noqa: E402  （QQ 空间 10-27 v1.3.0：控制台「QQ 空间」页）
 import prank  # noqa: E402  （恶作剧 / 恶趣味 10-28 v1.10.0：控制台「恶趣味」页）
+import fixup  # noqa: E402  （纠错 10-28 v1.11.0：控制台「纠错」页 —— 教训能看能删）
 import safeio  # noqa: E402  （读改写数据文件：读坏了先另存 .bad、一时打不开就不改 10-28 审查 panel-1）
 
 ROOT = Path(__file__).resolve().parent
@@ -54,6 +55,7 @@ STICKERS = ROOT / "stickers"
 BACKUP = ROOT / "backup_20261024" / "panel_backups"
 HTML = ROOT / "panel.html"
 AVATAR = ROOT / "avatar.png"          # 她的头像（有就显示在控制台上；公开版没有 → 显示默认的鱼）
+FISH = QQBOT / "tools" / "fish.py"    # 大肥鱼菜单（v1.12.0：以前根目录那些 .bat 都合进它了）
 try:
     from version import __version__ as APP_VERSION   # 发布用的版本号（控制台左下角显示）
 except Exception:
@@ -363,11 +365,9 @@ def start_bot():
     if bot_procs() or ws_clients():
         return False, "已经有一个机器人连着 QQ（多半是还没换成新版本的那个）。点「强制重启机器人」换成新版本"
     if napcat_up():
-        loop = ROOT / "botloop.bat"
-        if os.name == "nt" and loop.exists():          # 带守护循环启动：挂了会自己再拉起来
-            subprocess.Popen(["cmd", "/c", str(loop)], cwd=str(ROOT), stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             creationflags=0x08000000 | 0x00000200)
+        if os.name == "nt" and FISH.exists():          # 带守护循环启动：挂了会自己再拉起来（v1.12.0：tools\fish.py loop，以前是 botloop.bat）
+            subprocess.Popen([_py("pythonw.exe"), str(FISH), "loop"], cwd=str(ROOT), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=DETACHED)
         else:
             out = open(LOG, "ab")
             subprocess.Popen([sys.executable, str(ROOT / "bot.py")], cwd=str(ROOT), stdout=out,
@@ -393,25 +393,32 @@ def start_all():
         return False, f"启动失败：{e}"
 
 
-def run_bat(name, ok_msg):
-    bat = QQBOT / name
-    if not bat.exists():
-        return False, f"找不到 {name}"
+def _py(name):
+    """同一个 Python 的 python.exe / pythonw.exe（不是 Windows / 找不到 → 现在这个）"""
+    p = Path(sys.executable).with_name(name)
+    return str(p) if os.name == "nt" and p.exists() else sys.executable
+
+
+def run_fish(args, ok_msg):
+    """在电脑上新开一个窗口跑 tools\\fish.py <args>（v1.12.0：以前是双击对应的 .bat）；要管理员的它自己弹确认"""
+    if not FISH.exists():
+        return False, "找不到 tools\\fish.py（覆盖解压一次新版本）"
     try:
-        os.startfile(str(bat))          # 会弹管理员确认
+        subprocess.Popen([_py("python.exe"), str(FISH)] + list(args) + ["--pause"], cwd=str(QQBOT),
+                         creationflags=0x00000010 if os.name == "nt" else 0)     # CREATE_NEW_CONSOLE
         _procs["t"] = _ws["t"] = _qq["t"] = 0
         return True, ok_msg
     except Exception as e:
-        return False, f"运行 {name} 失败：{e}"
+        return False, f"运行 tools\\fish.py 失败：{e}"
 
 
 def stop_all():
-    return run_bat("停止.bat", "已经运行 停止.bat（电脑上会弹一个管理员确认 点「是」）")
+    return run_fish(["stop"], "已经在电脑上开了一个窗口「停止」（会弹一个管理员确认 点「是」）")
 
 
 def restart_hard():
     """机器人卡住 / 还是旧版本（没有控制台接口）时：用管理员权限只重启机器人 QQ 不动"""
-    return run_bat("重启机器人.bat", "已经运行 重启机器人.bat（电脑上会弹一个管理员确认 点「是」；QQ 不会掉线）")
+    return run_fish(["restart", "--hard"], "已经在电脑上开了一个窗口「强制重启机器人」（会弹一个管理员确认 点「是」；QQ 不会掉线）")
 
 
 # ───────────── 设置 ─────────────
@@ -497,6 +504,15 @@ def tasks_view():
 def task_action(b):
     """打勾 / 取消 / 加 / 改：机器人开着让她改（免得跟她手里的冲突）；没开就直接改文件"""
     act = str(b.get("action") or "")
+    if act == "prom_del":                  # 删一条没说时间的答应（10-30）
+        r = bot_api("prom_del", {"conv": b.get("conv"), "id": b.get("id")}, timeout=10)
+        if r is not None:
+            return r
+        with _lock:
+            commit.reload()
+            pr = commit.drop_prom(b.get("conv"), b.get("id"), "控制台", plog)
+            commit.reload()
+        return {"ok": bool(pr), "offline": True, "error": "" if pr else "没找到这条（可能已经划掉了）"}
     if act not in ("done", "cancel", "add", "edit"):
         return {"ok": False, "error": "不认识的操作"}
     params = {k: b.get(k) for k in ("n", "id", "key", "scene", "target", "who", "who_name", "what", "at", "ts",
@@ -689,6 +705,8 @@ def wipe_person(uid):
             busy.append("control.json")
         if not prank.forget_person(uid):   # 恶作剧的记录 / 免整名单 / 等着整他的单（10-28 v1.10.0）
             busy.append("prank_state.json")
+        if not fixup.forget_person(uid, rep.get("strong_names") or rep.get("names") or []):   # 纠错的教训 / 记录（10-28 v1.11.0）
+            busy.append("fixup.json")
         if busy:
             rep["busy"] = busy
     text = wipe.describe(rep)
@@ -781,12 +799,41 @@ def _peak_share(x, p):
     return (pk["miss"] * p["cny_miss"] + pk["hit"] * p["cny_hit"] + pk["out"] * p["cny_out"]) * p["peak_mult"] / 1e6 / p["usd_cny"]
 
 
+def _judge_cost(x):
+    """判断模型实验（10-29 judge.py：Anthropic）花了多少（美元 机器人按官网价现算好记进 judge_usd）"""
+    try:
+        return float(x.get("judge_usd", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def cost_of(d, p):
     ds = _ds_cost(d, p)
     tts = d.get("voice_chars", 0) * p["tts_per_m_chars"] / 1e6
     se = _search_cost(d, p)
-    return {"deepseek": round(ds, 4), "voice": round(tts, 4), "search": round(se, 4), "total": round(ds + tts + se, 4),
-            "peak": round(_peak_share(d, p), 4)}
+    jd = _judge_cost(d)
+    return {"deepseek": round(ds, 4), "voice": round(tts, 4), "search": round(se, 4), "judge": round(jd, 4),
+            "total": round(ds + tts + se + jd, 4), "peak": round(_peak_share(d, p), 4)}
+
+
+def judge_view():
+    """判断模型实验（10-29）：config 里有 judge 那一节才有（公开版没有 → None）；开没开、切了哪几样、今天花了多少、停用没有"""
+    j = cfg().get("judge")
+    if not isinstance(j, dict):
+        return None
+    st = jread(DATA / "judge_state.json", {}) or {}
+    today = (jread(STATS, {}) or {}).get("days", {}).get(clock.strf("%Y-%m-%d")) or {}
+    key = ((j.get("providers") or {}).get("anthropic") or {}).get("key")
+    now = time.time()
+    pu = float(st.get("paused_until") or 0)
+    return {"enabled": bool(j.get("enabled", True)), "has_key": bool(str(key or "").strip()),
+            "routes": {k: v for k, v in (j.get("routes") or {}).items() if not str(k).startswith("_")},
+            "cap": float(j.get("daily_cap_usd") or 0), "spent": round(_judge_cost(today), 4),
+            "calls": int(today.get("judge_calls", 0) or 0), "fallback": int(today.get("judge_fallback", 0) or 0),
+            "paused": pu > now, "paused_until": pu, "pause_why": st.get("pause_why") or "",
+            "last_err": st.get("last_err") or "", "probe": st.get("probe") or "",
+            "budget": st.get("budget") or {}, "budget_note": st.get("budget_note") or "",   # 动态用量（10-31 v1.15.12）：机器人每分钟算一次写在 judge_state.json
+            "evals": [p.name for p in sorted((DATA / "judge_eval").glob("eval_*.html"))][-5:]}
 
 
 def budget_view(s=None):
@@ -920,6 +967,24 @@ def usage_view(force=False):
         ds = _ds_cost(tot, p)
         mm = tot.get("voice_chars", 0) * p["tts_per_m_chars"] / 1e6
         se = _search_cost(tot, p)
+        jd = _judge_cost(tot)
+        jby = {}
+        for i in range(n):                 # 判断模型（10-29）按 kind 分开记的
+            d = days.get(clock.strf("%Y-%m-%d", time.time() - i * 86400)) or {}
+            for kind, x in (d.get("judge_by") or {}).items():
+                t = jby.setdefault(kind, {})
+                for a, b in (x or {}).items():
+                    if isinstance(b, (int, float)):
+                        t[a] = t.get(a, 0) + b
+                    elif a == "model":
+                        t[a] = b
+        judge = {"calls": tot.get("judge_calls", 0), "in": tot.get("judge_in", 0), "out": tot.get("judge_out", 0),
+                 "hit": tot.get("judge_hit", 0), "write": tot.get("judge_write", 0),
+                 "fallback": tot.get("judge_fallback", 0), "cost": round(jd, 5),
+                 "by": sorted(({"kind": k, "model": v.get("model", ""), "calls": v.get("calls", 0),
+                                "fallback": v.get("fallback", 0), "in": v.get("in", 0) + v.get("hit", 0) + v.get("write", 0),
+                                "out": v.get("out", 0), "cost": round(float(v.get("usd", 0) or 0), 5)}
+                               for k, v in jby.items()), key=lambda r: -r["cost"])}
         rows = sorted(({"tag": k, "calls": v.get("calls", 0), "miss": v.get("miss", 0), "hit": v.get("hit", 0),
                         "out": v.get("out", 0), "cost": round(_ds_cost(v, p), 5)} for k, v in by.items()),
                       key=lambda r: -r["cost"])
@@ -927,7 +992,8 @@ def usage_view(force=False):
                 "out": tot.get("tok_out", 0), "searches": tot.get("searches", 0), "fetches": tot.get("fetches", 0),
                 "tts_calls": tot.get("tts_calls", 0), "chars": tot.get("voice_chars", 0), "voice_msgs": tot.get("voice", 0),
                 "ds_cost": round(ds, 5), "mm_cost": round(mm, 5), "search_cost": round(se, 5),
-                "peak_cost": round(_peak_share(tot, p), 5), "total": round(ds + mm + se, 5), "by": rows}
+                "peak_cost": round(_peak_share(tot, p), 5), "total": round(ds + mm + se + jd, 5), "by": rows,
+                "judge": judge}
 
     daily = []
     for i in range(13, -1, -1):
@@ -936,8 +1002,10 @@ def usage_view(force=False):
         daily.append({"day": k, "calls": d.get("llm_calls", 0), "tok": d.get("tok_miss", 0) + d.get("tok_hit", 0),
                       "out": d.get("tok_out", 0), "ds_cost": round(_ds_cost(d, p), 5), "chars": d.get("voice_chars", 0),
                       "mm_cost": round(d.get("voice_chars", 0) * p["tts_per_m_chars"] / 1e6, 5),
-                      "searches": d.get("searches", 0) + d.get("fetches", 0)})
+                      "searches": d.get("searches", 0) + d.get("fetches", 0),
+                      "judge_calls": d.get("judge_calls", 0), "judge_cost": round(_judge_cost(d), 5)})
     return {"ok": True, "deepseek": deepseek_balance(force), "minimax": minimax_quota(force), "prices": p,
+            "judge_info": judge_view(),
             "today": agg(1), "d7": agg(7), "d30": agg(30), "daily": daily, "budget": budget_view(s),
             "anim": anim_view(), "peak": peak_view()}
 
@@ -1120,6 +1188,10 @@ def overview():
     st["her"] = her_view(cons)
     st["spark"] = spark_view(s)
     st["usd_cny"] = float(prices().get("usd_cny") or 7.1)
+    try:
+        st["judge"] = judge_view()             # 判断模型实验（10-29）：到上限 / 停用了 总览上提醒一行
+    except Exception:
+        st["judge"] = None
     st["app_version"] = APP_VERSION
     st["has_token"] = bool(panel_cfg().get("token"))
     try:                                       # config.json 读不出来：总览上说一声（10-28 审查 panel-1）
@@ -1429,6 +1501,35 @@ def prank_view():
     return r
 
 
+def fixup_view():
+    """控制台「纠错」页（10-28 v1.11.0）：机器人开着 → 问它（这一阵谁在纠错 / 停着只有它知道）；没开 → 读 data/fixup.json"""
+    fixup.configure(cfg().get("fixup") or {})
+    r = bot_api("fixup", {"op": "status"}, timeout=8)
+    online = r is not None
+    if not online:
+        r = fixup.status()
+        r["ok"] = True
+    r["online"] = online
+    return r
+
+
+def fixup_act(b):
+    op = str(b.get("op") or "")
+    if op not in ("del", "clear"):
+        return {"ok": False, "error": "不认识的操作"}
+    r = bot_api("fixup", {k: v for k, v in b.items() if k != "token"}, timeout=10)
+    if r is not None:
+        return r
+    hb = jread(HEARTBEAT, {}) or {}
+    if isinstance(hb, dict) and time.time() - float(hb.get("ts") or 0) < 60:
+        return {"ok": False, "error": "机器人开着但这会儿没回话 等一会儿再点"}
+    if op == "clear":
+        return {"ok": False, "error": "机器人没开：没有人在纠错"}
+    with _lock:                            # 机器人没开：直接改文件（读坏了先另存 .bad、打不开就不改）
+        ok = fixup.del_lesson(str(b.get("id") or ""))
+    return {"ok": ok, "error": "" if ok else "没找到这条（或者 fixup.json 正被占着）"}
+
+
 def prank_act(b):
     op = str(b.get("op") or "")
     prank.configure(((cfg().get("humor") or {}).get("prank")) or {})
@@ -1659,7 +1760,7 @@ def song_preview(b):
             except (TypeError, ValueError):
                 pass
     if not sing.ffmpeg():
-        return {"ok": False, "error": "没装 ffmpeg 剪不了（双击 安装视频支持.bat）"}
+        return {"ok": False, "error": "没装 ffmpeg 剪不了（大肥鱼.bat →「安装」→「视频支持」）"}
     a, e = sing.span(x)
     p = sing.cut(x, a, e)
     if not p:
@@ -1910,6 +2011,297 @@ def _whoami():
 
 
 # ───────────── 网页 ─────────────
+def shadow_view(days=3):
+    """控制台「影子模式」（10-30）：阶段 0 只记不改的几样（注意力存档 / 法庭 / 歧义 / 冷却）按天汇总。
+    只读 data 下的日志，机器人没开也看得到；法庭、注意力是私有模块，没有就显示「这个版本没有」"""
+    import shadowlog
+    try:
+        import attention
+    except ImportError:
+        attention = None
+    try:
+        import court
+    except ImportError:
+        court = None
+    shadowlog.configure(DATA)
+    if attention is not None:
+        attention.configure({}, data_dir=DATA)
+    days = max(1, min(14, int(days or 3)))
+    now = time.time()
+    out = []
+    for i in range(days - 1, -1, -1):
+        day = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+        amb = shadowlog.read("ambiguity", day)
+        cool = shadowlog.read("cooling", day)
+        scr = court.screens(day) if (court is not None and hasattr(court, "screens")) else {}
+        out.append({
+            "day": day,
+            "att": attention.summary(day) if attention is not None else None,
+            "court": court.summary(day) if court is not None else None,
+            "court_cases": [dict({k: r.get(k) for k in ("t", "id", "name", "kind", "reason", "evidence", "checkable", "inst", "her", "his",
+                                                         "owner", "crowd", "how")},
+                                 label=((court.labels() if court is not None else {}).get(str(r.get("id"))) or {}).get("l", ""),
+                                 screen=scr.get(str(r.get("id"))))
+                            for r in shadowlog.read("court", day) if r.get("ev") == "case"][-20:],
+            "court_rejects": [{k: r.get(k) for k in ("t", "name", "why", "her", "his")}
+                              for r in shadowlog.read("court", day) if r.get("ev") == "reject"][-10:],
+            "amb": {"n": len(amb), "ne": sum(1 for r in amb if r.get("src") == "网易云"),
+                    "ex": [{"title": r.get("title", ""), "src": r.get("src", ""), "options": (r.get("options") or [])[:3]} for r in amb[-8:]]},
+            "cool": {"n": len(cool), "would": sum(1 for r in cool if r.get("cand")),
+                     "me": sum(1 for r in cool for x in r.get("cand") or [] if x.get("k") == "个人"),
+                     "grp": sum(1 for r in cool for x in r.get("cand") or [] if x.get("k") == "群"),
+                     "avg": round(sum(int(r.get("n") or 0) for r in cool) / len(cool), 1) if cool else 0},
+        })
+    return {"ok": True, "days": out, "has": {"attention": attention is not None, "court": court is not None}}
+
+
+def court_ctx(cid):
+    """控制台「影子模式」法庭案子的「前后文」（10-30 v1.15.3 小明：「给的句子太短 应该给一个直接跳到 log 的链接」）：
+    → 那个对话当时前后的聊天（存档里 立案前 10 分钟 ~ 后 5 分钟、最多 40 句）+ bot.log 里立案那行前后 25 行"""
+    import shadowlog
+    shadowlog.configure(DATA)
+    cid = str(cid or "")
+    case = None
+    for day in reversed(shadowlog.days("court")[-30:]):
+        case = next((r for r in shadowlog.read("court", day) if r.get("ev") == "case" and str(r.get("id")) == cid), None)
+        if case:
+            break
+    if not case:
+        return {"ok": False, "error": "找不到这个案子（可能已经过了 30 天 / 删数据删掉了）"}
+    conv, t = str(case.get("conv") or ""), float(case.get("t") or 0)
+    if not re.fullmatch(r"(group|private)_\d+", conv):
+        return {"ok": False, "error": "案子里的对话不对"}
+    chat = []
+    seen_days = []
+    for day in (clock.strf("%Y-%m-%d", t), time.strftime("%Y-%m-%d", time.localtime(t))):
+        if day in seen_days:
+            continue
+        seen_days.append(day)
+        try:
+            lines = (DATA / "archive" / day / f"{conv}.jsonl").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            try:
+                e = json.loads(ln)
+            except ValueError:
+                continue
+            ts = float(e.get("ts") or 0)
+            if t - 600 <= ts <= t + 300:
+                txt = str(e.get("text") or "")
+                mark = "her" if e.get("role") == "assistant" and case.get("her") and str(case["her"])[:15] in txt else \
+                    ("his" if str(e.get("uid") or "") == str(case.get("uid")) and str(case.get("his") or "")[:10] in txt else "")
+                chat.append({"t": ts, "name": e.get("name") or "", "her": e.get("role") == "assistant", "text": txt[:300], "mark": mark})
+    chat.sort(key=lambda x: x["t"])
+    if len(chat) > 40:                     # 太多：留立案那一刻前后的
+        i = min(range(len(chat)), key=lambda k: abs(chat[k]["t"] - t))
+        chat = chat[max(0, i - 28):i + 12]
+    log = []
+    try:
+        ls = LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+        i = next((k for k in range(len(ls) - 1, -1, -1) if f"立案 #{cid} " in ls[k]), None)
+        if i is not None:
+            log = ls[max(0, i - 25):i + 25]
+    except OSError:
+        pass
+    return {"ok": True, "case": {k: case.get(k) for k in ("id", "conv", "name", "his", "her", "kind", "inst", "how", "t")},
+            "chat": chat, "log": log}
+
+
+# ───────────── 接话标注（10-30 v1.16.0）：接话判断 / 她自己插话的那些句子 → 小明 标「该接 / 不该接」→ 算判断准不准
+FU_LABELS = DATA / "attention" / "fu_labels.json"
+
+
+def _fu_labels():
+    try:
+        d = json.loads(FU_LABELS.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+IMG_HOSTS = re.compile(r"(^|\.)(qq\.com|qpic\.cn|qlogo\.cn|gtimg\.cn|myqcloud\.com)$", re.I)
+
+
+def _img_urls(c):
+    """存档里这条带的图链接（10-31 v1.15.16 起才记；QQ 的链接过几个小时会失效）"""
+    out = []
+    for x in (c.get("imgs") or [])[:4]:
+        try:
+            u = str(x[1] if isinstance(x, (list, tuple)) else x)
+        except (IndexError, TypeError):
+            continue
+        if u.startswith("http"):
+            out.append(u)
+    return out
+
+
+def fetch_img(u):
+    """控制台看群里的图：只代理 QQ 的图床（浏览器直接打开 QQ 图链接会被防盗链拦）→ (bytes, 类型) / None"""
+    from urllib.parse import urlparse
+    import urllib.request
+    try:
+        h = urlparse(u).hostname or ""
+        if not u.startswith("http") or not IMG_HOSTS.search(h):
+            return None
+        req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with op.open(req, timeout=8) as f:
+            data = f.read(8 * 1024 * 1024)
+            ct = f.headers.get("Content-Type") or "image/jpeg"
+        return (data, ct) if data and ct.startswith("image/") else None
+    except Exception:
+        return None
+
+
+def followup_view(days=2, limit=60, only=""):
+    """注意力存档里：接话判断跑过的（有理由的）+ 她没被叫、自己接了的 → 配上存档里的原话、前 4 句、她 90 秒内回没回"""
+    lab = _fu_labels()
+    now = time.time()
+    rows = []
+    for i in range(max(1, min(7, int(days or 2))) - 1, -1, -1):
+        day = time.strftime("%Y-%m-%d", time.localtime(now - i * 86400))
+        try:
+            lines = (DATA / "attention" / f"{day}.jsonl").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            fu = r.get("fu") or {}
+            if r.get("bot") or r.get("to_her"):
+                continue
+            if fu.get("why") or fu.get("r") in ("yes", "ask") or r.get("reply"):
+                rows.append((day, r))
+    rows = rows[-400:]
+    arch = {}
+
+    def chat_of(day, g):
+        if (day, g) not in arch:
+            out = []
+            try:
+                for ln in (DATA / "archive" / day / f"group_{g}.jsonl").read_text(encoding="utf-8").splitlines():
+                    try:
+                        out.append(json.loads(ln))
+                    except ValueError:
+                        pass
+            except OSError:
+                pass
+            arch[(day, g)] = out
+        return arch[(day, g)]
+    items = []
+    agree = {"n": 0, "ok": 0, "yes_bad": 0, "no_bad": 0}
+    for day, r in rows:
+        g, t, uid = str(r.get("g")), float(r.get("t") or 0), str(r.get("uid"))
+        ch = chat_of(day, g)
+        idx = next((k for k in range(len(ch)) if str(ch[k].get("uid")) == uid and abs(float(ch[k].get("ts") or 0) - t) < 3), None)
+        if idx is None:
+            continue
+        hk = next((k for k in range(idx + 1, min(len(ch), idx + 12)) if ch[k].get("role") == "assistant"
+                   and float(ch[k].get("ts") or 0) - t <= 90), None)
+        her = ch[hk] if hk is not None else None
+        rid = f"{g}:{r.get('mid') or uid + '@' + str(int(t))}"
+        lb = (lab.get(rid) or {}).get("l", "")
+        # 她 90 秒内那句是不是回的这一句（10-31 v1.15.16 小明：连着几句都显示同一句「接了」没法评）：
+        # 新记录看她那句记的 re（引用的那条）/ to（回的谁）；老记录：她那句前面最后一条真人消息是这个人的 才算回的这句
+        replied, her_other = False, ""
+        if her is not None:
+            if her.get("re"):
+                replied = str(her["re"]) == str(r.get("mid"))
+            elif her.get("to"):
+                replied = str(her["to"]) == uid and not any(str(c.get("uid")) == uid for c in ch[idx + 1:hk] if c.get("role") != "assistant")
+            else:
+                replied = all(str(c.get("uid")) == uid for c in ch[idx + 1:hk] if c.get("role") != "assistant")
+            if not replied:
+                to = str(her.get("to") or "")
+                tn = next((c.get("name") for c in reversed(ch[:hk]) if to and str(c.get("uid")) == to), "") if to else ""
+                her_other = (f"{int(float(her.get('ts') or 0) - t)} 秒后回的是" + (f"「{tn}」" if tn else "后面别的话") + "：" + str(her.get("text") or "")[:80])
+        if lb:
+            agree["n"] += 1
+            if (lb == "该接") == replied:
+                agree["ok"] += 1
+            elif replied:
+                agree["yes_bad"] += 1
+            else:
+                agree["no_bad"] += 1
+        if only == "todo" and lb:
+            continue
+        items.append({"id": rid, "t": t, "g": g, "fu": r.get("fu") or None, "label": lb, "replied": replied,
+                      "kind": "接话判断" if (r.get("fu") or {}).get("why") or (r.get("fu") or {}).get("r") != "no" else "自己插话",
+                      "text": str(ch[idx].get("text") or "")[:200], "name": ch[idx].get("name") or "", "imgs": _img_urls(ch[idx]),
+                      "before": [{"name": "她" if c.get("role") == "assistant" else (c.get("name") or ""), "text": str(c.get("text") or "")[:120],
+                                  "t": c.get("ts"), "imgs": _img_urls(c)} for c in ch[max(0, idx - 4):idx]],
+                      "her": str((her or {}).get("text") or "")[:160] if replied else "", "her_other": her_other})
+    items = items[-int(limit):][::-1]
+    return {"ok": True, "items": items, "agree": agree, "total": len(rows)}
+
+
+def followup_label(rid, label):
+    if label not in ("该接", "不该接", ""):
+        return False
+    d = _fu_labels()
+    if label:
+        d[str(rid)[:80]] = {"l": label, "t": round(time.time())}
+    else:
+        d.pop(str(rid), None)
+    try:
+        FU_LABELS.parent.mkdir(parents=True, exist_ok=True)
+        tmp = FU_LABELS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(FU_LABELS)
+        return True
+    except OSError:
+        return False
+
+
+# ───────────── 表情包词典（10-30 v1.16.0）：读机器人存的 sticker_dict.json（控制台改的排进 sticker_edits.jsonl 机器人 30 秒内改进去）
+def stickerdict_view(limit=200, q=""):
+    import stickerdict
+    stickerdict.configure({}, data_dir=DATA)
+    stickerdict.reload()
+    items = stickerdict.listing(2000)
+    pe = stickerdict.pending_edits()
+    for it in items:
+        x = pe.get(it["id"])
+        if x:
+            if "fix" in x:
+                it["fix"] = x["fix"] or ""
+            if x.get("redo"):
+                it["redo"] = True
+            it["pending"] = True
+    q = (q or "").strip()
+    if q:
+        items = [it for it in items if q in json.dumps(it, ensure_ascii=False)]
+    days = (stickerdict.load().get("days") or {})
+    return {"ok": True, "items": items[:int(limit)], "total": len(items),
+            "deep_n": sum(1 for it in items if it.get("deep")), "fix_n": sum(1 for it in items if it.get("fix")),
+            "today": days.get(time.strftime("%Y-%m-%d"), 0), "cap": stickerdict.C.get("deep_daily")}
+
+
+def stickerlib_view(limit=60):
+    """她的表情包库（C31 10-31 v1.15.14 影子）：库里收了哪些 + 她每句后面会挑哪张（只记不发）"""
+    import stickerdict
+    import stickerlib
+    stickerdict.configure({}, data_dir=DATA)
+    stickerdict.reload()
+    stickerlib.configure(_cfg_section("stickerlib"), data_dir=DATA)
+    stickerlib.reload()
+    r = stickerlib.view(stickerdict.load()["items"], int(limit))
+    for it in r["items"]:
+        it["thumb"] = stickerdict.thumb_path(it["id"]).exists()
+    r["ok"] = True
+    return r
+
+
+def _cfg_section(name):
+    try:
+        return (json.loads((ROOT / "config.json").read_text(encoding="utf-8")).get(name) or {})
+    except (OSError, ValueError):
+        return {}
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "FatFishPanel/1.0"
 
@@ -1954,6 +2346,16 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _judge_eval(self, name=""):
+        """判断模型离线盲评的结果页（data/judge_eval/eval_<时间>.html）：不给名字 → 最新那份"""
+        d = DATA / "judge_eval"
+        pages = sorted(d.glob("eval_*.html"))
+        if name:
+            pages = [p for p in pages if p.name == re.sub(r"[^\w.\-]", "", name)]
+        if not pages:
+            return self._json({"ok": False, "error": "还没有盲评结果（在 C:\\QQBot 下跑 python tests\\judge_replay.py）"}, 404)
+        return self._file(pages[-1], cache=False)
+
     def do_GET(self):
         if not self._host_ok():
             return self._json({"ok": False, "error": "forbidden"}, 403)
@@ -1973,6 +2375,8 @@ class H(BaseHTTPRequestHandler):
                 if not name.startswith("song_"):
                     return self._json({"ok": False}, 403)
                 return self._file(sing.CLIP_DIR / name, "audio/wav", cache=False)
+            if u.path == "/judge_eval":            # 判断模型离线盲评的结果页（10-29 tests/judge_replay.py 出的）
+                return self._judge_eval(q.get("f") or "")
             if u.path == "/api/config":
                 try:
                     return self._json({"ok": True, "config": mask(cfg_strict())})
@@ -1982,12 +2386,58 @@ class H(BaseHTTPRequestHandler):
                 return self._json(people())
             if u.path == "/api/tasks":
                 return self._json(tasks_view())
+            if u.path == "/api/shadow":            # 影子模式（10-30）：阶段 0 只记不改的几样 按天汇总（读文件 机器人没开也行）
+                try:
+                    return self._json(shadow_view(int((parse_qs(u.query).get("days") or ["3"])[0])))
+                except Exception as e:
+                    return self._json({"ok": False, "error": repr(e)[:200], "days": []})
+            if u.path == "/api/court_ctx":         # 影子模式 法庭案子的前后文（聊天 + 日志）（10-30 v1.15.3）
+                try:
+                    return self._json(court_ctx((parse_qs(u.query).get("id") or [""])[0]))
+                except Exception as e:
+                    return self._json({"ok": False, "error": repr(e)[:200]})
+            if u.path == "/api/followup":          # 接话标注（10-30 v1.16.0）
+                try:
+                    return self._json(followup_view(int(q.get("days") or 2), int(q.get("limit") or 60), q.get("only") or ""))
+                except Exception as e:
+                    return self._json({"ok": False, "error": repr(e)[:200], "items": []})
+            if u.path == "/api/stickerdict":       # 表情包词典（10-30 v1.16.0）
+                return self._json(stickerdict_view(int(q.get("limit") or 200), q.get("q") or ""))
+            if u.path == "/api/stickerlib":        # 她的表情包库 影子（C31 10-31）
+                try:
+                    return self._json(stickerlib_view(int(q.get("limit") or 60)))
+                except Exception as e:
+                    return self._json({"ok": False, "error": repr(e)[:200], "items": [], "rows": []})
+            if u.path == "/fuimg":                 # 接话标注页显示群里的图（10-31 v1.15.16）
+                got = fetch_img(q.get("u") or "")
+                if not got:
+                    return self._json({"ok": False, "error": "图没了（QQ 的图链接过几个小时会失效）"}, 404)
+                self.send_response(200)
+                self.send_header("Content-Type", got[1])
+                self.send_header("Content-Length", str(len(got[0])))
+                self.send_header("Cache-Control", "max-age=86400")
+                self.end_headers()
+                self.wfile.write(got[0])
+                return None
+            if u.path == "/stickerthumb":
+                import stickerdict
+                stickerdict.configure({}, data_dir=DATA)
+                f = stickerdict.thumb_path(q.get("id") or "").resolve()
+                if (DATA / "sticker_thumbs").resolve() not in f.parents:
+                    return self._json({"ok": False}, 403)
+                return self._file(f, "image/jpeg")
+            if u.path == "/api/sources":           # 来源健康（10-30）：机器人记着的各来源状态
+                r = bot_api("sources", {}, timeout=6)
+                return self._json(r if r is not None else {"ok": False, "offline": True, "items": [],
+                                                           "error": "机器人没开：来源的状态记在机器人那边 开着才看得到"})
             if u.path == "/api/memory":
                 return self._json({"ok": True, "data": memory_list()})
             if u.path == "/api/qzone":
                 return self._json(qzone_view())
             if u.path == "/api/prank":
                 return self._json(prank_view())
+            if u.path == "/api/fixup":
+                return self._json(fixup_view())
             if u.path == "/api/memory/forget":
                 return self._json(forget_view())
             if u.path == "/api/memory/detail":
@@ -2043,6 +2493,34 @@ class H(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": repr(e)[:300]}, 500)
 
     def route(self, u, b):
+        if u == "/api/fu_label":           # 接话标注（10-30 v1.16.0）
+            ok = followup_label(str(b.get("id") or ""), str(b.get("label") or ""))
+            return {"ok": ok} if ok else {"ok": False, "error": "没标上"}
+        if u == "/api/stickerlib_label":   # 表情包库影子：这次挑得好 / 不好（C31 10-31）
+            import stickerlib
+            stickerlib.configure({}, data_dir=DATA)
+            g = b.get("good")
+            ok = stickerlib.label(str(b.get("key") or ""), None if g is None else bool(g))
+            return {"ok": ok} if ok else {"ok": False, "error": "没标上"}
+        if u == "/api/stickerdict_edit":   # 表情包词典：改解释 / 重新认（排队 机器人那边 30 秒内改进去）
+            import stickerdict
+            stickerdict.configure({}, data_dir=DATA)
+            stickerdict.reload()
+            sid = str(b.get("id") or "")
+            if not sid or sid not in stickerdict.load()["items"]:
+                return {"ok": False, "error": "没有这张"}
+            fix = b.get("fix")
+            stickerdict.request_edit(sid, fix=None if fix is None else str(fix)[:300], redo=True if b.get("redo") else None)
+            return {"ok": True}
+        if u == "/api/shadow_label":       # 影子模式（10-30 v1.15.2）：给法庭的案子标「该立 / 不该立」（看几天算准不准）
+            try:
+                import court
+            except ImportError:
+                return {"ok": False, "error": "这个版本没有法庭"}
+            import shadowlog
+            shadowlog.configure(DATA)
+            ok = court.set_label(str(b.get("id") or ""), str(b.get("label") or ""))
+            return {"ok": ok} if ok else {"ok": False, "error": "没标上"}
         if u == "/api/bot":
             act = b.get("action")
             if act == "start":
@@ -2148,6 +2626,8 @@ class H(BaseHTTPRequestHandler):
             return qzone_act(b)
         if u == "/api/prank":
             return prank_act(b)
+        if u == "/api/fixup":
+            return fixup_act(b)
         if u == "/api/favor":
             return favor_set(str(b.get("uid")), int(b.get("favor")))
         if u == "/api/wipe":
@@ -2202,8 +2682,11 @@ class H(BaseHTTPRequestHandler):
             name = b.get("name")
             if name == "open_songs":
                 sing.SONG_DIR.mkdir(parents=True, exist_ok=True)
-            files = {"import_stickers": QQBOT / "导入表情包.bat", "install_voice": QQBOT / "安装语音.bat",
-                     "open_logs": ROOT, "open_data": DATA, "open_backups": BACKUP, "open_songs": sing.SONG_DIR}
+            if name in ("import_stickers", "install_voice"):     # v1.12.0：以前是 导入表情包.bat / 安装语音.bat
+                ok, msg = run_fish(["stickers" if name == "import_stickers" else "voice"],
+                                   "已经在电脑上开了一个窗口在装（装完它会问要不要重启机器人）")
+                return {"ok": True, "msg": msg} if ok else {"ok": False, "error": msg}
+            files = {"open_logs": ROOT, "open_data": DATA, "open_backups": BACKUP, "open_songs": sing.SONG_DIR}
             f = files.get(name)
             if not f:
                 return {"ok": False, "error": "不认识的工具"}
@@ -2285,7 +2768,7 @@ def serve(quiet=False, supervised=False):
         webbrowser.open(url)
         return ALREADY_RC
     if srv is False:
-        plog("  请先关掉旧的「FatFish control panel」黑窗口，再双击 C:\\QQBot\\控制台.bat")
+        plog("  请先关掉旧的「FatFish control panel」黑窗口，再双击 C:\\QQBot\\大肥鱼.bat 选「打开控制台」")
         return GIVEUP_RC
     plog(f"[控制台] 网页服务开在 {url}（版本 {VERSION}{'，机器人帮你换的' if BY_BOT else ''}）")
     if not quiet:
@@ -2324,7 +2807,7 @@ def supervise(extra):
     quiet_first = "--no-browser" in extra
     by_bot = "--by-bot" in extra
     extra = [a for a in extra if a not in ("--no-browser", "--by-bot")]
-    plog("[控制台] 管家起来了（" + ("机器人发现控制台是旧版本 帮忙换的" if by_bot else "双击 控制台.bat") + f"；{_whoami()}）")
+    plog("[控制台] 管家起来了（" + ("机器人发现控制台是旧版本 帮忙换的" if by_bot else "从菜单打开") + f"；{_whoami()}）")
     while True:
         cmd = [sys.executable, me, "--serve"] + ([] if first and not quiet_first else ["--quiet"]) + list(extra) \
             + (["--by-bot"] if first and by_bot else [])
@@ -2345,7 +2828,7 @@ def supervise(extra):
         fails = [t for t in fails if time.time() - t < 120] + [time.time()]
         plog(clock.strf("[%H:%M:%S]") + f" [控制台] 网页服务出错退出了（退出码 {rc}）")
         if len(fails) >= 3:
-            plog("  连着出错了 等代码改好了再自动试（也可以关掉这个窗口 再双击 控制台.bat）")
+            plog("  连着出错了 等代码改好了再自动试（也可以关掉这个窗口 再从 大肥鱼.bat 打开控制台）")
             sig = _py_sigs()
             try:
                 while _py_sigs() == sig:

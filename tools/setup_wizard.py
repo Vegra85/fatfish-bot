@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-首次设置向导（v1.2.0）：双击 C:\\QQBot\\首次设置.bat —— 它先用国内镜像装好库，再运行这个
+首次设置向导（v1.2.0）：双击 C:\\QQBot\\大肥鱼.bat →「安装」→「首次设置」—— 先用国内镜像装好库，再运行这个
+（v1.12.0 以前是 首次设置.bat；被 Windows 拦了 .bat 就双击 C:\\QQBot\\tools\\fish.py，是同一个菜单）
 
   1. 检查：文件夹在 C:\\QQBot、Python 3.12 以上、装了电脑版 QQ、NapCat 在 C:\\QQBot\\NapCat
      （没有 NapCat 就去 C:\\QQBot、「下载」、桌面找 NapCat.Shell*.zip，自动解压）
@@ -10,16 +11,16 @@
        bot\\config.json         从 config.example.json 来；已经有了就只改这几项（别的设置不动）
        控制台口令               config → panel.token（没有就生成：机器人和控制台第一次就能对上，不用再重启）
        bot\\persona.md          第一次从 persona.example.md 复制，「<她的名字>」换成你起的名字（已经有了就不碰）
-       run.bat                  机器人的 QQ 号；这台电脑没有 Windows Terminal（多半是 Windows 10）就改用 launcher-win10.bat
+       机器人的 QQ 号           config → bot_qq（v1.12.0 起；以前写在 run.bat 里）：开机自启起 NapCat 时用
        NapCat 的正向 WebSocket  NapCat\\config\\onebot11_<机器人QQ>.json 打开 127.0.0.1:3001（不用再进 NapCat 网页设置）
-  4. 问要不要现在启动：弹一个管理员确认 → 建开机自启任务、启动 QQ 和机器人 → 打开控制台，用机器人小号的手机 QQ 扫码
+  4. 问要不要现在启动：弹一个管理员确认 → 建开机自启任务（tools\\fish.py）、启动 QQ 和机器人 → 打开控制台，用机器人小号的手机 QQ 扫码
 
 再运行一次 = 改设置：每一项直接回车就保留原来的。
 只用 Python 自带的库（装库失败也能先把设置做完）。
 
 试一试又不想动正在跑的那套（群主用）：解压到别的文件夹，命令行里
-  set FATFISH_SETUP_TEST=1 && 首次设置.bat
-→ 不查位置、不启动，只在那个文件夹里写设置（启动脚本写死了 C:\\QQBot，测试模式绝不去跑它们）
+  set FATFISH_SETUP_TEST=1 && python tools\\setup_wizard.py
+→ 不查位置、不启动，只在那个文件夹里写设置（测试模式绝不去建开机自启、不启动）
 """
 import json
 import os
@@ -28,7 +29,6 @@ import secrets
 import shutil
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -41,7 +41,7 @@ EXPECTED_ROOT = r"C:\QQBot"
 WS_HOST, WS_PORT = "127.0.0.1", 3001
 NAME_SLOT = "<她的名字>"                  # persona.example.md 里留给名字的空
 DEFAULT_ALIASES = ("大肥鱼", "肥鱼")
-PLACEHOLDER_QQ = "123456789"             # 公开版 run.bat 里的占位号码
+PLACEHOLDER_QQ = "123456789"             # 以前公开版 run.bat 里的占位号码（v1.12.0 起不用 run.bat 了）
 QQ_REG_KEY = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\QQ"   # NapCat 的 launcher.bat 也读这个
 IS_WIN = os.name == "nt"
 TEST = os.environ.get("FATFISH_SETUP_TEST") == "1"
@@ -84,8 +84,8 @@ def check_location():
         return True
     if not IS_WIN or os.path.normcase(os.path.normpath(str(ROOT))) == os.path.normcase(EXPECTED_ROOT):
         return True
-    bad(f"这个文件夹现在在 {ROOT}，要放在 {EXPECTED_ROOT}（启动脚本里写死了这个位置）")
-    say(r"    把整个文件夹移动 / 改名成 C:\QQBot（打开后直接能看到 bot 文件夹），再双击 首次设置.bat")
+    bad(f"这个文件夹现在在 {ROOT}，要放在 {EXPECTED_ROOT}（说明、控制台和自检都是按这个位置写的）")
+    say(r"    把整个文件夹移动 / 改名成 C:\QQBot（打开后直接能看到 bot 文件夹），再双击 大肥鱼.bat →「安装」→「首次设置」")
     return False
 
 
@@ -238,14 +238,24 @@ def ask_key(default=""):
         return key
 
 
-def run_bat_qq():
-    """run.bat 里现在写的机器人 QQ 号（占位的不算）"""
-    p = ROOT / "run.bat"
-    if not p.exists():
-        return ""
-    t = p.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"(?im)^set BOT_QQ=(\d{5,12})\s*$", t) or re.search(r"launcher(?:-win10)?\.bat\s+(\d{5,12})", t)
-    return m.group(1) if m and m.group(1) != PLACEHOLDER_QQ else ""
+def old_bot_qq(cfg):
+    """以前填过的机器人 QQ 号：config 的 bot_qq → 以前 run.bat 里写的（v1.12.0 以前）→ NapCat 登录过的号（占位的不算）"""
+    def ok(s):
+        s = str(s or "").strip()
+        return s if re.fullmatch(r"[1-9]\d{4,11}", s) and s != PLACEHOLDER_QQ else ""
+    if ok(cfg.get("bot_qq")):
+        return ok(cfg.get("bot_qq"))
+    p = ROOT / "run.bat"                  # 以前的（v1.12.0 起收进备份了）
+    if p.exists():
+        t = p.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r"(?im)^set BOT_QQ=(\d{5,12})\s*$", t) or re.search(r"launcher(?:-win10)?\.bat\s+(\d{5,12})", t)
+        if m and ok(m.group(1)):
+            return m.group(1)
+    try:
+        fs = sorted((NAPCAT / "config").glob("onebot11_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+    except OSError:
+        fs = []
+    return next((ok(f.stem.split("_", 1)[1]) for f in fs if ok(f.stem.split("_", 1)[1])), "")
 
 
 # ───────────── 3. 写设置 ─────────────
@@ -261,8 +271,10 @@ def load_cfg():
     return json.loads((BOT / "config.example.json").read_text(encoding="utf-8-sig")), False
 
 
-def update_cfg(cfg, owner, key, name):
+def update_cfg(cfg, owner, key, name, bot_qq=""):
     cfg["bot_name"] = name
+    if bot_qq:
+        cfg["bot_qq"] = bot_qq             # v1.12.0：开机自启（tools\\fish.py service）起 NapCat 时用这个号（以前写在 run.bat 里）
     al = [a for a in (cfg.get("aliases") or []) if isinstance(a, str) and a.strip()]
     if name in DEFAULT_ALIASES:
         al = al if name in al else [name] + al
@@ -293,28 +305,6 @@ def ensure_persona(cfg, name):
         return
     pf.write_text(ex.read_text(encoding="utf-8").replace(NAME_SLOT, name), encoding="utf-8")
     good(f"人设：从模板复制了 bot\\{pf.name}（名字填成了「{name}」，以后用记事本照着改）")
-
-
-def patch_run_bat(bot_qq):
-    p = ROOT / "run.bat"
-    if not p.exists():
-        note("没找到 run.bat（压缩包不完整？）")
-        return
-    t = p.read_bytes().decode("utf-8")
-    new = t
-    if re.search(r"(?im)^set BOT_QQ=", new):
-        new = re.sub(r"(?im)^set BOT_QQ=[^\r\n]*", "set BOT_QQ=" + bot_qq, new)
-    else:
-        new = re.sub(r"(launcher(?:-win10)?\.bat\s+)\d{5,12}", lambda m: m.group(1) + bot_qq, new)
-    extra = ""
-    # launcher.bat 没有管理员权限时用 Windows Terminal（wt.exe）重开自己；Windows 10 多半没有 → 用 launcher-win10.bat
-    if IS_WIN and not shutil.which("wt") and (NAPCAT / "launcher-win10.bat").exists() \
-            and re.search(r"(?i)call launcher\.bat", new):
-        new = re.sub(r"(?i)call launcher\.bat", "call launcher-win10.bat", new)
-        extra = "；这台电脑没有 Windows Terminal（多半是 Windows 10），改用 launcher-win10.bat"
-    if new != t:
-        p.write_bytes(new.encode("utf-8"))      # 只改那一行，换行符（CRLF）原样留着
-    good(f"run.bat：机器人 QQ 号 {bot_qq}{extra}")
 
 
 def enable_ws(bot_qq, cfg):
@@ -352,6 +342,9 @@ def enable_ws(bot_qq, cfg):
 
 
 # ───────────── 4. 启动 ─────────────
+FISH = ROOT / "tools" / "fish.py"         # 大肥鱼菜单（v1.12.0：开机自启、启动、控制台都在它里面）
+
+
 def start_now():
     if not IS_WIN or TEST:
         return False
@@ -360,21 +353,19 @@ def start_now():
     except EOFError:
         a = "n"
     if a in ("n", "no", "否", "不"):
-        say(r"    好。以后要启动：右键 C:\QQBot\修复启动.bat →「以管理员身份运行」")
+        say(r"    好。以后要启动：双击 C:\QQBot\大肥鱼.bat 选「开机自启 / 修复启动」")
         return False
-    bat = ROOT / "修复启动.bat"
-    r = subprocess.run(["powershell", "-NoProfile", "-Command", f"Start-Process -FilePath '{bat}' -Verb RunAs"],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
-        note(r"没能以管理员身份运行（是不是点了「否」？）：右键 C:\QQBot\修复启动.bat →「以管理员身份运行」")
+    # 建开机自启任务（tools\fish.py service，不经过 .bat）、启动 QQ 和机器人：fish.py 自己弹管理员确认、等它做完
+    rc = subprocess.call([sys.executable, str(FISH), "autostart", "--yes"], cwd=str(ROOT))
+    if rc != 0:
+        note(r"没建好开机自启（是不是点了「否」？）：双击 C:\QQBot\大肥鱼.bat 选「开机自启 / 修复启动」")
         return False
-    good("开始建开机自启任务、启动 QQ 和机器人（另一个黑窗口出现 DONE 就好了）")
-    say("    过几秒自动打开控制台 …")
-    time.sleep(8)
+    good("开机自启任务建好了，QQ 和机器人启动中")
     try:
-        os.startfile(str(ROOT / "控制台.bat"))
+        subprocess.Popen([sys.executable, str(FISH), "console"], cwd=str(BOT), creationflags=0x00000010)   # 新窗口开控制台
+        say("    控制台在新窗口里打开（浏览器会自己打开）")
     except OSError:
-        note(r"控制台没打开：双击 C:\QQBot\控制台.bat")
+        note(r"控制台没打开：双击 C:\QQBot\大肥鱼.bat 选「打开控制台」")
     return True
 
 
@@ -401,7 +392,7 @@ def main():
 
     say()
     say("[2/4] 填 4 件事" + ("（已经设置过：直接回车 = 保留原来的）" if existed else ""))
-    bot_qq = ask("机器人小号的 QQ 号", run_bat_qq(), check_qq)
+    bot_qq = ask("机器人小号的 QQ 号", old_bot_qq(cfg), check_qq)
     old_owner = str(cfg.get("owner_qq") or "")
     owner = ask("你自己大号的 QQ 号（机器人认你当主人）", old_owner if old_owner.isdigit() else "",
                 lambda s: check_qq(s) or ("这是机器人小号的号，这里填你自己的大号" if s == bot_qq else None))
@@ -411,12 +402,11 @@ def main():
 
     say()
     say("[3/4] 写设置")
-    update_cfg(cfg, owner, key, name)
+    update_cfg(cfg, owner, key, name, bot_qq)
     enable_ws(bot_qq, cfg)
     write_json(BOT / "config.json", cfg)
-    good("bot\\config.json 写好了（主人、key、名字、控制台口令）")
+    good("bot\\config.json 写好了（机器人 QQ、主人、key、名字、控制台口令）")
     ensure_persona(cfg, name)
-    patch_run_bat(bot_qq)
 
     say()
     say("[4/4] 启动")
@@ -424,11 +414,11 @@ def main():
     say()
     say("接下来：")
     if not started:
-        say(r"  0. 右键 C:\QQBot\修复启动.bat →「以管理员身份运行」，再双击 控制台.bat")
+        say(r"  0. 双击 C:\QQBot\大肥鱼.bat：先选「开机自启 / 修复启动」（弹管理员确认 点「是」），再选「打开控制台」")
     say("  1. 控制台（浏览器里那个页面）上出现二维码后，用机器人小号的手机 QQ 扫码登录")
     say("  2. 用你的大号私聊机器人小号说「你好」，几秒内回你就成功了")
     say(r"  3. 人设：用记事本打开 C:\QQBot\bot\persona.md 照着改（控制台「人设」页也能改），改完下一句就生效")
-    say("  想改设置：再双击一次 首次设置.bat")
+    say("  想改设置：大肥鱼.bat →「安装」→「首次设置」再来一次")
     return 0
 
 

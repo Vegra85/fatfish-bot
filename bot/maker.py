@@ -204,25 +204,28 @@ def task_like(what):
 _GENERIC = set("画图做写改弄给他她你的了个一张把成换重新网页代码")
 
 
+def _grams(x):
+    """两个字一组（英文 / 数字按整词、三个字母以上）；两个字都是「画图做写…」这种泛字的不算"""
+    x = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", " ", str(x or "").lower())
+    out = set()
+    for w in x.split():
+        if re.fullmatch(r"[a-z0-9]+", w):
+            if len(w) >= 3:
+                out.add(w)
+            continue
+        for i in range(len(w) - 1):
+            g = w[i:i + 2]
+            if not (g[0] in _GENERIC and g[1] in _GENERIC):
+                out.add(g)
+    return out
+
+
 def same_thing(what, texts):
     """承诺表里这件事跟刚做的是不是同一件（有个两字以上的词对得上：「把画改成鹈鹕」↔「其实我要的是鹈鹕」）"""
-    def grams(x):
-        x = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", " ", str(x or "").lower())
-        out = set()
-        for w in x.split():
-            if re.fullmatch(r"[a-z0-9]+", w):
-                if len(w) >= 3:
-                    out.add(w)
-                continue
-            for i in range(len(w) - 1):
-                g = w[i:i + 2]
-                if not (g[0] in _GENERIC and g[1] in _GENERIC):
-                    out.add(g)
-        return out
-    a = grams(what)
+    a = _grams(what)
     if not a:
         return True                        # 「把画改了」这种没说是哪个的：就是刚才那个
-    b = set().union(*[grams(t) for t in (texts or [])]) if texts else set()
+    b = set().union(*[_grams(t) for t in (texts or [])]) if texts else set()
     return bool(a & b)
 
 
@@ -305,7 +308,11 @@ def after_reply(said, texts, last, hist=None, now=None):
     if not said or NO_DO.search(said) or USER_STOP.search(" ".join(str(x or "") for x in (texts or []))):
         return None
     since = _since(last, hist, now)
-    if since is None:
+    if since is None:                      # 交货一小时以后：还欠着他要的改动、她这句又答应改 / 说改好了（说的是那个东西）→ 真去改（10-28 23:09）
+        fb = pending(last, hist, now)
+        if fb and (PROMISE.search(said) or CLAIM_FIX.search(said) or RESEND_SAY.search(said)) \
+                and about(last, [said] + [str(x or "") for x in (texts or [])] + _her_recent(hist, 3)):
+            return "fix", _fix_job(last, fb)
         return None
     users = [str(h.get("text") or "") for h in since if h.get("role") == "user" and str(h.get("text") or "").strip()]
     if PROMISE.search(said) or CLAIM_FIX.search(said):     # 答应了改 / 说改完了（其实没改）：交货以后他说的（问「文件呢」的除外）就是要改的
@@ -321,6 +328,123 @@ def after_reply(said, texts, last, hist=None, now=None):
     return None
 
 
+# 欠着没改的（10-28 23:09 v1.11.1）：05:03 交货 → 05:05 他说「腿的动作没跟脚踏连接 鱼在空中漂浮 还有不知名圆圈在飞」→ 她答应了改、
+# 那时（v1.9.1 以前）系统没去改；她还说「改完了」「再甩你一次」 其实一个文件都没发 —— 这个「改完了」被记成了挂念 →
+# 22:39 她主动问「鹈鹕骑车那个改好了 你收到没」→ 他说「没」→ 她说「行 我再弄一次 你等着」系统照样没动
+# （followup / after_reply 只管交货一小时以内、truth_block 只管 6 小时以内）
+PENDING_SEC = 48 * 3600    # 交货以后他说要改、一直没改：这么久以内还算欠着他的
+ASKED = re.compile(r"收到(?:了)?(?:没|吗|么|嘛|没有)|看到(?:了)?(?:没|吗|么|没有)|打(?:得)?开(?:了)?(?:吗|没|么)|能打开(?:吗|没|么)")
+NO_ANS = re.compile(r"^\s*(?:没|没有|没呢|没啊|没呀|没收到|没看到|没看见|木有|还没|无|no|nope)\s*[。.!！~～…?？]*\s*$", re.I)
+ASK_DONE = re.compile(r"呢\s*[?？]*\s*$|在哪|(?:改|弄|画|做)(?:好|完)了?(?:吗|没|么|嘛|没有)|(?:改|弄|画|做)了(?:吗|没|么|嘛|没有)")
+# 他没提是哪个、但她刚才几句在说它：「弄好了没」「好了吗」「还没好？」（「你在干嘛呢」这种不算）
+ASK_DONE2 = re.compile(r"(?:改|弄|画|做|发)(?:好|完)?了?(?:吗|没|么|嘛|没有)|^\s*(?:那个)?好了(?:吗|没|么|嘛|没有)|还没好|在哪|发哪|没收到")
+CANCEL = re.compile(r"不用改|别改了|算了|不用了|不要了|不改了|就这样吧|这样就行")
+_ABOUT_SKIP = {"html", "htm", "svg", "css", "png", "jpg", "txt", "json"}
+
+
+def pending(last, hist=None, now=None):
+    """交货以后他说过要改、之后一直没真发过新文件（PENDING_SEC 以内）→ 他说要改的那几句；没欠着 → []
+    「说过要改」只认刚交货那一阵（跟 followup 一样：FIX_SEC 以内、交货以后前 FIX_GAP 条）—— 后来随口说的「太快了」「我没在家」不算；
+    做好了新版本 last_make 就换了 → 自然不欠了；他后来说「算了 / 不用改了」→ 不欠了"""
+    if not isinstance(last, dict) or not last.get("kind") or not last.get("file"):
+        return []
+    t = float(last.get("ts") or 0)
+    if (now or time.time()) - t > PENDING_SEC:
+        return []
+    since = [h for h in hist or [] if isinstance(h, dict) and float(h.get("ts") or 0) > t]
+    fb, off = [], False
+    for i, h in enumerate(since):
+        if h.get("role") != "user":
+            continue
+        u = str(h.get("text") or "").strip()
+        if not u:
+            continue
+        early = i < FIX_GAP and float(h.get("ts") or 0) - t <= FIX_SEC
+        if early and _feedback([u]):
+            fb.append(u[:300])
+            off = False
+        elif fb and CANCEL.search(u):
+            off = True
+    return [] if off else fb[-6:]
+
+
+def _title(last):
+    """文件名里说的是什么：「鹈鹕 · 河边骑车.html」→「鹈鹕」（· 前面那段是画的东西 后面是场景 —— 「骑车」「河边」太常见 不拿来认）"""
+    t = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", str((last or {}).get("file") or ""))
+    t = re.sub(r"[-_ ]?\d+$", "", t)
+    parts = [x.strip() for x in re.split(r"\s*[·・]\s*", t) if x.strip()]
+    return parts[0] if len(parts) >= 2 else t
+
+
+def about(last, texts):
+    """这几句是不是在说那个东西：文件名里有两个字对得上（「鹈鹕骑车那个」↔「鹈鹕 · 河边骑车.html」）；
+    文件名里没有能对的 → 「做的是什么」里得对上两组"""
+    if not isinstance(last, dict):
+        return False
+    b = set().union(*[_grams(x) for x in (texts or []) if x]) - _ABOUT_SKIP if texts else set()
+    if not b:
+        return False
+    ta = _grams(_title(last)) - _ABOUT_SKIP
+    if ta:
+        return bool(ta & b)
+    return len((_grams(last.get("what")) - _ABOUT_SKIP) & b) >= 2
+
+
+def _her_recent(hist, n=3):
+    """他这几句之前 她最近说的几句（她刚回的这句不算；早的在前）"""
+    out, seen = [], False
+    for h in reversed(hist or []):
+        if not isinstance(h, dict):
+            continue
+        if h.get("role") == "user":
+            seen = True
+        elif h.get("role") == "assistant" and seen:
+            out.append(str(h.get("text") or ""))
+            if len(out) >= n:
+                break
+    return out[::-1]
+
+
+def _her_before(hist):
+    """他这几句之前 她说的最后一句（她刚回的这句不算）"""
+    r = _her_recent(hist, 1)
+    return r[-1] if r else ""
+
+
+def owed(texts, last, hist=None, now=None):
+    """交货一小时以后（followup 不管了）他问起那个还欠着没改的东西 → ("fix", job)；不是 → None
+    - 她刚问「鹈鹕骑车那个…收到没」他说「没」（10-28 23:09）
+    - 他说到了那个东西、又在问「…呢」「改好了吗」「在哪」「没收到」"""
+    fb = pending(last, hist, now)
+    if not fb:
+        return None
+    cur = " ".join(str(x or "") for x in (texts or [])).strip()
+    if not cur or AGAIN_NOT.search(cur) or CANCEL.search(cur):
+        return None
+    her = _her_before(hist)
+    if NO_ANS.match(cur) and ASKED.search(her) and about(last, [her]):
+        return "fix", _fix_job(last, fb, where=True)
+    if about(last, texts) and (WHERE.search(cur) or ASK_DONE.search(cur)):
+        return "fix", _fix_job(last, fb, where=True)
+    if len(cur) <= 20 and ASK_DONE2.search(cur) and about(last, _her_recent(hist, 3)):
+        return "fix", _fix_job(last, fb, where=True)     # 她刚说「我再弄一次 你等着」他问「弄好了没」（10-28 23:09 之后最可能的那句）
+    return None
+
+
+def fix_job(last, fb, **more):
+    """bot.py 主动找他时用：照他交货以后说的重做（跟 followup / after_reply 给的一样）"""
+    return _fix_job(last, fb, **more)
+
+
+def owed_scene(last, fb, now=None):
+    """主动找他、心里挂着的正是这件欠着没改的事（10-28 22:39）：照实说 别说「改好了 你收到没」"""
+    ago = _ago((now or time.time()) - float((last or {}).get("ts") or 0))
+    return (f"系统记录（以这个为准）：你最后一次真发给他的文件是{ago}的「{(last or {}).get('file')}」；"
+            f"之后他说「{' / '.join(x[:60] for x in fb[-3:])}」要改 —— 你答应了 但一直没改、也没发过新文件"
+            "（之前说的「改完了」「再发你一次」都没真发出去）。现在主动去找他：老实说那个还没改好、你这就改"
+            "（系统马上就真的去改 改好了会把文件发给他）。别说「改好了」「你收到没」，别贴代码。")
+
+
 def _ago(sec):
     sec = max(0, int(sec))
     if sec < 90:
@@ -330,17 +454,18 @@ def _ago(sec):
     return f"{sec // 3600} 个多小时前"
 
 
-def truth_block(last, hist=None, now=None, busy=None):
+def truth_block(last, hist=None, now=None, busy=None, force=False):
     """刚做过东西（6 小时内、之后没聊太久）：系统记录里最后一次真发的文件是哪个、交货以后他说要改的改没改
-    （10-28 05:06：她自己打了一行「[发了文件…]」就以为发过了 →「我这显示发了呀」「你那边刷不出来？」）"""
+    （10-28 05:06：她自己打了一行「[发了文件…]」就以为发过了 →「我这显示发了呀」「你那边刷不出来？」）
+    force：正在说那件还欠着没改的东西（PENDING_SEC 以内）—— 过了 6 小时、中间聊了很多也照样给她看（10-28 23:09）"""
     if not isinstance(last, dict) or not last.get("file"):
         return ""
     now = now or time.time()
     t = float(last.get("ts") or 0)
-    if now - t > AGAIN_SEC:
+    if now - t > (PENDING_SEC if force else AGAIN_SEC):
         return ""
     since = [h for h in (hist or []) if isinstance(h, dict) and float(h.get("ts") or 0) > t]
-    if len(since) > 3 * FIX_GAP:
+    if len(since) > 3 * FIX_GAP and not force:
         return ""                          # 早就聊别的去了
     s = (f"\n# 你做过的东西（系统记录 —— 发没发过文件 以这个为准）\n"
          f"- {_ago(now - t)}你真发出去一个文件「{last['file']}」" + (f"（做的是：{last['what']}）" if last.get("what") else "")
@@ -373,7 +498,8 @@ def find_file(data, last):
             return q
     name = Path(str(last["file"])).name
     root = data / "files"
-    hits = [d / name for d in root.iterdir() if d.is_dir() and (d / name).is_file()] if root.is_dir() else []
+    # 回话自检（replytest 的「画鹈鹕」）做的放在 files/selftest/ —— 不是发给谁的那份（10-28：自检的「鹈鹕 · 河边骑车.html」比真发的新 以前会被当成上一个文件）
+    hits = [d / name for d in root.iterdir() if d.is_dir() and d.name != "selftest" and (d / name).is_file()] if root.is_dir() else []
     return max(hits, key=lambda q: q.stat().st_mtime) if hits else None
 
 

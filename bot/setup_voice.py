@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-安装「听语音」—— 双击 安装语音.bat 运行
+安装「听语音」—— 双击 大肥鱼.bat →「安装」→「语音听写」运行
   1. pip 装 sherpa-onnx（本地语音识别引擎）和 numpy
   2. 下载 SenseVoice 听写模型（int8 版 约 230MB）到 C:\\QQBot\\models\\sensevoice
   3. 拿模型自带的测试录音听写一遍 结果写到 C:\\QQBot\\voice_test.txt
@@ -139,7 +139,7 @@ def step_test():
 def main():
     ok = step_pip() and step_model() and step_test()
     say("")
-    say("全部搞定 ✓  重启 bot（停止.bat → 启动.bat）她就能听语音了" if ok else
+    say("全部搞定 ✓  重启一下机器人（大肥鱼.bat →「重启机器人」）她就能听语音了" if ok else
         "没装完 —— 把这个窗口截图发给 Claude（结果也写在 C:\\QQBot\\voice_test.txt）")
     write_report()
 

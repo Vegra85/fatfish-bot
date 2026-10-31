@@ -328,7 +328,7 @@ def main():
         say(f"有 {len(nw_fails) + len(dp_fails)} 张没导进去（可以过会儿再双击一次 只会补这些）：")
         for f in (nw_fails + dp_fails)[:40]:
             say("  " + f)
-    say("最后重启一下机器人（停止.bat → 启动.bat）新的挑表情包方式才生效")
+    say("最后重启一下机器人（大肥鱼.bat →「重启机器人」，QQ 不掉线）新的挑表情包方式才生效")
     try:
         REPORT.write_text(time.strftime("%Y-%m-%d %H:%M:%S\n") + "\n".join(_lines) + "\n", encoding="utf-8-sig")
     except Exception:

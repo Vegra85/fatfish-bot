@@ -1046,7 +1046,7 @@ def view_block(who, items, err="", self_view=True, group=False, descs=None, hidd
         # 老板私聊看别人的空间：不是谁都能看的那几条也给（小明 10-28 定 v1.9.4）—— 只在这儿跟老板说 别带到群里 / 别人那
         out.append("标着「不是谁都能看的」那几条：只在这个私聊里跟老板说，别带到群里、也别跟别人提。")
     if group and not self_view:
-        out.append("这是你替老板看的别人的空间：群里别说内容 只说一句「私聊跟你说」。")
+        out.append("这是你替老板看的别人的空间：群里别说内容 告诉他你私聊跟他说（怎么说你自己定）。")
     elif group:
         out.append("群里大家都看得到你说的：挑一两条随口聊 别一条条念；生病 / 分手 / 很丧这类别在群里说 改私聊问。")
     else:
@@ -1071,7 +1071,7 @@ def private_block(items, visit=None):
             elif x.get("liked"):
                 line += "（你点了赞）"
             out.append(line)
-        out.append("想起来可以顺口提一句（「看你空间说…」）别硬聊、别每条都说；他的事聊着不对劲就别提。")
+        out.append("想起来可以顺口提一句你在他空间看到的 别硬聊、别每条都说；他的事聊着不对劲就别提。")
     if visit:
         out.append(f"\n# 访客记录里有他：{clock.ago(visit.get('ts'))}来看过你的 QQ 空间。可以随口提一句 别追问。")
     return ("\n".join(out) + "\n") if out else ""
@@ -1083,7 +1083,7 @@ def group_block(item):
     return (f"\n# 你刷到过「{item.get('name') or '他'}」的 QQ 空间（他就在这个群 你还没在群里提过）\n"
             f"- {clock.ago(item.get('ts') or item.get('read'))}发的：{(item.get('text') or '')[:60]}"
             + (f" —— 你当时的感觉：{item['take']}" if item.get("take") else "")
-            + "\n正好聊到相关的才顺口带一句（「看你空间说…」）不相关就别提；别复述原文。\n")
+            + "\n正好聊到相关的才顺口带一句你在他空间看到的 不相关就别提；别复述原文。\n")
 
 
 # ───────────────────────── 刷动态时给模型看的 ─────────────────────────

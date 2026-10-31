@@ -211,6 +211,39 @@ def llm(usage, model="", tag="", budget=True, free_reason=False):
     flush()
 
 
+def ext_llm(kind, model, inp=0, out=0, hit=0, write=0, usd=0.0):
+    """别家模型的一次调用（10-29 判断模型实验 judge.py：Anthropic）：按美元记在当天的 judge_* 下面
+    不进 DeepSeek 那几栏（tok_* / by）、也不进省 token 的曲线（小明 10-28 定：和看图、思考一样单独记）"""
+    global _dirty
+    d = _load()["days"].setdefault(_day(), {})
+    for k, v in (("judge_calls", 1), ("judge_in", inp), ("judge_out", out), ("judge_hit", hit), ("judge_write", write)):
+        d[k] = d.get(k, 0) + int(v or 0)
+    d["judge_usd"] = round(d.get("judge_usd", 0.0) + float(usd or 0), 7)
+    b = d.setdefault("judge_by", {}).setdefault(str(kind or "其他")[:16], {})
+    for k, v in (("calls", 1), ("in", inp), ("out", out), ("hit", hit), ("write", write)):
+        b[k] = b.get(k, 0) + int(v or 0)
+    b["usd"] = round(b.get("usd", 0.0) + float(usd or 0), 7)
+    b["model"] = str(model or "")[:40]
+    _dirty = True
+    flush()
+
+
+def ext_fallback(kind):
+    """别家模型失败、这次退回 DeepSeek 了（DeepSeek 那次照常记在 DeepSeek 下面）"""
+    global _dirty
+    d = _load()["days"].setdefault(_day(), {})
+    d["judge_fallback"] = d.get("judge_fallback", 0) + 1
+    b = d.setdefault("judge_by", {}).setdefault(str(kind or "其他")[:16], {})
+    b["fallback"] = b.get("fallback", 0) + 1
+    _dirty = True
+    flush()
+
+
+def today(key, default=0):
+    """今天（北京时间）的某个计数"""
+    return (_load()["days"].get(_day()) or {}).get(key, default)
+
+
 def _sample_mood():
     hour = clock.strf("%Y-%m-%d %H")
     m = _load()["mood"]

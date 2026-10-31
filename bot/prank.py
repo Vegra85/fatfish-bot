@@ -13,6 +13,8 @@
 bot.py / panel.py 用到的函数这里都有（都是什么都不做的版本）：on() 返回 False → 机器人和控制台都当成没这个功能。
 """
 STUB = True
+import re
+TEST_CMD = re.compile(r"(?!x)x")        # 拿 #sl 测她（作者版会当成冲她来的、给「假状态」）：空壳什么都不认
 P = {"enabled": False, "undo_sec": 110}
 
 
@@ -75,3 +77,11 @@ def cancel_order(oid):
 
 def load():
     return {"records": []}
+
+
+def is_test(texts):
+    return False
+
+
+def test_offer(key, scene, gid, uid, texts, isbot=False, blocked="", now=None):
+    return [], "关着"

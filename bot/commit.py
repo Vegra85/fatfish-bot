@@ -53,7 +53,7 @@ def kind_of(act):
 
 
 def declare(key, scene, do, said="", now=None, hist=(), to_uid="", to_name="", names=None, src="state",
-            log=print, rng=None, owner_uid="", ai=None):
+            log=print, rng=None, owner_uid="", ai=None, ask=""):
     return []
 
 
@@ -134,7 +134,7 @@ def task_done(t, text="", where="", now=None, log=print, by=""):
     return t
 
 
-def task_failed(t, why, now=None, log=print):
+def task_failed(t, why, now=None, log=print, final=False, retry_in=None, apology=True):
     return "retry"
 
 
@@ -174,6 +174,14 @@ def cancel_task(t, by="", log=print, now=None):
     return None
 
 
+def kept_promises(key, uid, since, about, now=None, log=print):
+    return []
+
+
+def drop_prom(key, pid, by="控制台", log=print):
+    return None
+
+
 def mark_done(ref, by="控制台", log=print, now=None):
     return None
 
@@ -192,3 +200,39 @@ def tasks_view(now=None, months_ahead=14):
 
 def tasks_status(now=None):
     return {"pending": 0, "apology": 0, "next": []}
+
+
+def retro_kept(data_dir=None, log=print, now=None):
+    return 0
+
+
+def prom_open(key, uid, now=None, days=14):
+    return []
+
+
+def retro_candidates(data_dir=None, now=None):
+    return []
+
+
+def task_type(what):
+    return ""
+
+
+def task_making(t, now=None):
+    return None
+
+
+def sung(key, uid, song="", log=print):
+    return []
+
+
+def drop_ai(uid, log=print, now=None):
+    return []
+
+
+def ai_uids():
+    return []
+
+
+def cleanup_1031(log=print, now=None, keep=(5,)):
+    return []

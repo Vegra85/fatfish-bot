@@ -515,7 +515,7 @@ async def serve(handler, port, token, log=print):
     except OSError as e:
         log(f"[控制台] 接口端口 {port} 打不开（{e}）控制台只能看 不能操作")
         return None
-    log(f"[控制台] 本机接口已开 127.0.0.1:{port}（双击 控制台.bat 打开网页控制台）")
+    log(f"[控制台] 本机接口已开 127.0.0.1:{port}（双击 大肥鱼.bat 选「打开控制台」打开网页控制台）")
     return srv
 
 

@@ -40,6 +40,7 @@ NO_REPEAT = 40                                       # 同一个对话里最近�
 SHOW = 8                                             # 每次给她看几张
 
 MARK = re.compile(r"\[\[(表情|照片)[:：]\s*([^\[\]\n]{1,24}?)\s*\]\]")
+LOOSE = re.compile(r"\[\[\s*(?:表情|照片)[^\[\]\n]{0,24}\]\]")   # 写歪了的标记（比如 [[表情没有]] 少了冒号）：不发 也别漏成字（10-29 巡检）
 
 CREDIT = ("动图是 B站「可以叫我云大人」（雾雪）画的 网站 kiriyuki.com；大肥鱼的形象来自 ZipZipPipe 和 上善无形。"
           "如实说 别说是你自己画的")
@@ -514,9 +515,12 @@ def resolve2(seg, conv_key, said=""):
     said：这一轮她别的话（看她是不是嘴上说了要给一张）"""
     m = MARK.search(seg)
     if not m:
+        if LOOSE.search(seg):
+            _log(f"[表情包] 标记写歪了「{LOOSE.search(seg).group(0)}」不发 也不漏成字")
+            return LOOSE.sub("", seg).strip(), None, None
         return seg, None, None
     kind, ref = m.group(1), m.group(2).strip()
-    text = MARK.sub("", seg).strip()
+    text = LOOSE.sub("", MARK.sub("", seg)).strip()
     c = _load()
     k = (str(conv_key), kind)
     now = time.time()
@@ -562,7 +566,7 @@ def resolve2(seg, conv_key, said=""):
 
 
 def strip(text):
-    return MARK.sub("", text or "").strip()
+    return LOOSE.sub("", MARK.sub("", text or "")).strip()
 
 
 def info(name):

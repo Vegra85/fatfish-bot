@@ -367,7 +367,15 @@ async def check(llm, gid, uid, name, log=print, threshold=75, force=False):
         _busy.discard(k)
 
 
+ON_MARK = []          # 认出一个 AI 以后还要做的（bot.py 挂上：答应他的全划掉 再私聊告诉老板 10-31 v1.15.17）
+
+
 def mark(uid, name, gid, why, log=print):
     note = f"自动认出的 AI：{name}（群{gid}）{why}"[:80]
     control.add_bot(uid, note)
     log(f"[认AI] 群{gid} {name}({uid}) 是别人家的 AI → 标成「别的机器人」（{why}）以后只有 @她 才回")
+    for fn in list(ON_MARK):
+        try:
+            fn(str(uid), name, gid, why)
+        except Exception as e:
+            log("[认AI] 认出以后的事出错:", repr(e)[:100])

@@ -6,7 +6,7 @@
       顺便听出语气（开心/生气/难过…）和笑声、哭腔 → 写进聊天记录给她看
   说：回复里某一条写成 [[语音:情绪]]要说的话 → MiniMax 用她的专属声音合成 → 当 QQ 语音发出去
       私聊大概每 5~6 句一句；群里只在有人要她发语音时；每天有上限；合成/发送失败就照常发文字
-  第一次用：双击 安装语音.bat（装「听」）；「说」要在 config 的 voice.minimax 里填 api_key 和 voice_id
+  第一次用：大肥鱼.bat →「安装」→「语音听写」（装「听」）；「说」要在 config 的 voice.minimax 里填 api_key 和 voice_id
 """
 import asyncio
 import json
@@ -70,7 +70,12 @@ ASK = re.compile(r"(发|来|整|录|说|回|(?<![在正刚])听|(?<!不)要|给�
                  r"(?<![不别没听])(?<!不想)(?<!没想)(?<!不要)(?<!不想要)(想要听|想听|要听|听听?)你(的)?(声音|说话|讲话)|你(的)?声音(什么样|好听|怎么样|啥样)|"
                  + _NO + r"(?<![笑哭])出个?声|" + _NO + r"开个?口说|"
                  r"你会说话吗|说句话(给我)?听|(说|讲)(两|几|一)?句话?(给我|让我|给大家)听|念(一下|一遍|出来|给我听)|"
-                 r"^\s*(@\S+\s*)*语音(呢|啊|呀|吧|嘛|来)?\s*[!！?？~～。]*\s*$")
+                 r"^\s*(@\S+\s*)*语音(呢|啊|呀|吧|嘛|来)?\s*[!！?？~～。]*\s*$|"
+                 # 10-30：「发个早安的语音」「来段生日语音」「发条早安语音」—— 量词和「语音」中间夹了几个字 以前认不出（群里有人要早安语音 她说发不了）
+                 #   一定要有「个 / 条 / 段 / 句」：「我刚发了条很长的语音」（发了）这种说自己的不算；前面是「别 / 不 / 没…」也不算
+                 r"(?<![别不没甭])(?<!不要)(?<!不准)(?<!不许)(?<!不用)(发|来|整|录)(个|条|段|句|一条|一段|一句)"
+                 r"[^，,。.!！?？~～\s]{1,8}?语音" + _NOT + "|"
+                 r"^\s*(@\S+\s*)*(来|要|给我|整)?(个|条|段)?(早安|晚安|午安|生日)语音(呢|啊|呀|吧|嘛|来|呗)?\s*[!！?？~～。]*\s*$")
 # 刚才在聊语音的时候 「说两句」「说句话」也算（10-26 小明 在群里 @她「说两句话」她打了字）
 ASK_CTX = re.compile(r"(说|讲|来)(两|几|一)?句(话)?|开口|(?<![笑哭])出声|说话")
 # 「正在聊语音」只看这几个词（10-28 审查 media-1：以前还认「说话 / 开口」—— 「别说话了」自己就成了「在聊语音」的上下文）
@@ -145,9 +150,63 @@ def unmute_all():
     return n
 
 
+def _mm_ready():
+    return bool((C.get("tts") or "minimax") == "minimax" and MM.get("api_key") and MM.get("voice_id")
+                and time.time() >= _pause["until"])
+
+
 def tts_ready():
-    return bool(C.get("enabled", True) and (C.get("tts") or "minimax") == "minimax"
-                and MM.get("api_key") and MM.get("voice_id") and time.time() >= _pause["until"])
+    return bool(C.get("enabled", True) and (_mm_ready() or local_on()))
+
+
+# ───────────── 说：本地肥鱼声音（10-31 v1.15.9 实验 默认关）─────────────
+# config → voice.local：{"enabled": false, "url": "http://127.0.0.1:9881", "key_file": "…api_key.txt", "mode": "backup",
+#   "timeout": 25, "gentle": ["温柔", "难过", …]}
+#   mode = backup：先 MiniMax、MiniMax 不行（停了 / 出错）才用本地；prefer：先本地、本地不行再 MiniMax
+#   本地服务 = feiyu_voice 常驻说话（C:\QQBot\feiyu_voice\启动肥鱼说话-常驻.bat）；连不上就 60 秒内不再试
+LC = C.get("local") or {}
+_ldown = {"until": 0.0}
+GENTLE = set(LC.get("gentle") or ["温柔", "难过", "委屈", "困", "累", "心疼", "安慰", "小声"])
+
+
+def local_on():
+    return bool(LC.get("enabled")) and time.time() >= _ldown["until"]
+
+
+def _local_key():
+    try:
+        return Path(LC.get("key_file") or "").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+async def _tts_local(say_text, emo, log):
+    """本地常驻说话 → (wav bytes, info)；不行 (None, None)"""
+    text = re.sub(r"<#[\d.]+#>|\([a-z]{2,12}\)", " ", say_text)           # MiniMax 才认的停顿 / 语气词标签去掉
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    if not text:
+        return None, None
+    style = "gentle" if (emo or "").strip() in GENTLE else "cute"
+    key = _local_key()
+    if not key:
+        _ldown["until"] = time.time() + 600
+        log("[语音] 本地说话：key 文件读不到（config voice.local.key_file）")
+        return None, None
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=float(LC.get("timeout", 25)), trust_env=False) as c:
+            r = await c.post(str(LC.get("url") or "http://127.0.0.1:9881").rstrip("/") + "/tts",
+                             headers={"X-API-Key": key}, json={"text": text, "style": style})
+        if r.status_code != 200 or r.content[:4] != b"RIFF":
+            log(f"[语音] 本地说话没成（{r.status_code}）")
+            return None, None
+    except Exception as e:
+        _ldown["until"] = time.time() + 60
+        log("[语音] 本地说话连不上（常驻说话没开？）60 秒内不再试:", repr(e)[:80])
+        return None, None
+    secs = float(r.headers.get("X-Seconds") or 0)
+    log(f"[语音] 本地说话（{style}）{secs:.1f}s 用时 {time.time() - t0:.1f}s")
+    return r.content, {"audio_length": int(secs * 1000), "usage_characters": 0, "local": True}
 
 
 def _permit(conv, n):
@@ -238,7 +297,8 @@ def plan_proactive(conv):
 def block(mode):
     """给她看的「语音」说明（按这一轮的情况）"""
     if mode == "off":
-        return "\n# 语音\n这轮你发不了语音：有人要就直说这次发不了 别答应 也别说发过了。\n"
+        return ("\n# 语音（说话）\n这轮打字回（群里只在有人要听你说话时才发语音）；别说发过语音。"   # 10-31 v1.15.15：以前那句让她以为「什么声音都发不了」
+                "唱歌不归这里管：有人点歌看「唱歌」那一节。\n")                                  # → 点歌时推说嗓子开不了
     if mode == "ask_off":
         return ("\n# 语音\n对方想听你的声音 但你现在发不了语音（声音还没装好）。"
                 "直说现在发不了 别假装发了 也别写语音标记。\n")
@@ -259,7 +319,8 @@ def block(mode):
     if desc:
         s += f"你的声音听起来是这样的：{desc[:80]}（别人夸你/吐槽你的声音时你心里有数）\n"
     if mode == "ask":
-        s += "对方想听你的声音：这次用语音回（一两条 最多两条）。\n"
+        s += ("对方想听你的声音：这次用语音回（一两条 最多两条）。"
+              "你前面要是说过「发不了」，那是刚才没注意到：自然改口直接发，别找理由推掉。\n")
     else:
         s += ("这次可以挑一句最适合说出口的（撒娇、吐槽、晚安、逗他、关心他）用语音发 只要一条 其他照常打字；"
               "要说的是长解释、清单、正经资料 就别用语音了。\n")
@@ -325,6 +386,8 @@ async def _post_tts(base, body):
 
 
 def _pause_for(sec, why, log):
+    if time.time() >= float(_pause.get("until") or 0):
+        _pause["since"] = time.time()      # 这次从什么时候开始停（功能坏了时她怎么说 C21 10-30：坏了多久）
     _pause["until"] = time.time() + sec
     _pause["why"] = why
     log(f"[语音] 先停 {sec // 60} 分钟：{why}")
@@ -356,6 +419,22 @@ on_usage = None                        # 机器人那边设：每次合成成功
 
 
 async def _tts(say_text, emo, log):
+    """合成：按 voice.local.mode 先本地还是先 MiniMax，一边不行换另一边 → (音频 bytes, extra_info) / (None, None)"""
+    prefer_local = local_on() and str(LC.get("mode") or "backup") == "prefer"
+    if prefer_local:
+        a, i = await _tts_local(say_text, emo, log)
+        if a:
+            return a, i
+    if _mm_ready():
+        a, i = await _tts_mm(say_text, emo, log)
+        if a:
+            return a, i
+    if local_on() and not prefer_local:
+        return await _tts_local(say_text, emo, log)
+    return None, None
+
+
+async def _tts_mm(say_text, emo, log):
     """调 MiniMax 合成 → (音频 bytes, extra_info)；失败返回 (None, None)"""
     e, spd, pit = EMO.get((emo or "").strip(), (None, 1.0, 0))
     vs = {"voice_id": MM["voice_id"],
@@ -430,7 +509,7 @@ async def _tts(say_text, emo, log):
 def _save_audio(audio, name):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fmt = (MM.get("format") or "wav").lower()
-    if fmt in ("wav", "pcm"):
+    if fmt in ("wav", "pcm") or audio[:4] == b"RIFF":      # 本地说话给的是 wav
         return _as_wav(audio, OUT_DIR / f"{name}.wav")
     p = OUT_DIR / f"{name}.{fmt}"
     p.write_bytes(audio)
@@ -527,11 +606,11 @@ def _load():
     try:
         import sherpa_onnx
     except Exception:
-        _rec_err = "没装 sherpa-onnx（双击 安装语音.bat）"
+        _rec_err = "没装 sherpa-onnx（大肥鱼.bat →「安装」→「语音听写」）"
         return None
     model, tokens = MODEL_DIR / "model.int8.onnx", MODEL_DIR / "tokens.txt"
     if not (model.exists() and tokens.exists()):
-        _rec_err = f"没找到听写模型 {MODEL_DIR}（双击 安装语音.bat）"
+        _rec_err = f"没找到听写模型 {MODEL_DIR}（大肥鱼.bat →「安装」→「语音听写」）"
         return None
     try:
         try:
@@ -562,7 +641,7 @@ def status():
     elif _rec_err:
         hear = _rec_err
     else:
-        hear = "SenseVoice 可用" if stt_ready() else "没装（双击 安装语音.bat）"
+        hear = "SenseVoice 可用" if stt_ready() else "没装（大肥鱼.bat →「安装」→「语音听写」）"
     if not C.get("enabled", True):
         speak = "关了"
     elif not MM.get("api_key"):
@@ -573,6 +652,9 @@ def status():
         speak = "暂停中：" + _pause["why"]
     else:
         speak = f"MiniMax {MM.get('model') or 'speech-2.8-turbo'} 声音 {MM['voice_id'][:24]}"
+    if LC.get("enabled"):
+        speak += f" | 本地肥鱼声音：开（{'先用本地' if LC.get('mode') == 'prefer' else 'MiniMax 不行时用'}"
+        speak += "；刚才连不上 等一会儿再试）" if time.time() < _ldown["until"] else "）"
     s = _state()
     return f"听：{hear} | 说：{speak} | 今天已发 {s.get('count', 0)} 条"
 
@@ -690,6 +772,11 @@ async def hear(data, call, log=log_default):
     if EVENT_ZH.get(res["event"]):
         desc.append(EVENT_ZH[res["event"]])
     secs = max(1, int(round(res["secs"])))
+    # 长的、有背景音乐的 = 在放歌：听写出来是乱码（日文 / 英文歌、混响）白占她的上下文 → 不转文字（10-30）
+    if res["event"] == "BGM" and res["secs"] >= float(C.get("music_skip_sec", 30)):
+        log(f"[听语音] {secs}s 有背景音乐 超过 {int(float(C.get('music_skip_sec', 30)))} 秒 → 当成在放歌 不转文字"
+            f"（听写出来是：「{res['text'][:24]}」）用时 {time.time() - t0:.1f}s")
+        return f"[语音 {secs}秒：一段带伴奏的歌 / 音乐（没转成文字）]"
     body = res["text"] or "（没听清在说什么）"
     log(f"[听语音] {secs}s →「{res['text'][:40]}」{' '.join(desc)} 用时 {time.time() - t0:.1f}s")
     return f"[语音 {secs}秒：{body}" + (f"（{' '.join(desc)}）" if desc else "") + "]"

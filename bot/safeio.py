@@ -11,7 +11,8 @@
     （以前是悄悄当成空的 下次一保存 坏文件连同里面还能救的东西就被覆盖没了）
     一时打不开（正被别的程序占着）→ 等一下再读 别当成没有
   daily_backup：data 文件夹每天打一个包 → backup_20261024/daily/data_年月日.zip 留 14 天
-    不打包：archive（原始聊天存档 只往后加不改 本来就安全）、语音/动画/梗百科词库（大 而且能重新下）、缓存和临时文件
+    不打包：archive（原始聊天存档 只往后加不改 本来就安全）、语音/动画/梗百科词库（大 而且能重新下）、缓存和临时文件、
+           trace（调模型的记录 只留 3 天 —— 打进包里就留 14 天了）
     哪天记忆坏了 从前一天的包里把那个文件拿出来放回去就行
 """
 import json
@@ -28,7 +29,7 @@ ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 DAILY = ROOT / "backup_20261024" / "daily"
 KEEP_DAYS = 14
-SKIP_DIRS = {"archive", "voice", "anim", "memewiki"}
+SKIP_DIRS = {"archive", "voice", "anim", "memewiki", "trace", "judge_eval"}   # trace：调模型的记录（10-29 judge.py）只留 3 天 一天几十 MB 不打包
 SKIP_FILES = {"heartbeat.json", "vision_cache.json", "panel_cache.json", "machine.json", "bot.lock", "restart.request"}
 SKIP_EXT = {".tmp", ".lock", ".mp3", ".wav", ".silk", ".amr", ".mp4", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".db"}
 

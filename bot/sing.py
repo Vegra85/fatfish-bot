@@ -30,13 +30,40 @@ INDEX = SONG_DIR / "songs.json"
 CLIP_DIR = ROOT / "data" / "voice"
 STATE_FILE = ROOT / "data" / "sing_state.json"
 AUDIO_EXT = (".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma")
-DEFAULTS = {"enabled": True, "max_sec": 150, "short_sec": 60, "gap_sec": 60, "daily_max": 30,
-            "online": True, "online_sec": 12}
+DEFAULTS = {"enabled": True, "max_sec": 150, "short_sec": 60, "gap_sec": 60, "ask_gap_sec": 20, "daily_max": 30,
+            "online": True, "online_sec": 18, "cover": {"enabled": False}}   # cover 以前没写进这里 → configure 把它滤掉了 换声从没开过（10-31 v1.15.14）
 SESSDATA = {"v": ""}          # 机器人那边填：B站 登录（现找歌时用）
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _cfg = dict(DEFAULTS)
 _permits = {}                 # 对话 -> {"until", "left"}：这一轮有人要她唱 才能唱
+_wait_left = {}               # 对话 -> 还要等几秒才能再唱（「wait」那条告诉她真实的数 10-31 v1.15.15）
+_want = {}                    # 对话 -> (秒数, 到期)：他点名要唱几秒（10-29 巡检：「随机唱15秒」她唱了整首 124 秒 还唱了两遍）
+_CN = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+WANT = re.compile(r"(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*(?:秒|s(?![a-z])|sec)|(半分钟)|([一两二三]|\d)\s*分钟", re.I)
+
+
+def _cn_num(t):
+    if t.isdigit():
+        return int(t)
+    if "十" in t:
+        a, _, b = t.partition("十")
+        return (_CN.get(a, 1) if a else 1) * 10 + (_CN.get(b, 0) if b else 0)
+    return _CN.get(t, 0)
+
+
+def want_sec(text):
+    """「唱15秒」「唱个半分钟」「唱一分钟」→ 秒数；没说返回 0（太短的按 5 秒）"""
+    m = WANT.search(text or "")
+    if not m:
+        return 0
+    if m.group(1):
+        n = _cn_num(m.group(1))
+    elif m.group(2):
+        n = 30
+    else:
+        n = _cn_num(m.group(3)) * 60
+    return max(5, n) if n else 0
 _dur = {}                     # 文件路径 -> (mtime, 秒数)
 
 # 对方让她唱
@@ -47,7 +74,9 @@ _LAI_SHOU = r"(^|[，。！？!?\s]|再|给我|帮我|你)(来|点)(?:一首|首
 ASK = re.compile(
     r"(唱|哼)(一?首|一?个|一?段|两句|几句|一下|下|首歌|个歌|给我听|来听听|两嗓子|一嗓子|歌给我听|歌听听|歌来听)"
     r"|(来|整|点)(一?首|个|段)(歌|曲儿?|小曲)|唱歌(给我|给大家|给咱)?听|(给我|给大家|给咱们?)唱|你(来)?唱"
-    r"|点歌|献唱|清唱|开嗓|再唱|接着唱|唱(一遍|完)|" + _LAI_SHOU + r"[^\s，。！？!?]")
+    r"|点歌|献唱|清唱|开嗓|再唱|接着唱|唱(一遍|完)|" + _LAI_SHOU + r"[^\s，。！？!?]"
+    # 「@她的名字 唱司凤版雨爱」「唱雨爱dj」：一句话开头（或「你 / 再 / 给我 / 帮我」后面）直接「唱 + 歌名」（10-31 v1.15.15 以前不认 → 没许可 她推说发不了语音）
+    r"|(?:^|[\s，。！？!?]|你|再|给我|帮我)唱(?!歌|得|的|地|过|功|片|吧|啊|呀|呢|么|吗|什么|啥|完了|不了|不出)[^\s，。！？!?]{2,}")
 # 只是聊到唱歌（问会不会唱、唱得怎么样…）：告诉她会唱哪些 唱不唱她自己看
 TALK = re.compile(r"唱|歌|" + _LAI_SHOU)
 # 刚唱完他说「再来一首 / 再来一个 / 还想听 / 安可」：也是让她唱（10-28 审查 media-4：以前不认 她照着记录写了标记却没许可 唱不出来也不补话）
@@ -183,8 +212,8 @@ def secs(song):
     return v
 
 
-def span(song, short=False):
-    """唱哪一段 → (开始, 结束) 秒"""
+def span(song, short=False, want=0):
+    """唱哪一段 → (开始, 结束) 秒；want = 他要唱几秒（0 = 没说）"""
     total = secs(song)
     clips = [c for c in song.get("clips") or [] if isinstance(c, (list, tuple)) and len(c) == 2]
     if clips:
@@ -194,6 +223,8 @@ def span(song, short=False):
     a = max(0.0, float(a or 0))
     b = float(b or 0)
     lim = short_sec() if short else int(_cfg.get("max_sec", 150))
+    if want and want > 0:
+        lim = min(lim, want)
     if b <= a:
         b = a + lim
     b = min(b, a + lim)
@@ -297,13 +328,16 @@ def unmute_all():
 
 
 # ───────────── 这一轮 ─────────────
-def plan(conv, scene, texts):
-    """这一轮跟唱歌有没有关系 → None / sing（让她唱）/ talk（聊到唱歌）/ none（一首都不会）/ wait（刚唱过）/ cap / muted / off"""
+def plan(conv, scene, texts, her_last="", her_t=0, force=False):
+    """这一轮跟唱歌有没有关系 → None / sing（让她唱）/ talk（聊到唱歌）/ none（一首都不会）/ wait（刚唱过）/ cap / muted / off
+    force：她答应过要唱、到点了（承诺表）—— 当成有人点名要（10-31 v1.15.17）"""
     joined = " ".join(t for t in (texts or [])[-3:] if t)
     if not joined:
         return None
     enc = bool(ENCORE.search(joined))
-    if not (enc or TALK.search(joined)):
+    # 她刚（3 分钟内）说到要唱 / 在聊唱歌 他接着回「不退不退」「来吧」这种没带唱字的 → 也算在聊唱歌（10-31 盲测：她说开嗓了 却没唱）
+    ctx_talk = bool(her_last and time.time() - float(her_t or 0) < 180 and TALK.search(her_last))
+    if not (force or enc or TALK.search(joined) or ctx_talk):
         return None
     s = _state()
     cs = s["conv"].setdefault(conv, {})
@@ -316,7 +350,7 @@ def plan(conv, scene, texts):
         _save(s)
         _permits.pop(conv, None)
         return "muted"
-    asked = bool(ASK.search(joined)) or encore
+    asked = bool(ASK.search(joined)) or encore or force
     if not _cfg.get("enabled", True):
         return "off" if asked else None
     if not songs() and not _cfg.get("online", True):
@@ -328,9 +362,16 @@ def plan(conv, scene, texts):
         _save(s)
     if int(s.get("count", 0)) >= int(_cfg.get("daily_max", 30)):
         return "cap" if asked else None
-    if now - cs.get("last", 0) < int(_cfg.get("gap_sec", 120)):
+    gap = int(_cfg.get("ask_gap_sec", 20)) if asked else int(_cfg.get("gap_sec", 120))   # 有人点名要：只隔 ask_gap_sec（10-31 v1.15.15）
+    if now - cs.get("last", 0) < gap:
+        _wait_left[conv] = max(1, int(gap - (now - cs.get("last", 0))))
         return "wait" if asked else None
     _permits[conv] = {"until": now + 300, "left": 1}
+    w = want_sec(joined)
+    if w:
+        _want[conv] = (w, now + 600)
+    else:
+        _want.pop(conv, None)
     return "sing" if asked else "talk"
 
 
@@ -342,7 +383,7 @@ def _list(pool):
     return "\n".join(out)
 
 
-def block(mode, texts=None):
+def block(mode, texts=None, conv=None):
     """给她看的「唱歌」说明（按这一轮）"""
     if not mode:
         return ""
@@ -356,7 +397,9 @@ def block(mode, texts=None):
     if mode == "cap":
         return "\n# 唱歌\n对方想听你唱歌 但你今天唱太多了 嗓子累了：这次不唱 可以说明天再唱。别写唱歌标记。你是会唱歌的 别说你不会。\n"
     if mode == "wait":
-        return ("\n# 唱歌\n对方想听你唱歌 但你刚唱过一首：这次先不唱 跟他说等一小会儿（一分钟左右）再点。"
+        left = _wait_left.get(conv) if conv else None
+        return ("\n# 唱歌\n对方想听你唱歌 但你上一首刚发出去" + (f"：还差 {left} 秒才能再唱" if left else "") +
+                " —— 只是两首之间要隔一下（嗓子、声音都好好的 不是唱不了）。这次先不唱 让他过一会儿再点。"
                 "别写唱歌标记；你是会唱歌的 别说你不会、别说没这功能。\n")
     pool = songs()
     joined = " ".join(t for t in (texts or [])[-3:] if t)
@@ -419,7 +462,8 @@ def render(req, conv, log=print, short=False, song=None):
             import music
             t0 = time.time()
             try:
-                got = music.fetch(name, log, int(_cfg.get("online_sec", 12)), SESSDATA["v"])
+                skw = {"studio": True} if (_cfg.get("cover") or {}).get("enabled") else {}   # 要换声：现场版往后排
+                got = music.fetch(name, log, int(_cfg.get("online_sec", 18)), SESSDATA["v"], **skw)
             except Exception as e:             # 10-26 晚：现找出错以前一路抛到 bot 那边 连「没找到」都不补 她只说了句「咳咳」
                 log(f"[唱歌] {conv} 现找「{name}」出错：{repr(e)[:150]}")
                 _fail[conv] = {"name": name, "why": "出错了", "err": True}
@@ -429,15 +473,21 @@ def render(req, conv, log=print, short=False, song=None):
                                "ne_abroad": bool(getattr(music, "ne_abroad", lambda: False)())}
                 return None
             p = got["path"]
+            fy = cover(p, log)             # 换成她的声音（开着、换成了才换）
+            if fy:
+                p = fy
             log(f"[唱歌] {conv} 唱网上找的《{got.get('title')}》{got.get('artist') or ''}（{got.get('source')}，"
-                f"一共用了 {time.time() - t0:.1f}s）")
+                f"一共用了 {time.time() - t0:.1f}s）"
+                + (f"· 选的视频《{str(got.get('video'))[:40]}》：{got.get('pick_why')}" if got.get("pick_why") else ""))
             artist = got.get("artist") or ""
             if got.get("source") == "B站" and artist and artist == got.get("up"):
                 artist = ""                    # 以前把 B站 UP 主记成了歌手（UP 不一定是唱的人）：聊天记录里别写错
-            meta = {"name": got.get("title") or name, "artist": artist, "online": True,
+            meta = {"name": got.get("title") or name, "artist": artist, "online": True, "fy": bool(fy),
                     "source": got.get("source"), "up": got.get("up") or "", "video": got.get("video") or ""}
-            return {"type": "record", "data": {"file": p.resolve().as_uri()}}, meta, 0.0, float(_cfg.get("online_sec", 12))
-    a, b = span(song, short)
+            return {"type": "record", "data": {"file": p.resolve().as_uri()}}, meta, 0.0, float(got.get("sec") or _cfg.get("online_sec", 18))
+    w = _want.get(conv)
+    w = w[0] if w and w[1] > time.time() else 0
+    a, b = span(song, short, w)
     t0 = time.time()
     p = cut(song, a, b)
     if not p:
@@ -447,6 +497,40 @@ def render(req, conv, log=print, short=False, song=None):
         return None
     log(f"[唱歌] {conv} 唱《{song.get('name')}》{a:.0f}~{b:.0f} 秒（剪好用了 {time.time() - t0:.1f}s）")
     return {"type": "record", "data": {"file": p.resolve().as_uri()}}, song, a, b
+
+
+def cover(path, log=print):
+    """网上现找的那段原唱 → 本地唱歌换声服务（feiyu_voice 常驻 cover_daemon，9882）换成她的声音 → 新文件；不行 → None（照旧发原唱）
+    config → sing.cover {enabled, url, key_file, timeout}（10-31 v1.15.13 实验）"""
+    c = _cfg.get("cover") or {}
+    if not c.get("enabled"):
+        return None
+    try:
+        import json as _json
+        import urllib.request
+        src = Path(path).resolve()
+        dst = src.with_name(src.stem + "_fy.wav")
+        if dst.exists() and dst.stat().st_size > 1000 and dst.stat().st_mtime >= src.stat().st_mtime:
+            log("[唱歌] 这段以前换过她的声音 → 直接用")                     # 同一首又点：不再等十几秒
+            return dst
+        key = Path(c.get("key_file") or "").read_text(encoding="utf-8").strip()
+        req = urllib.request.Request(str(c.get("url") or "http://127.0.0.1:9882").rstrip("/") + "/cover",
+                                     data=_json.dumps({"input": str(src), "output": str(dst)}).encode("utf-8"), method="POST",
+                                     headers={"X-API-Key": key, "Content-Type": "application/json"})
+        t0 = time.time()
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))      # 本机服务：别走系统代理
+        with op.open(req, timeout=float(c.get("timeout", 90))) as f:
+            r = _json.loads(f.read().decode("utf-8"))
+        if r.get("ok") and dst.exists() and dst.stat().st_size > 1000:
+            log(f"[唱歌] 换成她的声音了（{time.time() - t0:.1f}s：分离 {r.get('sep_s')}s 换声 {r.get('rvc_s')}s"
+                + ("、男声升了八度" if r.get("shift") else "")
+                + f"；主唱音高中位数 {r.get('median_f0')} Hz、升 {r.get('shift')} 半音、去和声 {r.get('karaoke')}"   # 10-31 v1.15.15：唱得诡异时好查
+                + ("、分离常驻" if r.get("sep_resident") else "") + "）")
+            return dst
+        log(f"[唱歌] 换声没成（{str(r)[:120]}）→ 照旧发原唱")
+    except Exception as e:
+        log(f"[唱歌] 换声服务连不上 / 出错（{repr(e)[:100]}）→ 照旧发原唱")
+    return None
 
 
 def pop_fail(conv):

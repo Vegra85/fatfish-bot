@@ -85,7 +85,7 @@ async def video_frames(key, url, log=print):
     if ck in _cache:
         return _cache[ck]
     if not ffmpeg_ok():
-        log("[视频] 没装 ffmpeg，看不了视频（运行 安装视频支持.bat）")
+        log("[视频] 没装 ffmpeg，看不了视频（大肥鱼.bat →「安装」→「视频支持」）")
         return []
     data = await _download(url, VIDEO_MAX_BYTES)
     if not data:
@@ -131,15 +131,17 @@ def again_entry(history, text, only_uid=None, now=None):
     return None
 
 
-async def attach(msgs, history, log=print, only_uid=None, again=None):
+async def attach(msgs, history, log=print, only_uid=None, again=None, since=None):
     """把最近的原图/视频帧附到最后一条 user 消息上。没有就返回 None
     only_uid：群里只附这个人发的（她这一条回的是他 别人的图有文字描述就够了 附原图会把她的注意力拽到别人的图上）
-    again：他这一轮说的话 —— 在追问刚才那张图就把那张再给她看一眼（10-28）"""
+    again：他这一轮说的话 —— 在追问刚才那张图就把那张再给她看一眼（10-28）
+    since：只附这个时间以后的（群里 = 她这一轮回的那几句里最早那句；10-30：他 1 分半前发给大家的表情包 被当成 @她 那句的一部分）"""
     now = time.time()
     # 只给她看「还没回过的」新图 —— 回过的旧图已经有文字描述了 再附原图她会反复去评论
     recent = [h for h in history[-15:] if h.get("role") == "user" and not h.get("replied")
               and now - h.get("ts", 0) < RECENT_SEC and (h.get("imgs") or h.get("vids"))
-              and (only_uid is None or str(h.get("uid")) == str(only_uid))]
+              and (only_uid is None or str(h.get("uid")) == str(only_uid))
+              and (since is None or float(h.get("ts", 0) or 0) >= float(since))]
     old = again_entry(history, again, only_uid, now) if again and not recent else None
     if old:
         recent = [old]

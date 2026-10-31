@@ -25,6 +25,7 @@ except Exception:                  # 很老的 websockets：没有就当没这�
     WSClosed = ()
 
 import aidetect
+import announce     # 版本更新播报：1.x 变了 → 活跃群 + 熟人各说一声（10-31 v1.15.5）
 import anim
 import bili
 import bili2
@@ -34,10 +35,23 @@ import clock
 import commit
 import control
 import cross
+import fixup        # 纠错：连着被判不对 → 换做法 / 止损 / 记教训（10-28 v1.11.0）
 import followup
+import outage
+try:                                       # 注意力存档（10-30 影子模式；私有 不导出 —— 公开版没有这个文件就不记）
+    import attention
+except ImportError:
+    attention = None
+try:                                       # 法庭 阶段 0（10-30 只记日志；私有 不导出）
+    import court
+except ImportError:
+    court = None
+import shadowlog    # 影子日志：阶段 0 的东西只记不改（10-30）
+import congrats     # 恭喜：生日快乐 / 恭喜 + 恭喜动图（10-30 v1.15.1 写死的 小明 明说可以）
 import galgame
 import groupadmin
 import humor
+import judge        # 判断模型实验 + 调用记录 trace（10-29 v1.12.1 私有；公开版是空壳 = 全走原来的路、不记 trace）
 import media
 import memewiki
 import localai
@@ -56,6 +70,8 @@ import websearch
 import soul
 import speakup
 import stats
+import stickerdict  # 表情包词典：同一张图认真认一次 记成词条 以后直接用（10-30 v1.16.0）
+import stickerlib  # 她自己的表情包库（C31 10-31 v1.15.14 影子：收图 + 挑图只记不发）
 import stickers
 import style
 import vision
@@ -115,6 +131,16 @@ MOOD2 = CFG.get("mood2") or {}
 mood2.configure(MOOD2)
 rhythm.configure(CFG.get("rhythm") or {})
 followup.configure(CFG.get("followup") or {})
+if attention is not None:
+    attention.configure(CFG.get("attention") or {}, data_dir=DATA)
+outage.configure(DATA)
+shadowlog.configure(DATA)
+congrats.configure(CFG.get("congrats") or {}, data_dir=DATA)
+stickerdict.configure(CFG.get("stickerdict") or {}, data_dir=DATA)
+stickerlib.configure(CFG.get("stickerlib") or {}, data_dir=DATA)
+announce.configure(CFG.get("announce") or {}, data_dir=DATA)
+if court is not None:
+    court.configure(CFG.get("court") or {})
 catchup.configure(CFG.get("catchup") or {})
 stats.configure((CFG.get("panel") or {}).get("prices"))
 PEAK = CFG.get("peak") or {}
@@ -131,6 +157,7 @@ groupadmin.configure(CFG.get("group_admin") or {})                         # 群
 commit.configure(CFG.get("commit") or {})                                 # 说到做到（10-26 晚）
 humor.configure(CFG.get("humor") or {})                                   # 幽默：接梗 / 开思考 / 复读 / 冒充老板（10-27 晚）
 prankmod.configure(((CFG.get("humor") or {}).get("prank")) or {})            # 恶作剧 / 恶趣味（10-28 v1.10.0 prank.py）
+fixup.configure(CFG.get("fixup") or {}, owner=OWNER_QQ)                    # 纠错（10-28 v1.11.0 fixup.py）：老板说的不算失败
 _SEND_CAP = contextvars.ContextVar("send_cap", default=None)               # 这一轮发出去的消息 id（恶作剧撤回用 10-28 v1.10.0）
 FG = CFG.get("forget") or {}                                              # 遗忘曲线 / 夜里整理 / 做梦 / 突然想起来 / 翻聊天记录（10-27）
 if hasattr(memory, "configure_forget"):
@@ -182,7 +209,8 @@ def archive_append(key, entry):
     try:
         d = ARCHIVE / clock.strf("%Y-%m-%d", entry.get("ts") or time.time())     # 按北京时间的一天（10-27）
         d.mkdir(parents=True, exist_ok=True)
-        e = {k: v for k, v in entry.items() if k in ("role", "name", "uid", "text", "ts", "prank")}   # prank：整人那句（10-28 v1.10.0）
+        e = {k: v for k, v in entry.items() if k in ("role", "name", "uid", "text", "ts", "prank", "mid", "imgs", "re", "to")}
+        # prank：整人那句（10-28 v1.10.0）；mid / imgs（图的链接 控制台接话标注页显示图）/ re（她引用的那条）/ to（她回的是谁）：10-31 v1.15.16
         with (d / f"{key}.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
     except Exception as ex:
@@ -200,6 +228,8 @@ PROFILE_FILE = DATA / "profile.json"
 
 def log(*a):
     print(clock.strf("[%H:%M:%S]"), *a, flush=True)        # 北京时间（10-27 小明：以后总时区以北京时间为准）
+
+
 
 
 # ───────────────────────── 记忆 ─────────────────────────
@@ -375,7 +405,8 @@ def to_messages(mem, focus=None, dynamic="", hint=""):
     limit = int(B.get("group_context_messages", 70) if group else B.get("context_messages", 50))   # 群里多带点 分清谁跟谁说
     step = int(B.get("group_context_step", 30) if group else B.get("context_step", 20))
     out = []
-    for h in _window(mem, limit, max(0, step)):
+    win = _window(mem, limit, max(0, step))
+    for h in win:
         if h["role"] == "assistant":
             t = h["text"]
             marks = FILE_MARK.findall(t) if "文件" in t else []
@@ -416,6 +447,7 @@ def to_messages(mem, focus=None, dynamic="", hint=""):
         msgs[-1]["content"] += tail
     else:                                  # 最后一句是她自己说的（冒泡、收尾时）→ 另起一条
         msgs.append({"role": "user", "content": tail.lstrip("\n")})
+    judge.note_window(mem.get("key"), win, msgs[-1]["content"])   # trace 记这个窗口是哪几条（10-29）
     return msgs
 
 
@@ -665,7 +697,9 @@ QZ_REPLY_RULES = """
 QZ_POST_RULES = """
 # 这次你要发一条 QQ 空间说说（所有人可见：QQ 好友、群友、陌生人都可能看到）
 - 像真人发说说：一两句 60 字以内；给了 B站 链接就原样带上；不写话题标签、不写状态行、不写表情包标记、不加引号
-- 不点名：不写任何人的名字 / 外号 / QQ 号 / 群名；不写「群里有人说」「某某说」这种出处；私聊里的事一个字都别写
+- 不点名：不写任何人的名字 / 外号 / QQ 号 / 群名；私聊里的事一个字都别写
+- 让只看这一条的陌生人也看得懂（10-30 小明：以前像只有你自己懂的怪念头）：说的是什么 —— 哪个视频、哪首歌、什么梗、什么事 —— 要交代清楚；
+  给了出处 / 链接就用上；出处可以笼统地说（「今天群里大家在聊…」「刷到一个视频…」）但不点名
 - 生病、吵架、别人的隐私这类不发；不发广告 不拉人 不要钱
 - 写你自己的：你的心情、你刷到的、你今天的事
 - 实在没什么好发的就只写 [[不发]]
@@ -697,7 +731,7 @@ def state_rules(group):
             "情绪明显变了想换立绘就加 \"face\": \"<表情包名字>\"。\n"
             "发现自己的新东西可以加 \"self\": \"<30字内>\"。\n"
             "想上网查点什么（这次资料里没有）就加 \"search\": \"<搜索关键词>\" 查到了你会再补一句。\n"
-            + ("这次不想说话：正文只写 [[不说]]（状态行照写）。\n" if group else
+            + ("这次不想说话：正文只写 [[不说]]（状态行照写）。\n" + REACT_NOTE if group else
                "私聊里别人发的每条都要回（一个字、一个表情包都行）不写 [[不说]]。\n")
             + "不想改就不写这些字段。聊天内容里永远不要提到这个标记。\n"
             + "「这一轮的情况」（现在几点、你最近碰到的事、想起来的事、当前场景…）每次都会另外给你 照着它来。\n")
@@ -958,6 +992,25 @@ def remind_fallback(texts, said, do, now=None):
     return {"act": "提醒", "what": (m.group(1) + "他" + what)[:60], "in": round((due - now) / 60, 1)}
 
 
+CMD_START = re.compile(r"^\s*[/#＃!！]\s*[A-Za-z一-鿿]")
+CMD_REPLY = re.compile(r"命令|指令|权限|仅管理员|管理员可用|没有权限|无权|no running tasks|not authorized|permission|unknown command|"
+                       r"/sid|/stop|/help|/reset|#sl\b", re.I)
+
+
+def cmd_echo(text, since_cmd=999.0):
+    """这句是不是机器人在回指令 / 框架报错（10-30 v1.15.1：别家的鱼发了「/stop」，五个机器人同一秒回「管理命令仅管理员可用。」
+    她当成大家在刷 跟着复读了一句）→ 复读跟风不跟"""
+    t = str(text or "")
+    return bool(CMD_REPLY.search(t) or aidetect.is_framework(t) or CMD_START.match(t) or (0 <= since_cmd < 15))
+
+
+REACT = {"赞": "76", "点赞": "76", "OK": "124", "ok": "124", "好的": "124", "爱心": "66", "笑哭": "182", "捂脸": "264", "鼓掌": "99",
+         "抱抱": "49", "惊讶": "0", "doge": "179", "狗头": "179", "玫瑰": "63", "斜眼笑": "178", "喝彩": "144"}
+REACT_MARK = re.compile(r"\[\[\s*贴\s*[:：]\s*([^\[\]\n]{1,8}?)\s*\]\]")
+REACT_NOTE = ("群里有时不用说话：在他那条消息上贴个表情回应就够了 —— 写 [[贴:名字]]（名字：赞 OK 爱心 笑哭 捂脸 鼓掌 抱抱 惊讶 doge 玫瑰）；"
+              "只想贴不想说 正文就只写这个；也能边说边贴。别每次都贴。\n")
+
+
 def challenge_note(texts):
     """他在说她错了 / 改了原文（10-28 行为测试：「但是你修改了原文」→「唔 我改多了」顺着就认了）→ 这一轮再提醒一句先核对"""
     t = " ".join(str(x or "") for x in (texts or [])[-2:])
@@ -965,6 +1018,74 @@ def challenge_note(texts):
         return ""
     return ("\n（他在说你错了：先回头核对再开口 —— 你上一句说的、图上 / 他原话本来的、截图里别人说的 分清楚。"
             "你是对的就坚持、说清楚凭什么（笑着坚持也行）；真错了就痛快认、说清楚错在哪、对的是什么。别为了顺着他含糊地改口）\n")
+
+
+def _app_version():
+    try:
+        from version import __version__ as v
+        return str(v)
+    except Exception:
+        return ""
+
+
+def selfinfo_block():
+    """她自己的公开资料（10-31 v1.15.5 小明：「被问到自身信息的时候可以直接 refer 他的 github 公开库页面 不要装傻」）
+    config → self_info.repo（公开仓库地址；没填 = 不给 —— 别人部署的版本填自己的）。只给事实 怎么说她自己定（E1）"""
+    c = CFG.get("self_info") or {}
+    repo = str(c.get("repo") or "").strip().rstrip("/")
+    if c.get("enabled") is False or not repo:
+        return ""
+    L = CFG.get("llm") or {}
+    model = ((L.get(L.get("provider") or "") or {}).get("model") or "")
+    ver = _app_version()
+    return ("\n# 你自己的公开资料（真的 可以照实说）\n"
+            f"- 你的代码是公开的：{repo}（README 里写了你会什么、别人怎么部署一条自己的你；你的人设和「灵魂」那部分不公开）\n"
+            + (f"- 现在的版本 v{ver}；每一版改了什么：{repo}/blob/main/CHANGELOG.md\n" if ver else "")
+            + (f"- 你说话用的模型：DeepSeek（{model}）\n" if model else "")
+            + "- 有人问你是什么、怎么做出来的、开没开源、版本号、用什么模型、他能不能也养一条：照这些说 可以把链接给他；"
+              "没人问就别主动提。这里没写的（具体参数、key、老板电脑的配置、群号）照样说不确定 / 不说。\n")
+
+
+READ_SYS = ("你在帮一个 QQ 聊天机器人「{bot}」读懂聊天。下面是最近的聊天和她要回的那一句。"
+            "只写给她看的理解笔记（不是台词、不要替她写回复、不要写「你可以说…」），2~4 行，每行一条：\n"
+            "1. 这句真正的意思（话里有话 / 谐音 / 梗 / 黄腔 / 反话 / 起哄 / 闹着玩 / 认真在问 —— 说清楚是哪种）\n"
+            "2. 他省略的主语 / 宾语指的是谁、什么（从前文找）\n"
+            "3. 他是在跟谁说、想要什么样的回应（一起玩 / 要答案 / 要安慰 / 其实不是跟她说）\n"
+            "4. 有她容易忽略的前文就提一句\n不确定就写不确定。")
+
+
+def _read_cfg():
+    """「读懂」层（10-31 v1.15.10 默认关）：config → behavior.read_layer {enabled, direct_only, timeout}
+    回复之前先让判断模型（jllm("read")：judge.routes.read 指 anthropic 就是 Claude 否则 DeepSeek）写 2~4 行理解笔记
+    当状态放进最后一条 —— 话还是她自己说（E1）。盲测（claude\\iq_test 第三轮）看值不值得开"""
+    c = B.get("read_layer") or {}
+    return c if isinstance(c, dict) else {}
+
+
+def _overuse_block():
+    """她最近在重复自己的词（style.overuse_*，10-31 v1.15.6）→ 状态给她；同时梗库别再推这类梗（slang.AVOID）
+    config → slang.no_lead：一直不让梗库推的词（老板手动加的）"""
+    try:
+        words = list(getattr(style, "overuse_words", lambda d: [])(DATA)) + \
+            [str(x) for x in ((CFG.get("slang") or {}).get("no_lead") or []) if str(x).strip()]
+        slang.AVOID = set(words)
+        return getattr(style, "overuse_block", lambda d: "")(DATA)
+    except Exception:
+        return ""
+
+
+def songs_block():
+    """她会唱的歌：一直告诉她（10-31 v1.15.7 盲测：「你会哪首」没带「唱」字 歌单没给 —— 五种模型全编了茉莉花 / 月亮代表我的心）"""
+    try:
+        pool = sing.songs()
+    except Exception:
+        return ""
+    if not pool:
+        return ""
+    online = bool((CFG.get("sing") or {}).get("online", True))
+    return ("\n# 你会唱的歌（自己录好的）\n" + sing._list(pool) + "\n"
+            "有人问你会唱什么 就报这几首 别编别的歌名"
+            + ("；他点了别的歌 你也能现找原唱唱一小段（照他点的歌名）" if online else "") + "。\n")
 
 
 def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", split=False, arch=None):
@@ -997,7 +1118,7 @@ def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", s
            "对网友别拿「怕被关掉」「没 token 吃」博同情 也绝不找人要钱、要充值。"
            "那些是你只在老板面前偶尔漏一点的心事。\n")
     static = persona_text() + honest() + IMAGE_NOTE + state_rules(group) + commit.rules() + "\n" + who
-    semi = (soul.self_block() + soul.diary_block() + (soul.dream_block() if hasattr(soul, "dream_block") else "")
+    semi = (soul.self_block() + selfinfo_block() + songs_block() + soul.diary_block() + (soul.dream_block() if hasattr(soul, "dream_block") else "")
             + machine.block() + bili.trends_block() + shared.block(3)      # machine.block 只读缓存 不跑 PowerShell（10-28 Gemini 复查 machine）
             + soul.summary_block(mem) + soul.rel_block(mem, is_owner))
     recent3 = " ".join(h.get("text", "") for h in mem.get("history", [])[-3:])
@@ -1010,6 +1131,7 @@ def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", s
            + extra
            + (galgame.group_block(_recent_speakers(mem)) if group else "")
            + style.block(mem.get("history") or [], (speaker or (None,))[0], group)
+           + _overuse_block()
            + slang.block(query + " " + " ".join(h.get("text", "") for h in mem.get("history", [])[-4:]),
                          "" if "# 梗百科查到的" in scene else query)      # 已经查给她看了 就不再重复提示
            + stickers.block(query + " " + recent3, load_mood().get("label", ""), mem.get("key"), query)
@@ -1033,6 +1155,7 @@ def http():
 
 
 _NO_THINK_OK = {}     # 模型 -> 是否接受关闭思考的参数
+_LAST_USAGE = contextvars.ContextVar("fatfish_last_usage", default=None)   # 刚才那次 DeepSeek 的 usage（trace 用 10-29）
 
 
 async def _openai(spec, system, messages, temperature, max_tokens, tag="", think=False, effort=None, timeout=None,
@@ -1066,6 +1189,7 @@ async def _openai(spec, system, messages, temperature, max_tokens, tag="", think
     global LAST_MODEL
     d = r.json()
     LAST_MODEL = d.get("model") or spec["model"]
+    _LAST_USAGE.set(d.get("usage") or {})
     # 思考那部分 token 记在调用方名下（「做东西·思考」「聊天回复·思考」）；回梗那轮传 think_tag="回梗思考"
     # （10-28 审查 panel-5：以前不管谁开的思考都记成「回梗思考」 控制台上回梗显得很贵、做东西显得便宜）
     stats.llm(d.get("usage"), spec["model"], tag,
@@ -1109,7 +1233,7 @@ def _caller_tag():
             if f is None:
                 break
             mod, fn = Path(f.f_code.co_filename).stem, f.f_code.co_name
-            if mod == "bot" and fn in ("llm", "llm_bg"):
+            if (mod == "bot" and fn in ("llm", "llm_bg", "_jllm")) or mod == "judge":   # 判断模型的入口（10-29）也跳过
                 f = f.f_back
                 continue
             return _TAG_MOD.get(mod, mod) if mod != "bot" else _TAG_FN.get(fn, fn)
@@ -1118,9 +1242,31 @@ def _caller_tag():
     return "其他"
 
 
+# 动态用量第 4 档（10-31 v1.15.12 小明：「这两天是不是可以报复性使用 opus 了 还有 196 刀没用」）：
+# 后台这些活（冒泡 / 主动找人 / 记忆提炼 / 前情提要 / 空间 / 学梗 / 表情包词典…）judge.routes.bg = auto 且钱够第 4 档 → Claude（reply_model）
+FWD_IMGS = 6                  # 转发的聊天记录里最多看几张图（10-31 v1.15.15）
+BG_TAGS = {"冒泡", "节奏（冷场/收尾）", "主动找人", "查完补一句", "记忆提炼", "前情提要", "记忆整理（蒸馏印象）", "做梦",
+           "刷空间", "发说说", "空间评论", "回空间评论", "空间（防漏重写）", "空间（私聊告诉老板）", "见闻", "学梗",
+           "表情包词典", "版本播报", "状态一句", "口头禅", "遗忘"}
+_IN_BG = contextvars.ContextVar("fatfish_in_bg", default=False)
+
+
 async def llm(system, messages, temperature=None, max_tokens=400, tag=None, think=False, effort=None, timeout=None,
               think_tag=None):
     tag = tag or _caller_tag()
+    if tag in BG_TAGS and not _IN_BG.get():
+        try:
+            routed = judge.route("bg") == "anthropic"
+        except Exception:
+            routed = False
+        if routed:                         # 退回的时候 judge 会再叫 llm：这时 _IN_BG 已经是 True → 走下面原来的 DeepSeek
+            tok = _IN_BG.set(True)
+            try:
+                kw = {"effort": effort} if effort else {}
+                return await judge.call("bg", system, messages, llm, temperature=temperature, max_tokens=max_tokens,
+                                        think=think, log=log, tag=tag, **kw)
+            finally:
+                _IN_BG.reset(tok)
     L = CFG["llm"]
     temp = L.get("temperature", 0.95) if temperature is None else temperature
     order = [L.get("provider", "deepseek")]
@@ -1131,14 +1277,51 @@ async def llm(system, messages, temperature=None, max_tokens=400, tag=None, thin
         spec = L.get(prov) or {}
         if not spec.get("api_key"):
             continue
+        t0 = time.time()
+        _LAST_USAGE.set(None)
         try:
             if prov == "claude":
-                return await _anthropic(spec, system, messages, temp, max_tokens)
-            return await _openai(spec, system, messages, temp, max_tokens, tag, think, effort, timeout, think_tag)
+                out = await _anthropic(spec, system, messages, temp, max_tokens)
+            else:
+                out = await _openai(spec, system, messages, temp, max_tokens, tag, think, effort, timeout, think_tag)
+            _trace_ds(prov, spec, system, messages, out, t0, tag, think, effort, think_tag, max_tokens=max_tokens,
+                      temperature=temp)
+            return out
         except Exception as e:
             last_err = e
             log(f"[llm:{prov}] 失败:", str(e)[:200])
+            _trace_ds(prov, spec, system, messages, "", t0, tag, think, effort, think_tag, err=str(e)[:200],
+                      max_tokens=max_tokens, temperature=temp)
     raise RuntimeError(f"所有模型都挂了: {last_err}")
+
+
+def _trace_ds(prov, spec, system, messages, out, t0, tag, think, effort, think_tag, err="", max_tokens=None,
+              temperature=None):
+    """这次调模型写一行 trace（judge.py：data/trace/<北京日期>.jsonl；公开版空壳什么都不写）"""
+    try:
+        u = _LAST_USAGE.get() or {}
+        hit = int(u.get("prompt_cache_hit_tokens") or 0)
+        miss = u.get("prompt_cache_miss_tokens")
+        miss = int(miss) if miss is not None else max(0, int(u.get("prompt_tokens") or 0) - hit)
+        tok = {"in": miss, "out": int(u.get("completion_tokens") or 0), "hit": hit,
+               "think": int(((u.get("completion_tokens_details") or {}).get("reasoning_tokens")) or 0)} if u else {}
+        judge.trace(judge.kind_of(tag, think, think_tag), system, messages, out, provider=prov,
+                    model=(LAST_MODEL if not err else "") or spec.get("model", ""), ms=(time.time() - t0) * 1000,
+                    tok=tok, err=err, think=think, effort=effort, tag=tag, max_tokens=max_tokens,
+                    temperature=temperature)
+    except Exception:
+        pass
+
+
+def jllm(kind, conv="", budget=None, uids=None):
+    """判断类调用 / 开思考的回复 的入口（10-29 判断模型实验 judge.py）：跟 llm 一样的用法（传给 followup.judge 这种）
+    config → judge.routes[kind] 是 anthropic 就先走 Claude；报错 / 超时 / 没 key / 停用 / 今天花到上限 → 退回 llm（DeepSeek）
+    路由是 deepseek（默认）= 原来的 llm 一模一样，只多记一行 trace 的 kind
+    budget：外面整个只等这么久（接话判断 8 秒）→ Claude 少等两秒 留给 DeepSeek 退回"""
+    async def _jllm(system, messages, temperature=None, max_tokens=400, **kw):
+        return await judge.call(kind, system, messages, llm, temperature=temperature, max_tokens=max_tokens,
+                                conv=conv, budget=budget, uids=uids, log=log, **kw)
+    return _jllm
 
 
 async def llm_bg(task, system, messages, temperature=None, max_tokens=400):
@@ -1830,7 +2013,8 @@ async def review_make(job, said, code, what=""):
     """做完、发之前按要点自己查一遍（10-28 v1.9.1：鹈鹕的鱼和水波圈绕左上角转飞走了、脚踏不动脚悬空）
     → (改好的完整代码 / None 照原样发, 一句说明)"""
     try:
-        raw = await llm(maker.REVIEW_SYS, [{"role": "user", "content": maker.review_block(job, said, code, what)}],
+        raw = await jllm("make", job.get("conv") or "", uids=[job.get("uid")] if job.get("uid") else None)(
+                        maker.REVIEW_SYS, [{"role": "user", "content": maker.review_block(job, said, code, what)}],
                         max_tokens=int(MK.get("max_tokens", 32000)), think=True,
                         effort=str(MK.get("review_effort") or MK.get("effort", "high")),
                         timeout=float(MK.get("review_timeout_sec", 180)), tag="做东西自查")   # 查太久就不等了 照原样发
@@ -1937,8 +2121,10 @@ class FatFish:
         hdr = {"Authorization": f"Bearer {token}"} if token else None
         while True:
             try:
+                # 一条消息最大 64MB（10-28 v1.11.1：群里有人发好几分钟的语音 get_record 回来的 wav（base64）有 19~23MB
+                # 以前上限 16MB → 整条连接被断开（5 秒后重连）、那条语音也没听成；20 分钟里断了 3 次）
                 async with websockets.connect(url, additional_headers=hdr,
-                                              max_size=16 * 1024 * 1024,
+                                              max_size=64 * 1024 * 1024,
                                               ping_interval=30) as ws:
                     self.ws = ws
                     gap = time.time() - self.down_since if self.down_since else 0
@@ -1950,6 +2136,11 @@ class FatFish:
                     self.caught_up.clear()
                     asyncio.create_task(self.catch_up())       # 下线期间漏掉的消息 补看一遍
                     asyncio.create_task(self.maybe_set_avatar())
+                    asyncio.create_task(self._retro_kept())    # 答应过、后来其实交过了的：开机补划（10-30 v1.15.1）
+                    if not self.__dict__.get("_sd_loop"):
+                        self._sd_loop = asyncio.create_task(self._sticker_loop())   # 表情包词典：存盘 + 控制台改的词条（10-30 v1.16.0）
+                    if not self.__dict__.get("_an_loop"):
+                        self._an_loop = asyncio.create_task(self._announce_loop())  # 版本更新播报（10-31 v1.15.5）
                     async for raw in ws:
                         try:
                             ev = json.loads(raw)
@@ -1961,8 +2152,9 @@ class FatFish:
                                 f.set_result(ev)
                             continue
                         if ev.get("post_type") in ("message", "request") or \
-                                (ev.get("post_type") == "notice" and ev.get("notice_type") == "group_ban"):
-                            await self.q.put(ev)           # 通知只要禁言（10-26 群管说话算数）
+                                (ev.get("post_type") == "notice" and ev.get("notice_type") in ("group_ban", "group_recall", "group_decrease",
+                                                                                   "friend_recall")):
+                            await self.q.put(ev)           # 通知只要禁言（10-26 群管说话算数）、撤回和被踢（10-28 v1.11.0 纠错）
             except Exception as e:
                 self.ws = None
                 now = time.time()
@@ -2088,7 +2280,7 @@ class FatFish:
         if not nodes:
             log("[聊天记录] 读不出来:", fid[:30])
             return "[聊天记录]"
-        lines = []
+        rows = []
         for n in nodes[:20]:
             if not isinstance(n, dict):
                 continue
@@ -2100,12 +2292,27 @@ class FatFish:
                 snd = n.get("sender") or {}
                 who = snd.get("card") or snd.get("nickname") or "某人"
                 msg = n.get("message") or n.get("content") or []
-            t = cq_text(msg) if isinstance(msg, str) else seg_text([x for x in msg if isinstance(x, dict)])
+            segs_n = [x for x in msg if isinstance(x, dict)] if not isinstance(msg, str) else []
+            t = cq_text(msg) if isinstance(msg, str) else seg_text(segs_n)
             if t:
-                lines.append(f"{who}: {t[:80]}")
+                rows.append([who, t, segs_n])
+        # 转发里的图也看一眼（10-31 v1.15.15：以前只写「[图片]」—— 一条全是图的转发 她说成「六个空框 一张都没加载出来」）
+        # 最多看 FWD_IMGS 张、一起看、整体限时；没看成的照旧「[图片]」
+        todo = [r for r in rows if r[2] and ("[图片]" in r[1] or "[表情包]" in r[1])][:FWD_IMGS]
+        if todo:
+            async def _cap(r):
+                try:
+                    r[1] = await vision.caption_text(r[1], r[2], log)
+                except Exception as e:
+                    log("[聊天记录] 看图出错:", repr(e)[:80])
+            try:
+                await asyncio.wait_for(asyncio.gather(*[_cap(r) for r in todo]), 25)
+            except asyncio.TimeoutError:
+                log("[聊天记录] 里面的图 25 秒没看完 → 没看完的照旧写「[图片]」")
+        lines = [f"{who}: {t[:160 if '：' in t and '[' in t else 80]}" for who, t, _ in rows]
         if not lines:
             return "[聊天记录]"
-        body = "\n".join(lines)[:700]
+        body = "\n".join(lines)[:1400 if todo else 700]
         log(f"[聊天记录] 读了 {len(lines)} 条")
         return f"[转发的聊天记录（{len(nodes)}条）：\n{body}\n]"
 
@@ -2178,8 +2385,13 @@ class FatFish:
                                          for f in data]}
         if action == "send":
             return await self._admin_send(p)
+        if action == "sources":                    # 控制台「来源健康」（10-30）
+            return {"ok": True, "now": time.time(), "items": self._sources()}
         if action == "tasks":                      # 控制台「日历」（10-27）
             return {"ok": True, **commit.tasks_view()}
+        if action == "prom_del":                   # 控制台「日历」删一条没说时间的答应（10-30）
+            pr = commit.drop_prom(p.get("conv"), p.get("id"), "控制台", log)
+            return {"ok": bool(pr), "error": "" if pr else "没找到这条（可能已经划掉了）"}
         if action in ("task_done", "task_cancel", "task_add", "task_edit"):
             why = ""
             if action == "task_done":
@@ -2240,6 +2452,19 @@ class FatFish:
             return await self.qzone_admin(p)
         if action == "prank":                      # 控制台「恶趣味」页（10-28 v1.10.0）
             return await self.prank_admin(p)
+        if action == "fixup":                      # 控制台「纠错」页（10-28 v1.11.0）
+            op = str(p.get("op") or "status")
+            if op == "del":
+                ok = fixup.del_lesson(str(p.get("id") or ""))
+                if ok:
+                    log(f"[控制台] 删了一条纠错的教训（{p.get('id')}）")
+                return {"ok": ok, "error": "" if ok else "没找到这条（或者 fixup.json 正被占着）"}
+            if op == "clear":
+                ok = fixup.clear(str(p.get("key") or ""), str(p.get("uid") or ""))
+                if ok:
+                    log(f"[控制台] 解除了 {p.get('key')} {p.get('uid')} 的纠错 / 停着")
+                return {"ok": ok, "error": "" if ok else "这个人现在没在纠错"}
+            return {"ok": True, **fixup.status()}
         if action == "taboo_del":                  # 控制台删一条禁忌（10-27 记忆卫生）
             fn = getattr(galgame, "taboo_del", None)
             x = fn(str(p.get("uid") or ""), p.get("i")) if fn else None
@@ -2382,16 +2607,19 @@ class FatFish:
             await asyncio.sleep(max(30, float(catchup.cfg().get("sweep_every_sec", 180))))
 
     async def _say_plain(self, scene, target, lines, reply_to=None):
-        """固定的话（删数据这种）：直接发 不过语音/表情包 也不记任何状态"""
+        """固定的话（删数据这种）：直接发 不过语音/表情包 也不记任何状态 → 都发出去了没有（明确没发出去 / 静音 → False）"""
         if scene == "group" and control.group_mode(target) == "mute":
-            return
+            return False
         action = "send_group_msg" if scene == "group" else "send_private_msg"
         pk = "group_id" if scene == "group" else "user_id"
+        ok = True
         for i, t in enumerate(lines):
             await asyncio.sleep(min(3.0, 0.5 + len(t) / max(4, int(B.get("typing_speed_cps", 9)))))
             msg = ([{"type": "reply", "data": {"id": str(reply_to)}}] if i == 0 and reply_to and scene == "group" else []) \
                 + [{"type": "text", "data": {"text": t}}]
-            await self._deliver(action, pk, target, msg)
+            if await self._deliver(action, pk, target, msg) is False:
+                ok = False
+        return ok
 
     async def _wipe_chat(self, mtype, uid, gid, name, cmd, mid):
         """「删除我的数据」→ 先说清楚删什么 → 10 分钟内回「确认删除」才删（回的都是固定的话 不过模型 不记进聊天记录）"""
@@ -2537,6 +2765,24 @@ class FatFish:
             busy.add("anim_state.json")
         if not prankmod.forget_person(uid):   # 恶作剧的记录 / 免整名单 / 等着整他的单（10-28 v1.10.0）
             busy.add("prank_state.json")
+        if attention is not None:          # 注意力存档：内存里也忘掉他（文件里的 wipe.traces 删）
+            attention.forget_uid(uid, files=False)
+        if court is not None:              # 法庭 阶段 0：内存里也忘掉他（data/court 里的 wipe.traces 删）
+            court.forget_uid(uid)
+        try:
+            r["stickerdict"] = stickerdict.forget(uid, texts, names)   # 表情包词典里他发图时 / 接话时的那几句（10-30 v1.16.0）
+        except Exception as e:
+            log("[删数据] 表情包词典的记录没删掉:", repr(e)[:80])
+        try:
+            r["stickerlib"] = stickerlib.forget(uid, texts, names)     # 表情包库影子记录里他说的那几句（C31 10-31）
+        except Exception as e:
+            log("[删数据] 表情包库影子记录没删掉:", repr(e)[:80])
+        try:
+            r["congrats"] = congrats.forget(uid)      # 恭喜：他说过的生日、发过的记录（10-30 v1.15.1）
+        except Exception as e:
+            log("[删数据] 恭喜的记录没删掉:", repr(e)[:80])
+        if not fixup.forget_person(uid, c.get("strong", names)):      # 纠错的教训 / 记录（别人的记录里撤回 / 禁言她的是他 也删）（10-28 v1.11.0）
+            busy.add("fixup.json")
         try:
             commit.forget_person(uid, c.get("strong", names), weak=set(names) - set(c.get("strong", names)))   # 说到做到里（叠词 / 常用词名字只换明确指他的 10-28 v1.9.4） 他叫过她的、不理他 / 答应他的（10-26 晚）
         except Exception as e:
@@ -2645,6 +2891,7 @@ class FatFish:
                                            "connected": bool(self.ws), "down_since": self.down_since,
                                            "self_id": self.self_id, "nick": self.self_nick,
                                            "loop": bool(os.environ.get("FATFISH_LOOP")),
+                                           "loop_kind": os.environ.get("FATFISH_LOOP") or "",   # fish = tools\fish.py loop / 1 = 旧的 botloop.bat（v1.12.0）
                                            "budget": budget.status(), "anim": anim.status(), "boot": BOOT,
                                            "commit": commit.status(), "tasks": commit.tasks_status(),
                                            "brakes": sum(1 for v in self._brake.values() if v > time.time()),
@@ -2713,7 +2960,7 @@ class FatFish:
             stats.flush(force=True)
             log(f"[控制台] 重启机器人（QQ 不动）… {why}")
             if os.environ.get("FATFISH_LOOP"):
-                os._exit(4)              # botloop.bat 看到 4 马上再开一个
+                os._exit(4)              # 守护循环（tools\fish.py loop；以前的 botloop.bat 也一样）看到 4 马上再开一个
             control.respawn(ROOT / "bot.py", ROOT / "bot.log", log)
             os._exit(0)
         except Exception as e:
@@ -2722,7 +2969,7 @@ class FatFish:
             self._restarting = False
 
     def _stop(self):
-        """停下（QQ 还在线）。留个 stop.flag 告诉 botloop.bat 别再拉起来"""
+        """停下（QQ 还在线）。留个 stop.flag 告诉守护循环别再拉起来"""
         stats.flush(force=True)
         try:
             (ROOT / "data" / "stop.flag").write_text("panel", encoding="utf-8")
@@ -3343,6 +3590,14 @@ class FatFish:
         called = self._called(str(ev.get("group_id", "")) if mtype != "private" else "", plain)
         now = float(ev.get("time") or time.time()) if catch is not None else time.time()
         stats.add("recv_private" if mtype == "private" else "recv_group")
+        if catch is None:                  # 打字刹车（10-30）：她打字时这个对话又来了几句、每个人最近说了什么
+            hd = self.__dict__.setdefault("_heard", {})
+            hd[ckey] = hd.get(ckey, 0) + 1
+            ls = self.__dict__.setdefault("_typed_last", {})   # (对话, 人) -> (时间, 说的话)（_last_said 已经被「她最后一次发言」占了）
+            ls[(ckey, uid)] = (time.time(), text)
+            if len(ls) > 2000:
+                for k in sorted(ls, key=lambda k: ls[k][0])[:500]:
+                    ls.pop(k, None)
 
         gid = str(ev.get("group_id", ""))
         follow = follow_ask = gated = False
@@ -3363,6 +3618,7 @@ class FatFish:
             if pl and worldclock.remember(uid, pl, "private" if mtype == "private" else "group", mine_said, now):
                 log(f"[时间] 记下 {name} 在{pl}（{mine_said.strip()[:30]}）")
         re_to = cont_to = ""
+        quoted_me = False                  # 私聊也要有（10-31 巡检：私聊引用一句时 法庭那行用到它 报 UnboundLocalError）
         if mtype == "private":
             key, scene = f"private_{uid}", "private"
             trigger = addressed = True
@@ -3374,7 +3630,8 @@ class FatFish:
                     self._held_log(key, name, cg)
             # 别的机器人私聊她（10-28 审查 intake-4）：跟群里一样 10 分钟最多回 3 次（以前私聊每条都回 两个 AI 能一直聊下去）
             if trigger and catch is None and not owner and control.is_bot(uid):
-                trigger = addressed = self._private_bot_ok(uid, name, now)
+                # 等她按格式回的那种（验证题）/ 她正在纠错：不被「别的机器人回够了」挡住（10-28 v1.11.0）
+                trigger = addressed = fixup.wants_answer(key, uid, text, now) or self._private_bot_ok(uid, name, now)
         else:
             key, scene = f"group_{gid}", "group"
             if catch is None:
@@ -3391,6 +3648,10 @@ class FatFish:
                 re_to = "你" if (quoted_me or str(rid0) in self.my_msgs) else \
                     (await self.quoted_name(rid0) if catch is None else "")
             trigger = at_me or called or quoted_me
+            if catch is None and not trigger and prankmod.on() and prankmod.TEST_CMD.match(text or "") and not control.is_bot(uid) \
+                    and control.group_mode(gid) in ("normal", "quiet"):
+                trigger = True             # #sl / #napcat：群里没有 AI 会自己发指令 = 有人在测她（10-30 v1.15.1 小明）→ 算冲她来的
+                log(f"[恶作剧] 群{gid} {name} 发了「{text.strip()[:12]}」→ 在测试她：算冲她来的")
             # 他刚 @ / 引用了别人（一分钟内）、这句又没 @ 谁没叫她没引用：多半还在跟那个人说（10-28 v1.10.2 小明 截图：
             # 「@别人家的鱼」→「出来搞事」她插嘴「他 @ 的是别人家的那条，不是我呢」）→ 不抢着接（她正聊着的「挑着接」和插话都不算）
             cont_to = ""
@@ -3411,7 +3672,7 @@ class FatFish:
                         cont_to = last[1]
             if catch is None and not aidetect.skip(uid, OWNER_QQ, self_id):     # 认别人家的 AI（10-26）
                 if aidetect.observe(gid, uid, name, text, now, to_her=trigger) == "check":   # 看着像 → 让模型看看（是才标）
-                    asyncio.create_task(aidetect.check(llm, gid, uid, name, log))
+                    asyncio.create_task(aidetect.check(jllm("aidetect", f"group_{gid}", uids=[uid]), gid, uid, name, log))
             if catch is None:                        # 对聊刹车：这句是不是她说完几秒就接上的（她回他时数轮数）
                 self._fast[(gid, uid)] = (now, now - self._last_said.get(gid, 0) <= float(B.get("brake_fast_sec", 20)))
             addressed = trigger
@@ -3443,7 +3704,7 @@ class FatFish:
             if limited:
                 direct = trigger
                 trigger = direct and mode != "mute" and not braked and held != "all" and \
-                    (catch is not None or not isbot or control.bot_ok(gid, uid))
+                    (catch is not None or not isbot or fixup.wants_answer(key, uid, text, now) or control.bot_ok(gid, uid))
                 addressed = trigger
                 if direct and not trigger and held == "all" and catch is None:
                     self._held_log(key, name, cg)
@@ -3520,6 +3781,25 @@ class FatFish:
             elif cont_to and not trigger and catch is None:
                 log(f"[接话] 群{gid} {name}「{text[:30]}」→ 不抢着接（他刚 @ 了 {cont_to} 多半还在跟他说）")
 
+        if catch is None and fixup.on():          # 纠错（10-28 v1.11.0）：这句是不是在判她刚才那句不对 / 说她过了
+            try:
+                # 只认冲着她说的（私聊 / @ / 叫她 / 引用她）、机器那种场合的（他是机器人 / 她刚回的是验证题 / 这句是验证程序的口气）
+                fx_ev = fixup.observe(key, scene, uid, name, own_words(plain) or text, now,
+                                      to_her=bool(scene == "private" or at_me or called or (scene == "group" and quoted_me)),
+                                      isbot=bool(isbot or control.is_bot(uid)), owner=owner)
+            except Exception as e:
+                fx_ev = None
+                log("[纠错] 出错:", repr(e)[:120])
+            if fx_ev:
+                self._fix_event(fx_ev)
+            if trigger and fixup.stopped(key, uid, now):     # 改了几次还是被判不对：先停一阵 不再回他（止损）
+                trigger = False
+                fl = self.__dict__.setdefault("_fix_log", {})
+                if now - fl.get((key, uid), 0) > 60:
+                    fl[(key, uid)] = now
+                    log(f"[纠错] {key} {name} 找她 但刚才改了几次还是被判不对 先停着（还有 "
+                        f"{fixup.stop_left(key, uid, now) // 60 + 1} 分钟）不回")
+
         async with mem_lock(key):
             mem = load_mem(key, scene)
             entry = {"role": "user", "name": name, "uid": uid, "text": text, "ts": now}
@@ -3579,6 +3859,55 @@ class FatFish:
                     entry["text"] = f"（回复了 {quoted}）" + entry["text"]
             mem["history"].append(entry)
             archive_append(key, entry)
+            if scene == "group" and catch is None and attention is not None:   # 注意力存档（影子模式：只记、不改她的行为）
+                try:
+                    attention.observe(gid, uid, name, text, now, mid=mid, to_her=bool(at_me or called or quoted_me),
+                                      quoted_mid=rid0, owner=owner, isbot=bool(isbot or control.is_bot(uid)), fu=fu,
+                                      reply=bool(trigger))
+                except Exception as e:
+                    log("[注意力] 记的时候出错:", repr(e)[:100])
+            if court is not None and catch is None and not isbot and not control.is_bot(uid):   # 法庭 阶段 0：她给过答案、他说不对 → 只立案记日志
+                try:
+                    qm = re.match(r"（回复了 .{0,60}?的「(.{0,210}?)」）", entry.get("text") or "")
+                    cs = court.observe(key, scene, uid, name, own_words(text), now, owner=owner, log=log,
+                                       to_her=bool(scene == "private" or at_me or called or quoted_me),
+                                       quoted=qm.group(1) if (qm and quoted_me) else "", has_img=bool(imgs))
+                    if cs and hasattr(court, "screen"):          # 模型预审（10-30 v1.16.0 只记）：看前后文再审一遍是不是真在说她错
+                        chat = [f'{"她" if h.get("role") == "assistant" else h.get("name", "")}: {str(h.get("text") or "")[:100]}'
+                                for h in mem["history"][-11:-1]]
+                        asyncio.create_task(court.screen(cs, chat, jllm("court", key, uids=[uid]), log=log, now=now))
+                except Exception as e:
+                    log("[法庭] 记的时候出错:", repr(e)[:100])
+            if catch is None and not isbot and not control.is_bot(uid) and stickerdict.on():   # 表情包词典（10-30 v1.16.0）
+                try:
+                    if imgs:
+                        bef = [own_words(h.get("text") or "")[:40] for h in mem["history"][-3:-1]
+                               if h.get("role") == "user" and not h.get("bot")]
+                        mf = {str((x.get("data") or {}).get("summary") or "") for x in segs if x.get("type") == "mface"}
+                        for ik, iu, ism in imgs[:3]:
+                            if stickerdict.seen(ik, key, uid, ism, before=bef, said=own_words(text),
+                                                to_her=bool(scene == "private" or at_me or called or quoted_me),
+                                                sticker=bool(ism), now=now, mface=(ism if ism in mf else "")) == "deep":
+                                asyncio.create_task(self._sticker_deep(ik, iu))
+                            sk = stickerdict._sid(ik)                  # 认清楚了、不止一个人发过 → 原图收进她的库（C31 10-31）
+                            if stickerlib.want(sk, stickerdict.get(sk)):
+                                asyncio.create_task(stickerlib.steal(sk, iu, vision.fetch, stickerdict.get(sk), log=log))
+                    else:
+                        stickerdict.after(key, uid, own_words(text), now=now)
+                except Exception as e:
+                    log("[表情包词典] 记的时候出错:", repr(e)[:100])
+            if catch is None and not isbot and not control.is_bot(uid) and not control.blocked(uid):   # 恭喜（10-30 v1.15.1）
+                try:
+                    to_h = bool(scene == "private" or at_me or called or quoted_me)
+                    ats = [str((x.get("data") or {}).get("qq")) for x in segs if x.get("type") == "at"
+                           and str((x.get("data") or {}).get("qq")) not in (str(self.self_id), "all")]
+                    cact = congrats.observe(key, scene, gid if scene == "group" else "", uid, name, own_words(text), now, mid=mid,
+                                            to_her=to_h, at_uids=ats, log=log,
+                                            allowed=control.allow(scene, gid if scene == "group" else uid, "at" if to_h else "auto"))
+                    if cact:
+                        asyncio.create_task(self._congrats_send(cact))
+                except Exception as e:
+                    log("[恭喜] 出错:", repr(e)[:100])
             if len(mem["history"]) > 120:          # 挤出去之前先存着 等提炼和前情提要都用过再扔（别人家 AI 说的不留）
                 cut = [h for h in mem["history"][:-120] if h.get("ts", 0) > _keep_after(mem) and not h.get("bot")]
                 mem["overflow"] = ((mem.get("overflow") or []) + cut)[-300:]
@@ -3586,7 +3915,7 @@ class FatFish:
             if not entry.get("bot"):
                 mem["since_extract"] = mem.get("since_extract", 0) + 1
             if scene == "group":
-                slang.note_usage(text, name)
+                slang.note_usage(text, name, gid="" if (isbot or control.is_bot(uid)) else gid)
             mem["last_active"] = now
             mem.setdefault("alias", {})
             # 让她忘（10-28 审查 memory-1）：只认冲她说的（私聊 / @ / 叫她 / 引用她）、不是补回的旧消息、不是别人家的 AI
@@ -3602,9 +3931,11 @@ class FatFish:
                 await asyncio.wait_for(asyncio.shield(ft), 15)
             except Exception:
                 pass
+        if scene == "group" and catch is None and CMD_START.match(plain or ""):
+            self.__dict__.setdefault("_last_cmd", {})[gid] = now     # 有人发了 /stop #sl 这种指令：接下来十几秒的齐刷刷是机器人在回指令
         if scene == "group" and catch is None and not at_me and not isbot and plain.strip() \
-                and all(x.get("type") == "text" for x in segs):     # 复读跟风（10-27 晚 不过模型）
-            rp = humor.repeat_seen(gid, uid, plain, now)
+                and all(x.get("type") == "text" for x in segs) and not cmd_echo(plain, now - self.__dict__.get("_last_cmd", {}).get(gid, 0)):
+            rp = humor.repeat_seen(gid, uid, plain, now)     # 复读跟风（10-27 晚 不过模型）
             if rp:
                 asyncio.create_task(self._repeat_follow(gid, key, rp))
         maybe_distill(mem)
@@ -3625,6 +3956,8 @@ class FatFish:
             return
         if not trigger:
             return
+        if not gated and scene != "private" and fixup.on() and fixup.wants_answer(key, uid, text, now):
+            gated = True                             # 验证题 / 她刚回完验证题他在判她：不过省 token 那一掷（一掷没回 就被移出群了）
         if not gated and scene != "private":         # 私聊每条都回（10-26 小明）：不过省 token 那一掷
             ok, why = budget.allow(kind, owner, key, uid)
             if not ok:
@@ -3659,7 +3992,7 @@ class FatFish:
         at_other = [self.members.get((gid, str((x.get("data") or {}).get("qq")))) or "某人" for x in segs
                     if x.get("type") == "at" and str((x.get("data") or {}).get("qq")) not in (self_id, "all")]
         try:
-            res = await asyncio.wait_for(groupadmin.judge(llm, {
+            res = await asyncio.wait_for(groupadmin.judge(jllm("groupadmin", f"group_{gid}", float(groupadmin.C.get("judge_timeout", 8)), [uid]), {
                 "card": GROUP_CARD or BOT_NAME, "name": name, "rank": rk, "text": text, "hist": hist[-6:],
                 "at_me": at_me, "called": called, "at_all": at_all, "at_other": at_other, "quoted": re_to,
                 "lookalike": self._lookalike(gid), "now": now}, log), float(groupadmin.C.get("judge_timeout", 8)))
@@ -3690,6 +4023,31 @@ class FatFish:
         log(f"[群管] 点表情回应没成功（{str(r)[:80]}）")
         return False
 
+    async def _react_as(self, key, mid, what, name="", only=False):
+        """她自己选的「贴个表情回应」（C18 10-30 v1.15.2）：[[贴:赞]] → 在他那条消息上点 QQ 的表情回应；同一个群 20 秒内只贴一次"""
+        try:
+            eid = REACT.get(what) or REACT.get(str(what).lower())
+            if not eid:
+                log(f"[贴表情] {key} 她想贴「{what}」但没有这个 → 不贴")
+                return False
+            rt = self.__dict__.setdefault("_react_t", {})
+            if time.time() - rt.get(key, 0) < 20:
+                return False
+            rt[key] = time.time()
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+            r = await self.call("set_msg_emoji_like", message_id=mid, emoji_id=str(eid))
+            ok = isinstance(r, dict) and r.get("retcode") == 0
+            log(f"[贴表情] {key} 给「{name}」那句贴了「{what}」" + ("（只贴 没说话）" if only else "") + ("" if ok else f" —— 没贴上：{str(r)[:60]}"))
+            if ok and only:
+                async with mem_lock(key):
+                    mem = load_mem(key, "group")
+                    add_assistant(mem, f"[给{name}那句贴了个「{what}」表情]")
+                    save_mem(mem)
+            return ok
+        except Exception as e:
+            log("[贴表情] 出错:", repr(e)[:100])
+            return False
+
     async def _my_role(self, gid):
         """她自己在这个群是什么身份（owner/admin/member）"""
         try:
@@ -3699,7 +4057,19 @@ class FatFish:
             return ""
 
     async def handle_notice(self, ev):
-        """QQ 禁言（10-26）：群管在 QQ 里禁言她 / 全员禁言（她不是管理）→ 记下到几点 那之前当静音（不白生成回复）"""
+        """QQ 禁言（10-26）：群管在 QQ 里禁言她 / 全员禁言（她不是管理）→ 记下到几点 那之前当静音（不白生成回复）
+        她的消息被别人撤回 / 她被移出群（10-28 v1.11.0）：交给纠错（fixup.py）
+        别人撤回了自己的话（10-30）：还没回的不回了、聊天记录里换成「[撤回了一条消息]」"""
+        if ev.get("notice_type") in ("group_recall", "friend_recall") \
+                and str(ev.get("user_id", "")) != str(ev.get("self_id", "") or self.self_id):
+            try:
+                await self._other_recall(ev)
+            except Exception as e:
+                log("[撤回] 出错:", repr(e)[:160])
+            if ev.get("notice_type") == "friend_recall":
+                return
+        if ev.get("notice_type") in ("group_recall", "group_decrease"):
+            return await self._fix_notice(ev)
         if ev.get("notice_type") != "group_ban":
             return
         gid, uid = str(ev.get("group_id", "")), str(ev.get("user_id", ""))
@@ -3711,6 +4081,13 @@ class FatFish:
         ban = ev.get("sub_type") == "ban"
         whole = uid == "0"
         opn = self.members.get((gid, op)) or op
+        if ban and not whole and fixup.on():       # 她回完他 1 分钟内被他禁言：纠错那边算一次失败（10-28 v1.11.0）
+            try:
+                fe = fixup.on_ban(gid, op, opn, max(0, dur) // 60)
+                if fe:
+                    self._fix_event(fe)
+            except Exception as e:
+                log("[纠错] 禁言那条出错:", repr(e)[:100])
         if ban:
             if whole and await self._my_role(gid) in ("owner", "admin"):
                 return                             # 她是管理 全员禁言管不到她
@@ -3724,6 +4101,275 @@ class FatFish:
             control.set_ban(gid, 0, op, which="all" if whole else "self")   # 只解对应的那一边（10-28 审查 intake-11）
             log(f"[群管] 群{gid} {'全员禁言' if whole else 'QQ 禁言'}解除了（{opn}）"
                 + ("；" + ("她自己的禁言" if whole else "全员禁言") + "还没解 → 照旧不说话" if control.qq_ban(gid) else ""))
+
+    # ---- 纠错（10-28 v1.11.0 fixup.py）----
+    def _fix_event(self, ev):
+        """fixup 认出来的事：写日志；该告诉老板的（停下了 / 被踢了）私聊说一句"""
+        k, nm = ev.get("kind"), ev.get("name") or ev.get("uid") or ""
+        where = ev.get("key") or ""
+        if k == "mode":
+            log(f"[纠错] {where} 回「{nm}」的话被判不对（{ev.get('why')}：{str(ev.get('fb') or '')[:40]}）→ 下一轮换个做法")
+        elif k == "fail":
+            log(f"[纠错] {where} 回「{nm}」又被判不对（{ev.get('why')}；最近 {ev.get('n')} 次）")
+        elif k == "stop":
+            log(f"[纠错] {where} 回「{nm}」改了还是不行 → 先停 {int(float(fixup.C.get('stop_min', 30)))} 分钟"
+                + ("、记下教训" if ev.get("lesson") else ""))
+        elif k == "pass":
+            log(f"[纠错] {where} 回「{nm}」这次过了 → 记下教训（{(ev.get('con') or {}).get('desc') or '照他的格式'}）")
+        elif k == "kick":
+            log(f"[纠错] 被移出 {where} 了" + ("（前面连着被判不对 → 记下教训）" if ev.get("had") else ""))
+        if ev.get("tell") and OWNER_QQ:
+            asyncio.create_task(self._fix_tell(ev["tell"]))
+
+    async def _fix_tell(self, text):
+        """私聊告诉老板（固定的话 不过模型）；记进跟老板的私聊 他回过来她接得上"""
+        try:
+            if not await self._say_plain("private", OWNER_QQ, [text]):
+                log(f"[纠错] 私聊告诉老板没发出去：{text[:60]}")
+                return                             # 没发出去的不记进聊天记录（不然她以为说过了 审查 Low）
+            async with mem_lock(f"private_{OWNER_QQ}"):
+                m = load_mem(f"private_{OWNER_QQ}", "private")
+                add_assistant(m, text)
+                save_mem(m)
+            log(f"[纠错] 私聊告诉老板了：{text[:60]}")
+        except Exception as e:
+            log("[纠错] 私聊告诉老板没成:", repr(e)[:100])
+
+    @staticmethod
+    def _sources():
+        """各个往外拿东西的来源现在怎么样（控制台「来源健康」10-30）：只读模块里已经记着的状态 不去试连
+        → [{"group", "name", "state": ok / off / warn / idle, "detail", "until"}]"""
+        now = time.time()
+        out = []
+
+        def add(group, name, state, detail="", until=0):
+            out.append({"group": group, "name": name, "state": state, "detail": detail, "until": until or 0})
+        try:
+            off = float(websearch._ds.get("off_until") or 0)
+            add("上网", "DeepSeek 搜索 / 读网页", "off" if now < off else "ok", "key 不对 / 没余额 先停着" if now < off else "", off)
+            for k, v in (websearch.stats or {}).items():
+                add("上网", f"搜索：{k}", "ok" if (isinstance(v, int) and v > 0) else "warn", f"最近一次 {v} 条")
+        except Exception as e:
+            add("上网", "搜索", "warn", f"读不到状态：{e!r}"[:80])
+        try:
+            pu = float(voice._pause.get("until") or 0)
+            nf = int(voice._send_fail.get("n") or 0)
+            add("语音", "MiniMax 说话", "off" if now < pu else ("warn" if nf else "ok"),
+                (voice._pause.get("why") or "") if now < pu else (f"QQ 连着发失败 {nf} 次" if nf else ""), pu)
+        except Exception as e:
+            add("语音", "MiniMax 说话", "warn", f"读不到状态：{e!r}"[:80])
+        try:
+            mu = sys.modules.get("music")
+            if mu is not None:
+                ab = float(mu._NE.get("abroad_until") or 0)
+                add("唱歌", "网易云（现找歌）", "off" if now < ab else "ok", "把这台电脑当成海外 IP：先走 B站" if now < ab else "", ab)
+        except Exception as e:
+            add("唱歌", "网易云", "warn", f"读不到状态：{e!r}"[:80])
+        try:
+            t = bili.load_trends() or {}
+            bu = float(t.get("blocked_until") or 0)
+            add("B站", "刷B站 / 热门", "off" if now < bu else "ok", "被风控 歇一小时" if now < bu else "", bu)
+        except Exception as e:
+            add("B站", "刷B站", "warn", f"读不到状态：{e!r}"[:80])
+        try:
+            for k, v in (slang._src or {}).items():
+                o = float(v.get("off") or 0)
+                add("学梗", k, "off" if now < o else ("warn" if v.get("fail") else "ok"),
+                    f"连着失败 {v.get('fail', 0)} 次" if v.get("fail") else "", o)
+            n = memewiki._net
+            o = float(n.get("off") or 0)
+            add("学梗", "梗百科在线（cnmeme.wiki）", "off" if now < o else ("warn" if n.get("fail") else "ok"),
+                f"连着失败 {n.get('fail', 0)} 次" if n.get("fail") else "", o)
+        except Exception as e:
+            add("学梗", "梗库来源", "warn", f"读不到状态：{e!r}"[:80])
+        try:
+            st = anim.status() if hasattr(anim, "status") else {}
+            if st:
+                add("动画", "Seedance 做动画", "warn" if st.get("last_error") or st.get("pause_why") else "ok",
+                    st.get("pause_why") or st.get("last_error") or "")
+        except Exception:
+            pass
+        return out
+
+    async def _other_recall(self, ev):
+        """别人撤回了自己的话（群管撤回别人的也算）（10-30 小明：「撤回消息就不要回复了」）
+        ① 还排着没回 → 不回了；正在回的就是这句 → 打字刹车（没发的不发了）
+        ② 聊天记录里那句换成「[撤回了一条消息]」：她以后提不到、也不提炼成记忆（按天的原始存档不动）
+        ③ 在跟她聊（她正在回这句；或这句在等她回 / 她回过、且她 3 分钟内在这儿说过话）→ 有时让她自己决定要不要对「他撤回了」说一句
+           （只给状态、不写死话术 —— 10-30 已知错误 E1；最近说过的当参照防重复）
+           （同一个对话 10 分钟最多一次；别人家的 AI 撤回不说）"""
+        gid = str(ev.get("group_id", "") or "")
+        uid = str(ev.get("user_id", "") or "")
+        mid = ev.get("message_id")
+        if mid is None or not uid:
+            return
+        scene = "group" if gid else "private"
+        key = f"group_{gid}" if gid else f"private_{uid}"
+        smid = str(mid)
+        pending = speaking = False
+        p = self.pending_reply.get(key)
+        if p:
+            c = p.get("ctx") or {}
+            if p.get("speaking") and str(c.get("msg_id")) == smid:
+                c["recalled"] = speaking = True
+            else:
+                who = c.get("who") or []
+                keep = [x for x in who if str(x.get("msg_id")) != smid]
+                if len(keep) < len(who):
+                    pending = True
+                    c["who"] = keep
+                    if not keep and not p.get("speaking"):
+                        if p.get("task"):
+                            p["task"].cancel()
+                        self.pending_reply.pop(key, None)
+        found = replied = False
+        name = ""
+        last_me = 0.0
+        async with mem_lock(key):
+            mem = load_mem(key, scene)
+            for h in mem["history"]:
+                if h.get("role") == "user" and str(h.get("mid")) == smid and not h.get("recalled"):
+                    found, replied, name = True, bool(h.get("replied")), h.get("name") or ""
+                    h["text"], h["recalled"] = "[撤回了一条消息]", True
+                    h["replied"] = True    # 扫私聊补回别再回这句
+                elif h.get("role") == "assistant":
+                    last_me = max(last_me, float(h.get("ts") or 0))
+            if found:
+                save_mem(mem)
+        if not (found or pending or speaking):
+            return
+        # 「在跟她聊」：她正在回这句，或者（这句在等她回 / 她回过这句）且她 3 分钟内在这个对话里说过话
+        in_conv = speaking or ((pending or replied) and time.time() - last_me < 180)
+        log(f"[撤回] {key} {name or uid} 撤回了一句"
+            + ("（她正在回这句 → 没发的不发了）" if speaking else "（还没回 → 不回了）" if pending else "")
+            + ("；聊天记录里换成「[撤回了一条消息]」" if found else ""))
+        if control.is_bot(uid) or not in_conv:
+            return
+        cd = self.__dict__.setdefault("_recall_cd", {})
+        if time.time() < cd.get(key, 0) or random.random() >= float(B.get("recall_line_prob", 0.5)):
+            return
+        cd[key] = time.time() + float(B.get("recall_line_cooldown_min", 10)) * 60
+        await asyncio.sleep(random.uniform(1.5, 4.0))
+        line = await self._recall_line(scene, name or "他", replied or speaking)
+        if not line:
+            log(f"[撤回] {key} 她决定不说什么")
+            return
+        sent = await self.say(scene, gid if gid else uid, [line], conv=key)
+        if sent:
+            a_entry = {"role": "assistant", "name": BOT_NAME, "text": " ".join(sent), "ts": time.time()}
+            async with mem_lock(key):
+                mem = load_mem(key, scene)
+                mem["history"].append(a_entry)
+                save_mem(mem)
+            archive_append(key, a_entry)
+            log(f"[撤回] {key} 跟 {name or uid} 说了一句：{line}")
+
+    async def _state_line(self, kind, state, fallback=None):
+        """功能上必须说的那一句（交文件 / 没做成 / 唱不了 / 发不出去…）：上游只给状态（发生了什么、要让对方知道什么），
+        她自己说（10-30 v1.15.3 小明：「写死的接话真的非常弱」—— 以前这些是代码里写死的一句）。
+        同一类最近说过的几句给她当参照、别重复；模型调不通才用 fallback（照实的一句 不能让人干等）"""
+        said = self.__dict__.setdefault("_state_said", {}).setdefault(kind, [])
+        system = (PERSONA + "\n\n# 这一刻\n" + state
+                  + "\n就这件事说一句：很短、像你平时说话；怎么说你自己定。照实说（没做成就是没做成 别假装做了）；"
+                  "别提系统、程序、接口、报错这些幕后的词；别写表情包 / 语音这类标记。"
+                  + (("你最近这种时候说过：" + " / ".join(said[-4:]) + " —— 别用一样的说法。") if said else ""))
+        try:
+            out = await asyncio.wait_for(llm(system, [{"role": "user", "content": "（该你说这一句了）"}],
+                                             temperature=0.9, max_tokens=80, tag="状态一句"), 15)
+        except Exception as e:
+            log(f"[状态一句] {kind} 没生成出来 用照实的那句:", repr(e)[:80])
+            return fallback
+        out = str(out or "").split("%%STATE%%")[0]
+        line = next((x.strip() for x in out.splitlines() if x.strip() and "[[不说]]" not in x), "")
+        line = re.sub(r"\[\[[^\]]*\]\]", "", line).strip()[:60]
+        if not line:
+            return fallback
+        said.append(line)
+        del said[:-8]
+        return line
+
+    async def _recall_line(self, scene, name, saw):
+        """「他撤回了」要不要说一句、怎么说：上游只给状态，她自己说（不在代码 / 提示里写示范句）；不想说 → None"""
+        said = self.__dict__.setdefault("_recall_said", [])
+        state = (("群里" if scene == "group" else "私聊里") + f"「{name}」刚撤回了一条他自己发的消息；"
+                 + ("你已经看到过那句。" if saw else "你还没来得及回那句。") + "你们正在聊。"
+                 + "要不要对「他撤回了」这件事说一句、怎么说，你自己定；不想说就只写 [[不说]]。只写一句、很短，别提那句的内容。"
+                 + (("你最近对撤回说过：" + " / ".join(said[-5:]) + "——别再用一样的说法。") if said else ""))
+        try:
+            out = await asyncio.wait_for(llm(PERSONA + "\n\n# 这一刻\n" + state,
+                                             [{"role": "user", "content": "（对方撤回了一条消息）"}],
+                                             temperature=0.9, max_tokens=80, tag="撤回"), 15)
+        except Exception as e:
+            log("[撤回] 想说的那句没生成出来:", repr(e)[:100])
+            return None
+        out = str(out or "").split("%%STATE%%")[0]
+        if "[[不说]]" in out:
+            return None
+        line = next((x.strip() for x in out.splitlines() if x.strip()), "")
+        line = re.sub(r"\[\[[^\]]*\]\]", "", line).strip()[:40]
+        if line:
+            said.append(line)
+            del said[:-10]
+        return line or None
+
+    async def _fix_notice(self, ev):
+        """她的消息被别人撤回（group_recall）/ 她被移出群（group_decrease kick_me）"""
+        if not fixup.on():
+            return
+        gid = str(ev.get("group_id", ""))
+        me = str(ev.get("self_id", "") or self.self_id)
+        uid, op = str(ev.get("user_id", "")), str(ev.get("operator_id", "") or "")
+        opn = self.members.get((gid, op)) or op
+        try:
+            if ev.get("notice_type") == "group_recall":
+                if uid != me or not op or op == me:
+                    return                         # 别人撤回自己的 / 她自己撤回的（恶作剧撤回）不算
+                fe = fixup.on_recall(gid, ev.get("message_id"), op, opn, op_bot=control.is_bot(op))   # 老板 / 真人群管撤回的不算
+            elif ev.get("sub_type") == "kick_me" or (uid == me and ev.get("sub_type") == "kick"):
+                gname = ""
+                try:
+                    gname = str((cross.group_names() or {}).get(gid) or "") if hasattr(cross, "group_names") else ""
+                except Exception:
+                    gname = ""
+                fe = fixup.on_kick(gid, op, opn, gname)
+            else:
+                return
+        except Exception as e:
+            log("[纠错] 通知那条出错:", repr(e)[:100])
+            return
+        if fe:
+            self._fix_event(fe)
+
+    async def _fix_enforce(self, raw, fx, system, used, max_tok, key, name):
+        """要只发数字的这一条（fixup.turn 认出来的验证题）：发之前用代码查一遍 → 返回要发的那句 / None（不发）
+        不合格：先从她自己写的里面取（「26 嘛 这还要想」→「26」）；取不出来 → 带着「哪不合格」重写一次；还不行就不发
+        只从她写的里面取 不替她算（重写那次只能出一个数字 不用再过「别说私聊里的事」那道）"""
+        con = fx.get("con") or {}
+        vis = fixup.visible(raw)
+        ok, fixed = fixup.check(con, vis)
+        if ok:
+            return fixed or vis                    # 全角的「２６」也按半角发
+        if fixed:
+            log(f"[纠错] {key} 回「{name}」这条要{con.get('desc')}：她写的「{vis[:30]}」→ 只发「{fixed}」")
+            return fixed
+        m2 = [dict(x) for x in used]
+        nd = fixup.nudge(con, vis)
+        m2[-1]["content"] = (m2[-1]["content"] + "\n\n" + nd) if isinstance(m2[-1].get("content"), str) else \
+            list(m2[-1].get("content") or []) + [{"type": "text", "text": nd}]
+        try:
+            raw2 = await llm(system, m2, temperature=fx.get("temperature"), max_tokens=max_tok)
+        except Exception as e:
+            log(f"[纠错] {key} 重写那一次失败:", str(e)[:100])
+            return None
+        raw2, _st2 = strip_state(raw2)
+        vis2 = fixup.visible(raw2)
+        ok, fixed = fixup.check(con, vis2)
+        if ok or fixed:
+            out = fixed or vis2
+            log(f"[纠错] {key} 回「{name}」她写的「{vis[:24]}」不合「{con.get('desc')}」→ 重写了一次：「{out[:30]}」")
+            return out
+        log(f"[纠错] {key} 回「{name}」重写了还是不合「{con.get('desc')}」（{vis2[:30]}）→ 这条不发")
+        return None
 
     def _sync_ban(self, gid, md, g):
         """开机/每 6 小时：按 QQ 查到的禁言状态校一下（漏收了禁言/解禁通知也能对上）"""
@@ -3752,7 +4398,7 @@ class FatFish:
     async def _follow_judge(self, hist, key, scene, gid, uid, name, text, now, msg_id, why):
         """拿不准是不是在接她的话：让模型看最近几条判断 是的话照常攒一攒再回"""
         try:
-            ok = await asyncio.wait_for(followup.judge(llm, hist, name, text, now, BOT_NAME, log), 8)
+            ok = await asyncio.wait_for(followup.judge(jllm("followup", key, 8, [uid]), hist, name, text, now, BOT_NAME, log), 8)
         except Exception:
             ok = False
         if not ok:
@@ -3775,6 +4421,8 @@ class FatFish:
         person = {"uid": str(uid), "name": name, "msg_id": msg_id, "at_me": bool(at_me), "called": bool(called),
                   "addr": scene == "private" or bool(addressed), "follow": bool(follow), "t0": now, "t1": now,
                   "seq": self._qseq}
+        if at_me or called or addressed or follow:   # 找她的那一条（引用它 不引用他后来随手补的一句 10-31 v1.15.16）
+            person["ask_mid"] = msg_id
         if late:
             person["late"], person["late_why"] = late, late_why
         if texts:
@@ -3793,12 +4441,45 @@ class FatFish:
             p["task"].cancel()
         self.pending_reply[key] = {"ctx": ctx, "task": asyncio.create_task(self._reply_later(ctx))}
 
+    def _quote_mid(self, ctx, key, scene, said=""):
+        """群里这句引用哪条（10-31 v1.15.16 小明：「引用了别人的话」「不该引用却引用了」）
+        只引用「找她的那一条」（@她 / 叫她 / 回她 / 接着跟她聊）—— 不是那人后来随手补的一句；
+        这轮好几个人在等：她这句里提到了谁的名字就引用谁的 否则排第一的那个；那人没找她（她自己插话）→ 不引用；
+        只有一个人找她、找她那条之后群里没别人说话（她紧接着回 一来一回）→ 不引用"""
+        if scene != "group":
+            return None
+        who = [p for p in (ctx.get("who") or []) if p.get("ask_mid") is not None]
+        if not who:
+            return None
+        head = ctx.get("head") or {}
+        pick = None
+        if len(who) > 1:
+            s = str(said or "")
+            named = [p for p in who if len(str(p.get("name") or "").strip()) >= 2 and str(p["name"]).strip() in s]
+            if len(named) == 1:
+                pick = named[0]
+        if pick is None:
+            pick = next((p for p in who if str(p.get("uid")) == str(head.get("uid"))), None)
+        if pick is None:
+            return None
+        try:
+            hist = load_mem(key, scene)["history"]
+        except Exception:
+            return pick["ask_mid"]
+        idx = next((i for i in range(len(hist) - 1, -1, -1) if str(hist[i].get("mid")) == str(pick["ask_mid"])), None)
+        if idx is None:
+            return pick["ask_mid"]
+        between = [h for h in hist[idx + 1:] if h.get("role") == "assistant" or str(h.get("uid")) != str(pick["uid"])]
+        return pick["ask_mid"] if (between or len(who) > 1) else None     # 好几个人等着：引用了才分得清回的谁
+
     def _add_person(self, ctx, person, key=""):
         who = ctx.setdefault("who", [])
         for x in who:
             if x["uid"] == person["uid"]:   # 同一个人又说了一句：更新成最新那句
                 x.update(name=person["name"], msg_id=person["msg_id"], t1=person["t1"],
                          seq=person.get("seq", x.get("seq", 0)))
+                if person.get("ask_mid") is not None:
+                    x["ask_mid"] = person["ask_mid"]
                 for f in ("at_me", "called", "addr", "follow"):
                     x[f] = x.get(f, False) or person[f]
                 if person.get("texts"):
@@ -3851,7 +4532,7 @@ class FatFish:
 
     def _decide_start(self, fresh):
         known = "、".join(k.split("/")[0] for k in slang.load()["terms"])
-        return asyncio.create_task(asyncio.wait_for(websearch.decide(llm, fresh, known, log), 10))
+        return asyncio.create_task(asyncio.wait_for(websearch.decide(jllm("search", "", 10), fresh, known, log), 10))
 
     def _spec_decide(self, ctx):
         """私聊攒消息等的那几秒 先把「要不要上网查」问了（10-27 晚：以前要等攒完了才问 每次多等一两秒）"""
@@ -3960,8 +4641,23 @@ class FatFish:
         if commit.hold(key, uid) == "all":         # 排着队的时候 她已经说了要走（说到做到）：不回了（私聊的回来再补）
             log(f"[说到做到] {key} 排着队等她回的「{name}」这条不回了（她刚说了要走）")
             return
+        if fixup.on() and not is_owner and fixup.stopped(key, uid):
+            # 纠错止损中（10-28 v1.11.0）：接话裁判 / 补回 / 私聊补扫这些路过来的也不回（handle 里只拦了直接 @ 的）；
+            # 他这几条标成回过了（不然一直排着 停完了又一股脑回一遍）
+            async with mem_lock(key):
+                mem = load_mem(key, scene)
+                for h in self._mine(mem["history"], uid, n=50, private=scene == "private"):
+                    h["replied"] = True
+                save_mem(mem)
+            fl = self.__dict__.setdefault("_fix_log", {})
+            if time.time() - fl.get((key, str(uid)), 0) > 60:
+                fl[(key, str(uid))] = time.time()
+                log(f"[纠错] {key} 排着队等她回的「{name}」：刚才改了几次还是被判不对 先停着（还有 "
+                    f"{fixup.stop_left(key, uid) // 60 + 1} 分钟）不回")
+            return
 
         # 回复前：要不要先上网查？（不认识的梗 → 学下来记住；人名/新闻/不确定的事 → 查了给她看）
+        ctx.pop("_outage", None)           # 这一轮给她看过哪几样「坏着」（C21）：每轮重新算
         web_txt = ""
         meme_known = []                    # 梗百科 / 梗库真认出来的梗（10-28 审查 reply-14）
         try:
@@ -4005,6 +4701,11 @@ class FatFish:
                 found.append((q, await asyncio.wait_for(
                     websearch.search(q, log, ori=(fresh[-1][:128] if fresh else None)), 20)))
             web_txt += websearch.block(found)          # 10-26 以前这里是 = 把上面「没查明白的梗」冲掉了
+            if found and not any(r for _, r in found) and B.get("outage_persona", False):
+                ob = outage.block("search", "上网查东西")   # 功能坏了时她怎么说（C21 10-30，默认关）
+                if ob:
+                    web_txt += ob
+                    ctx.setdefault("_outage", []).append("search")
         except Exception as e:
             log("[搜索] 回复前查资料失败:", repr(e)[:120])
         qz_dyn, qz_items, qz_gitem, qz_visit = "", [], None, None
@@ -4016,10 +4717,12 @@ class FatFish:
                 log("[空间] 这一轮出错（这轮不带）:", repr(e)[:120])
 
         think, prank, hum = False, None, {}        # 幽默（10-27 晚）：这轮开不开思考 / 冒充老板演到哪 / 认出了什么
+        fx = {}                                    # 纠错（10-28 v1.11.0 fixup.py）：这一轮要不要换做法 / 有没有格式要求
         inj_ids = []                               # 这一轮注入的记忆（记忆强化 10-28 v1.9.4）
         card_mode, card_info = None, {}            # 恶作剧（10-28 v1.10.0）：offer 自发给了机会 / order 点单 / reveal 该拆穿了
         job = None                                 # 做东西（10-28 v1.7.0）
         resend = None                              # 他说没看到文件 → 回完把上一个文件真的再发一次（10-28 v1.9.1）
+        read_lines = None                  # 「读懂」层要的前文（锁里取 锁外读）
         async with mem_lock(key):
             mem = load_mem(key, scene)
             # 看最近还没看过的图（图和 @ 常常分开发）
@@ -4045,6 +4748,15 @@ class FatFish:
                 return                     # 这个人的话已经回过了
             query = " ".join(texts)
             waiting = [x for x in (ctx.get("who") or []) if x["uid"] != str(uid)]
+            if fixup.on():                 # 纠错（10-28 v1.11.0）：刚被他判了不对 / 他明说了格式 / 以前在他这儿吃过亏
+                try:
+                    fx = fixup.turn(key, scene, str(uid), name, texts, time.time(),
+                                    isbot=control.is_bot(uid), owner=is_owner) or {}
+                except Exception as e:
+                    fx = {}
+                    log("[纠错] 这一轮出错（不带）:", repr(e)[:120])
+                if fx.get("block"):
+                    log(f"[纠错] {key} 回「{name}」这一轮：{fixup.describe(fx)}")
 
             if scene == "group":
                 scene_txt = (f"你在一个 QQ 群里。刚跟你说话的是「{name}」"
@@ -4141,20 +4853,35 @@ class FatFish:
                            if h.get("role") == "user" and time.time() - float(h.get("ts") or 0) < 180
                            and id(h) not in said_now and (h.get("text") or "") not in texts]
             vmode = voice.plan(key, scene, fresh_user_texts, heard_voice, recent_said)
+            if fx.get("active"):
+                vmode = "off"              # 纠错 / 有格式要求的这一条：不发语音
             if vmode not in ("off", "ask_off") and commit.has(key, "novoice"):
                 vmode = "no"               # 她说过这阵子不发语音（说到做到）
-            dyn += voice.block(vmode)
+            ob = outage.block("voice", "发语音（说话）") if (vmode == "ask_off" and B.get("outage_persona", False)) else ""
+            if ob:                         # 语音真坏了、他又在要：只给她状态 她自己说（C21 10-30，默认关）
+                dyn += ob
+                ctx.setdefault("_outage", []).append("voice")
+            else:
+                dyn += voice.block(vmode)
             if vmode not in ("off", "no"):
-                log(f"[语音] {key} 这轮：{vmode}")
-            smode = sing.plan(key, scene, fresh_user_texts)
+                log(f"[语音] {key} 这轮：{vmode}" + ("（坏着：她自己说）" if ob else ""))
+            her_last = next((h for h in reversed(hist) if h.get("role") == "assistant"), None) or {}
+            try:                           # 她刚说到唱 他接一句没带「唱」字的也算（10-31 v1.15.8 盲测）；公开版的 sing.plan 不收这两个参数就照旧
+                smode = sing.plan(key, scene, fresh_user_texts, her_last.get("text") or "", her_last.get("ts") or 0)
+            except TypeError:
+                smode = sing.plan(key, scene, fresh_user_texts)
+            if fx.get("active"):
+                smode = None
             if smode and commit.has(key, "nosing"):
                 smode = None               # 她说过这阵子不唱（说到做到 下面那段会告诉她）
-            dyn += sing.block(smode, fresh_user_texts)
+            dyn += sing.block(smode, fresh_user_texts, key)
             if smode:
                 log(f"[唱歌] {key} 这轮：{smode}")
             # 做动画：有人要的时候才告诉她这一轮能不能做（能做就教她写标记 做不了就让她直说）
             amode, awhy = anim.plan(key, str(uid), is_owner,
                                     (galgame.get(uid, name, is_owner) or {}).get("favor", 0), fresh_user_texts)
+            if fx.get("active"):
+                amode, awhy = "off", ""
             a_img = next((x[1] for h in reversed(mine) for x in (h.get("imgs") or [])
                           if len(x) > 1 and str(x[1]).startswith("http")), None)
             a_can_img = bool(a_img) and (is_owner or not anim.A.get("user_image_owner_only", True))
@@ -4170,7 +4897,7 @@ class FatFish:
             if not any(h.get("fake_owner") for h in mine):   # 冒充老板的那种交给幽默那段将计就计
                 dyn += boss_hint(query, is_owner)  # 他提到老板的名字 / 问谁做的你（10-27 晚）
             job = None                     # 做东西（10-28 v1.7.0）：写网页 / 代码这种大活 → 先答应一句 另外做完整 存成文件发
-            if MK.get("enabled", True) and (scene == "private" or at_me or called):
+            if MK.get("enabled", True) and (scene == "private" or at_me or called) and not fx.get("active"):
                 # 群里正在做的 / 刚交货的、交货以后说的话 都只认他自己的（10-28 Gemini 复查 #4：以前整个群一份 B 的「改成…」改的是 A 的）
                 lm, mh = _last_make(mem, scene, uid), _hist_of(mem, scene, uid)
                 slot = _mk_slot(key, uid)
@@ -4180,6 +4907,7 @@ class FatFish:
                     job = maker.want_again(texts, busy or lm)
                     if job:
                         log(f"[做东西] {key} {name} 要把{'正在做' if busy else '刚做'}的{job['kind']}改了重做（{' / '.join(texts)[-40:]}）")
+                owe_job = None
                 if not job and not busy:   # 刚交货 他说「返工」+ 哪不对 / 问「改好的呢」「发哪了」（10-28 v1.9.1）
                     fu = maker.followup(texts, lm, mh)
                     if fu and fu[0] == "fix":
@@ -4189,10 +4917,20 @@ class FatFish:
                         resend = lm
                         dyn += maker.resend_block(resend)
                         log(f"[做东西] {key} {name} 说没看到文件（交货以后没说要改）→ 把「{resend.get('file')}」再发一次")
+                    else:                  # 交货一小时以后：他问起那件还欠着没改的（她问「收到没」他说「没」）（10-28 23:09 v1.11.1）
+                        ow = maker.owed(texts, lm, mh)
+                        if ow:
+                            job = owe_job = ow[1]
+                            log(f"[做东西] {key} {name} 问起还欠着没改的「{lm.get('file')}」（交货以后说的："
+                                f"{' / '.join(job.get('said') or [])[-50:]}）→ 照他说的重做")
                 if not job and busy:
                     dyn += (f"\n（你正在做他要的{busy['kind']}（「{' / '.join(busy.get('said') or [])[-60:]}」）还没做好："
                             "他问起来就说在弄了 快好了 —— 别说做好了、别说明天再做）\n")
-                dyn += maker.truth_block(lm, mh, busy=busy)
+                tb = maker.truth_block(lm, mh, busy=busy)
+                if not tb and (owe_job or (maker.pending(lm, mh)
+                                           and maker.about(lm, list(texts) + maker._her_recent(mh, 3)))):
+                    tb = maker.truth_block(lm, mh, busy=busy, force=True)    # 说的正是那件还欠着没改的（过了 6 小时也给她看）
+                dyn += tb
                 if job:
                     q_ok, q_why = MAKE_Q.allow(uid, is_owner, clock.strf("%Y-%m-%d"))
                     if q_ok:
@@ -4210,7 +4948,7 @@ class FatFish:
             if short_hit:
                 dyn += memewiki.short_block(texts[-1])
                 log(f"[梗百科] {key} {name}「{short_hit[0]}」整句是网络用语：{short_hit[1][:20]}")
-            if humor.on():                 # 幽默（10-27 晚）：这一轮有梗 / 有图 / 有坑 / 在逗她 → 告诉她怎么接 + 开思考
+            if humor.on() and not fx.get("active"):   # 幽默（10-27 晚）：这一轮有梗 / 有图 / 有坑 / 在逗她 → 告诉她怎么接 + 开思考
                 try:
                     has_img = any(h.get("imgs") or h.get("vids") for h in mine)
                     # 梗库 / 梗百科真认出来了才算在玩梗（10-28 审查 reply-14：以前看 web_txt 里有没有「梗」字 ——
@@ -4234,9 +4972,11 @@ class FatFish:
                         log(f"[幽默] {key} {name} 这一轮：{'、'.join(humor.tags(hum))}" + ("；开思考" if think else ""))
                 except Exception as e:
                     log("[幽默] 出错（这轮不带）:", repr(e)[:120])
-            if not prank and prankmod.on():  # 恶作剧（10-28 v1.10.0）：不跟着幽默的开关走（复查：幽默关了 点单 / 拆穿都不动了）
+            if not prank and prankmod.on() and not fx.get("active"):  # 恶作剧（10-28 v1.10.0）：不跟着幽默的开关走（复查：幽默关了 点单 / 拆穿都不动了）
                 dyn += self._card_turn(key, scene, gid, uid, name, is_owner, texts, ctx, hum, card_info)
                 card_mode = card_info.get("mode")
+            if fx.get("block"):            # 纠错 / 格式要求 / 以前的教训：放在这一轮的情况最后（离 focus 最近）
+                dyn += fx["block"]
             msgs = to_messages(mem, focus, dynamic=dyn)
             t0 = time.time()
             ctx["t0"] = t0
@@ -4244,6 +4984,24 @@ class FatFish:
             # 同一个人追加的话 时间戳是进锁之前取的、比 t0 还早 以前按「ts <= t0」被标成回过了、他也跟着出队 以后再也不回
             seen = {str(h["mid"]) for h in mem["history"] if h.get("role") == "user" and h.get("mid") is not None}
             ctx["seen"], ctx["seq0"] = seen, self._qseq
+            rc = _read_cfg()
+            read_lines = None
+            if rc.get("enabled") and not fx.get("active") and texts and \
+                    (not rc.get("direct_only", True) or scene == "private" or at_me or called or bool(ctx.get("addr") or ctx.get("follow"))):
+                read_lines = [f'{"她" if h.get("role") == "assistant" else (h.get("name") or "某人")}: {str(h.get("text") or "")[:160]}'
+                              for h in mem["history"][-13:-1]]
+        if read_lines is not None:         # 「读懂」层：锁外面做（不堵后面的消息）；超时 / 出错就不带
+            try:
+                rq = f"【最近的聊天】\n" + "\n".join(read_lines) + f"\n【她要回的】{name}: {' / '.join(texts[-3:])[:300]}"
+                note = await asyncio.wait_for(jllm("read", key, uids=[uid])(READ_SYS.format(bot=BOT_NAME), [{"role": "user", "content": rq}],
+                                                                           temperature=0.2, max_tokens=300),
+                                              float(_read_cfg().get("timeout", 8)))
+                note = str(note or "").strip()[:600]
+                if note:
+                    msgs[-1]["content"] += "\n\n[系统] ———— 读懂这句（理解笔记 不是台词）————\n" + note
+                    log(f"[读懂] {key} {name}：" + note[:100].replace("\n", " / "))
+            except Exception as e:
+                log("[读懂] 这轮没读成（照常回）:", repr(e)[:80])
 
         effort = None
         pt = str(B.get("private_think") or "").strip().lower()
@@ -4252,6 +5010,10 @@ class FatFish:
         po = str(B.get("private_think_owner") or "").strip().lower()
         if scene == "private" and is_owner and po in ("low", "high", "max") and not think:
             think, effort = True, po       # 老板私聊也开（10-28 behavior.private_think_owner：时差、错别字、做没做过的事 想一下再说）
+        if fx.get("con"):                  # 有格式要求的这一条：别想太久（验证题常常限时 60 秒）格式交给发之前的代码查
+            think, effort = False, None
+        elif fx.get("think") and not think:  # 连着被判不对、又看不出要什么格式：想一下再回
+            think, effort = True, "low"
         ekw = {"effort": effort} if effort else {}
         if think and not effort:           # 回梗那轮（humor 要的）开的思考：思考的 token 照旧记「回梗思考」（10-28 审查 panel-5）
             ekw["think_tag"] = "回梗思考"
@@ -4263,22 +5025,36 @@ class FatFish:
         t_gen = time.time()                # 从这儿开始算她在「想」（第一条的打字时间扣掉这段 10-27 晚）
         if B.get("native_vision", True):
             try:
-                mm = await media.attach(msgs, hist, log, only_uid=img_uid, again=query)   # 追问刚才那张图 → 再看一眼（10-28）
+                mm = await media.attach(msgs, hist, log, only_uid=img_uid, again=query,   # 追问刚才那张图 → 再看一眼（10-28）
+                                        since=(min(float(h.get("ts") or 0) for h in mine) - 1) if (scene == "group" and mine) else None)
             except Exception as e:
                 log("[原图] 附图失败:", repr(e)[:120])
         used = mm or msgs
+        # 开思考的这一轮（回梗 = humor；私聊轻思考 / 纠错想一下 = think）走判断模型实验的入口（10-29 judge.py）：
+        # config → judge.routes 切到 anthropic 时这一轮的回复是 Claude 写的；默认 deepseek = 原来的 llm
+        rllm = jllm("humor" if ekw.get("think_tag") == "回梗思考" else "think", key) if think else llm
+        # 有人找她（私聊 / @ / 叫名字 / 引用 / 在接她的话）的回复：judge.routes.reply 指 anthropic → Claude（reply_model 默认 Opus）
+        # 写（10-31 v1.15.11 盲测第三轮：Opus 直接说 赢 5 / 最差 1，DeepSeek 赢 2 / 最差 5）；出错 / 超时 / 今天花到上限 → 退回原来的
+        sought = scene == "private" or at_me or called or bool(ctx.get("addr") or ctx.get("follow"))
+        rkind = ("reply" if sought else (None if think else "reply_auto"))
+        # reply_auto：没人找她、她自己插话的那几条（10-31 v1.15.12 动态用量 第 3 档才交给 Claude）
+        to_claude = bool(rkind) and judge.route(rkind) == "anthropic"
+        if to_claude:
+            rllm = jllm(rkind, key, uids=[uid])
         try:
             try:
-                raw = await llm(system, used, max_tokens=max_tok, think=think, **ekw)
+                raw = await rllm(system, used, temperature=fx.get("temperature"), max_tokens=max_tok, think=think, **ekw)
             except Exception as e:
                 if not mm:
                     raise
                 log("[原图] 模型不收图，改用文字描述:", str(e)[:150])
                 used = msgs
-                raw = await llm(system, msgs, max_tokens=max_tok, think=think, **ekw)
+                raw = await rllm(system, msgs, temperature=fx.get("temperature"), max_tokens=max_tok, think=think, **ekw)
         except Exception as e:
             log("生成失败:", str(e)[:200])
             return
+        if to_claude and raw:              # 看 Claude 守不守状态行（心情 / 好感 / 答应了什么都靠它）
+            log(f"[回复模型] {key} {name} 交给 Claude（{'有人找她' if rkind == 'reply' else '她自己插话'}）" + ("" if "%%STATE%%" in raw else "（这条没写状态行）"))
         if pfacts and raw:                 # 群里：别把私聊里才有的事说出来
             raw = await self._no_leak(raw, system, cross_txt, cross_safe, used, pfacts,
                                       (name, call_now), max_tok, key, name)
@@ -4288,7 +5064,7 @@ class FatFish:
             m2[-1]["content"] = (m2[-1]["content"] + "\n\n" + nudge) if isinstance(m2[-1].get("content"), str) else \
                 list(m2[-1].get("content") or []) + [{"type": "text", "text": nudge}]
             try:
-                raw2 = await llm(system, m2, max_tokens=max_tok, think=think, **ekw)
+                raw2 = await rllm(system, m2, max_tokens=max_tok, think=think, **ekw)
                 if raw2 and "[[不说]]" not in raw2:
                     raw = raw2
                 log(f"[私聊] {name} 她本来想不回 → " + ("回了" if raw is raw2 else "还是不回（这次就算了）"))
@@ -4318,12 +5094,30 @@ class FatFish:
         if commit.hold(key, uid) == "all":         # 她想这句的时候 别的回复里已经说了要走（说到做到）：这句不发
             log(f"[说到做到] {key} 正要回「{name}」时她已经说了要走 → 这句不发：{raw[:30]}")
             return
+        if fx.get("con"):                          # 纠错（10-28 v1.11.0）：要只发数字的这一条 发之前用代码查一遍
+            raw = await self._fix_enforce(raw, fx, system, used, max_tok, key, name)
+            if raw is None:                        # 取不出来、重写了还不行：这条不发 —— 当成她选了不说（照常标成回过 不卡住后面的）
+                raw = "[[不说]]"
+        if fx.get("active"):                       # 纠错 / 有格式要求：表情包、语音、唱、动画、封面标记都去掉 立绘也不换
+            raw = fixup.plain(raw)
+            if state:
+                state.pop("face", None)
         raw, aspec = anim.extract(raw)
         raw, sreq, raw_after = sing.extract(raw)      # [[唱:歌名]]：先发前面的话 → 唱 → 再发后面的话
         if sreq and commit.has(key, "nosing"):
             log(f"[说到做到] {key} 她说过这阵子不唱 这次写了唱歌标记 → 不唱")
             raw, sreq, raw_after = (raw + "\n" + raw_after).strip(), None, ""
+        react = None                       # [[贴:赞]]：在他那条消息上贴个表情回应（C18 10-30 v1.15.2）；只贴不说 = 这一轮不发字
+        mreact = REACT_MARK.search(raw)
+        if mreact:
+            raw = REACT_MARK.sub("", raw).strip()
+            if scene == "group" and not fx.get("active") and ctx.get("msg_id") is not None:
+                react = mreact.group(1).strip()
+                if not stickers.strip(raw).strip():
+                    raw = "[[不说]]"
         silent = "[[不说]]" in raw
+        if react:
+            asyncio.create_task(self._react_as(key, ctx.get("msg_id"), react, name, only=silent))
         if silent:
             sreq = None
         bigs = []                          # 回复里够长的代码块（10-28 v1.7.0）：存成文件发 聊天里不贴整段代码
@@ -4336,10 +5130,14 @@ class FatFish:
             elif job and bigs:
                 log(f"[做东西] {key} 她先回的那句里就写完了 → 直接存成文件发 不另外做")
                 job = None
-            if not raw.strip() and (bigs or job):
-                raw = "给你" if bigs else "行 等我弄一下"
+            if not raw.strip() and (bigs or job):   # 她只写了代码 / 什么都没说：先回他的那句也由她自己说（10-30 v1.15.3 以前写死「给你」「行 等我弄一下」）
+                raw = await self._state_line(
+                    "make_send" if bigs else "make_ack",
+                    (f"「{name}」要的东西你写好了 马上作为文件发给他（文件跟在你这句后面）。" if bigs else
+                     f"「{name}」要你做个东西 你答应了 现在去做（要一会儿 做好了会作为文件发给他）。先回他一句。"),
+                    "给你" if bigs else "行 等我弄一下")
         segs_out = [] if silent else split_reply(
-            detic(raw), int(B.get("group_max_segments", 2)) if scene == "group" else None)
+            detic(raw), 1 if fx.get("active") else (int(B.get("group_max_segments", 2)) if scene == "group" else None))
         segs_after = split_reply(detic(raw_after), 1) if sreq and raw_after else []
         if prank == "card" and card_info.get("bot"):   # 点单整别人家的 AI：只发一句（不跟着来回 复查）
             segs_out, segs_after = segs_out[:1], []
@@ -4357,20 +5155,29 @@ class FatFish:
             target = gid if scene == "group" else uid
             if scene == "group":           # 她说话的时候别人回她 也能认出来是在接她
                 followup.note_speaking(gid, t0, voice.strip(stickers.strip(" ".join(segs_out + segs_after))), answered)
-            cap_tok = _SEND_CAP.set([]) if prank == "card" else None     # 恶作剧那一轮：记下发出去的消息 id（能撤回）
-            try:
-                sent = await self.say(scene, target, segs_out, reply_to=ctx.get("msg_id"),
-                                      pic=bili.latest_pic(), conv=key, lead=time.time() - t_gen) if segs_out else []
+            qmid = None if fx.get("active") else self._quote_mid(ctx, key, scene, " ".join(segs_out))
+            # 记下这一轮发出去的消息 id：恶作剧那一轮能撤回；被别人撤回时纠错认得出是回谁的那条（10-28 v1.11.0）
+            cap_tok = _SEND_CAP.set([])
+            mids_now = []
+            try:                           # 纠错 / 有格式要求的那一条：不引用（有的验证程序把引用也当成多出来的字）
+                sent = await self.say(scene, target, segs_out, reply_to=qmid,
+                                      pic=bili.latest_pic(), conv=key, lead=time.time() - t_gen, brake=ctx) if segs_out else []
             finally:
-                if cap_tok is not None:
-                    card_info["mids"] = list(_SEND_CAP.get() or [])
-                    _SEND_CAP.reset(cap_tok)
+                mids_now = list(_SEND_CAP.get() or [])
+                if prank == "card":
+                    card_info["mids"] = mids_now
+                _SEND_CAP.reset(cap_tok)
             if sreq:
                 sinfo = {}
                 sung = await self._sing(scene, target, key, sreq, None if sent else ctx.get("msg_id"),
                                         said=" ".join(segs_out + segs_after), info=sinfo)
                 if sung:
                     sent = list(sent or []) + [sung]
+                if sinfo.get("sung"):      # 真唱出来了：答应过他的「唱歌」划掉（10-31 v1.15.17）
+                    try:
+                        commit.sung(key, uid, (sreq or {}).get("name") or "", log=log)
+                    except Exception as e:
+                        log("[说到做到] 唱完划掉答应出错:", repr(e)[:100])
                 if segs_after and not sinfo.get("sung"):     # 没唱成：后面那句（「怎么样 好听吧」）不发了（10-28 审查 reply-6）
                     log(f"[唱歌] {key} 没唱成 → 后面那句不发：{' '.join(segs_after)[:30]}")
                     segs_after = []
@@ -4390,6 +5197,32 @@ class FatFish:
                 self._start_make(key, self._make_job_of(job, scene, target, key, uid, name, is_owner, texts, ctx.get("msg_id")))
                 charge.clear()             # 名额交给 make_file：没做成 / 开做没多久就被取消 它那儿还（10-28 Gemini 复查 #4）
             if sent:
+                for of in ctx.pop("_outage", None) or []:      # 这次故障她第一次怎么说的：记下 以后保持一致（C21）
+                    try:
+                        outage.note_said(of, voice.strip(stickers.strip(" ".join(x for x in sent if not str(x).startswith("[")))))
+                    except Exception as e:
+                        log("[故障说法] 记的时候出错:", repr(e)[:80])
+                if stickerlib.ready(key):  # 表情包库影子（C31 10-31 v1.15.14）：她这句后面会不会接一张 —— 只记不发
+                    try:
+                        _said = voice.strip(stickers.strip(" ".join(x for x in sent if not str(x).startswith("["))))
+                        asyncio.create_task(stickerlib.shadow_pick(
+                            key, [(name, t) for t in (texts or [])[-4:]], _said, stickerdict.load()["items"],
+                            lambda sy, m: jllm("stickerpick", key, uids=[uid])(sy, m, temperature=0.1, max_tokens=120), log=log))
+                    except Exception as e:
+                        log("[表情包库] 影子挑图没起来:", repr(e)[:80])
+                if court is not None:      # 法庭 阶段 0：她这句是结案（坚持 / 改口）也是下次被质疑的那句
+                    try:
+                        court.on_reply(key, str(uid), name, voice.strip(stickers.strip(" ".join(x for x in sent if not str(x).startswith("[")))),
+                                       prompt=(texts[-1] if texts else ""), log=log)
+                    except Exception as e:
+                        log("[法庭] 记的时候出错:", repr(e)[:80])
+                if fixup.on():             # 纠错（10-28 v1.11.0）：记下她刚回了谁、回的什么（他接着判她不对 / 撤回她这条 认得出来）
+                    for fe in fixup.note_reply(key, scene, str(uid), name, " ".join(sent), t0, mids_now,
+                                               prompt=(texts[-1] if texts else ""), con=fx.get("con"),
+                                               machine=bool(fx.get("machine") or control.is_bot(uid))) or []:
+                        self._fix_event(fe)        # 撤回通知比她「发完」先到的那种（10 秒内对上）
+                    if fx.get("active"):
+                        log(f"[纠错] {key} 回「{name}」发了：{' / '.join(sent)[:40]}")
                 if scene == "group":
                     followup.note_sent(gid)
                     humor.repeat_mine(gid, " ".join(sent))
@@ -4447,7 +5280,9 @@ class FatFish:
                 while pos > 0 and mem["history"][pos - 1]["role"] == "user" \
                         and not self._was_seen(mem["history"][pos - 1], seen, t0):
                     pos -= 1
-                a_entry = {"role": "assistant", "name": BOT_NAME, "text": " ".join(sent), "ts": t0}
+                a_entry = {"role": "assistant", "name": BOT_NAME, "text": " ".join(sent), "ts": t0, "to": str(uid)}
+                if scene == "group" and qmid:
+                    a_entry["re"] = str(qmid)
                 if prank:                  # 演的 / 整人的那几句：不提炼成记忆（10-28 v1.10.0）
                     a_entry["prank"] = True
                 mem["history"].insert(pos, a_entry)
@@ -4512,7 +5347,7 @@ class FatFish:
             fb = None if (gone or prank) else remind_fallback(texts, said_txt, (state or {}).get("do"))
             if fb:                         # 他让她到点提醒、她答应了 但状态行漏写 → 补记（10-28）
                 log(f"[说到做到] {key} 她答应了「{name}」到点{fb['what'][:20]}（{fb['in']:g} 分钟后）但状态行没写 → 补记一条")
-                self._declare(key, scene, fb, said_txt, uid, name, "state")
+                self._declare(key, scene, fb, said_txt, uid, name, "state", ask=" / ".join(t for t in texts[-3:] if t))
                 stated = True
             if state and state.get("do") and not gone and not prank:      # 冒充老板那几句是演的：不记成承诺
                 do, mk = self._split_make_do(state.get("do"))
@@ -4520,7 +5355,7 @@ class FatFish:
                     self._make_from_do(key, scene, gid if scene == "group" else uid, uid, name, is_owner, mk, texts,
                                        _last_make(mem, scene, uid), ctx.get("msg_id"))
                 if do:
-                    self._declare(key, scene, do, said_txt, uid, name, "state")
+                    self._declare(key, scene, do, said_txt, uid, name, "state", ask=" / ".join(t for t in texts[-3:] if t))
                     stated = True
             if not (gone or prank or job or resend or code_info.get("file")) and MK.get("enabled", True) \
                     and _mk_slot(key, uid) not in self._make_conv:
@@ -4551,10 +5386,11 @@ class FatFish:
                                     "（她在逗他 刚才那几句是恶作剧 不是真的）" if prank == "card" else
                                     "（他在冒充她老板 她在逗他）" if prank else
                                     "（熟人）" if (galgame.get(uid, name, is_owner) or {}).get("favor", 0) >= 40 else "")
-            asyncio.create_task(_judge(llm, " / ".join(t for t in fresh_user_texts if t)[-400:], said_txt,
+            asyncio.create_task(_judge(jllm("mood", key, uids=[uid]), " / ".join(t for t in fresh_user_texts if t)[-400:], said_txt,
                                        who, log,
-                                       on_do=None if (prank or stated) else (lambda d, k=key, sc=scene, t=said_txt, u=uid, n=name:
-                                                                             self._declare(k, sc, d, t, u, n, "judge")),
+                                       on_do=None if (prank or stated) else (lambda d, k=key, sc=scene, t=said_txt, u=uid, n=name,
+                                                                             a=" / ".join(x for x in fresh_user_texts[-3:] if x):
+                                                                             self._declare(k, sc, d, t, u, n, "judge", ask=a)),
                                        names=name or "", conv=key))
 
         # 她自己说「我查一下」：去查 查到了补一句（10-28 审查 reply-9：她选了 [[不说]]、一句没发出去、他刚删了数据 都不补）
@@ -4653,7 +5489,9 @@ class FatFish:
             parts, more = maker.chunks(code)
             # 每段包一层 ```：say 见到 ``` 开头的那条不压空格（10-28 审查 reply-13：以前退回贴的代码缩进全压成一个空格 跑不了）
             parts = [f"```{lang}\n{p.rstrip()}\n```" for p in parts]
-            sent = await self.say(scene, target, parts + (["（太长了 后面的发不下了）"] if more else []), conv=conv) or []
+            tail = [await self._state_line("paste_cut", "文件发不出去 你把代码直接贴出来了 但太长 后面的发不下了。跟他说一声。",
+                                           "（太长了 后面的发不下了）")] if more else []
+            sent = await self.say(scene, target, parts + [x for x in tail if x], conv=conv) or []
             if sent:
                 out.append(f"[文件发不出去 把代码直接贴了 {len(parts)} 段]")
         return out
@@ -4768,8 +5606,9 @@ class FatFish:
                 dyn += maker.make_block(job, job.get("said") or [], _old_code(job))
                 msgs = to_messages(mem, None, dynamic=dyn)
             t_llm = time.time()
-            raw = await llm(system, msgs, max_tokens=int(MK.get("max_tokens", 32000)), think=True,
-                            effort=str(MK.get("effort", "high")), timeout=float(MK.get("timeout_sec", 600)), tag="做东西")
+            raw = await jllm("make", conv, uids=[uid])(            # 动态用量够第 2 档 → Claude（reply_model）做；不行退回 DeepSeek（10-31 v1.15.14）
+                system, msgs, max_tokens=int(MK.get("max_tokens", 32000)), think=True,
+                effort=str(MK.get("effort", "high")), timeout=float(MK.get("timeout_sec", 600)), tag="做东西")
             mj["out"] = time.time()            # 代码写好了：接下来是交货（10-28 Gemini 复查 #4）
             raw, _st = strip_state(raw)
             blocks, rest = maker.split(raw)
@@ -4797,19 +5636,28 @@ class FatFish:
         except Exception as e:
             log(f"[做东西] {conv} 做{job['kind']}出错:", repr(e)[:200])
             MAKE_Q.give_back(uid, job.get("charged"))
-            await self.say(scene, target, ["啊 弄砸了 刚才那个没做出来…你再说一次我重新弄"], conv=conv)
+            await self.say(scene, target, [await self._state_line(
+                "make_fail", f"你刚才答应给「{name}」做的{job['kind']}没做出来（你这边出了岔子）。跟他说一声；他再说一次你可以重新弄。",
+                "啊 弄砸了 刚才那个没做出来…你再说一次我重新弄")], conv=conv)
             return
         info = {}
         if not blocks:
             log(f"[做东西] {conv} 做{job['kind']}：她没写出代码（{raw[:60]}）")
             MAKE_Q.give_back(uid, job.get("charged"))
-            segs = split_reply(detic(rest), 2) or ["这个我没弄出来…换个说法再试试？"]
+            segs = split_reply(detic(rest), 2) or [await self._state_line(
+                "make_nocode", f"「{name}」要的{job['kind']}你这次没弄出来。跟他说一声；他换个说法再说一次可以再试。",
+                "这个我没弄出来…换个说法再试试？")]
             sent = await self.say(scene, target, segs, conv=conv)
         else:
             best = max(blocks, key=lambda b: len(b[1]))
-            wrap = split_reply(detic(maker.wrap_lines(rest)), 2) or ["弄好了 你打开看看"]    # 「这就来」不要（10-28 v1.9.1）
-            if not best[2]:
-                wrap.append("（太长了 后面断了一截 你说一声我再补上）")
+            wrap = split_reply(detic(maker.wrap_lines(rest)), 2)    # 「这就来」不要（10-28 v1.9.1）
+            if not wrap:                   # 她只写了代码：交货那句也她自己说（10-30 v1.15.3 以前写死「弄好了 你打开看看」）
+                wrap = [await self._state_line(
+                    "make_send", f"「{name}」要的{job['kind']}做好了 马上作为文件发给他（文件跟在你这句后面）。"
+                    + ("" if best[2] else "文件太长 后面断了一截 —— 告诉他 他说一声你再补上。"), "弄好了 你打开看看")]
+            elif not best[2]:
+                wrap.append(await self._state_line("make_cut", "你刚交给他的文件太长 后面断了一截。告诉他 他说一声你再补上。",
+                                                   "（太长了 后面断了一截 你说一声我再补上）"))
             files = []
             try:
                 sent = list(await self.say(scene, target, wrap, conv=conv) or [])
@@ -4823,6 +5671,19 @@ class FatFish:
             if not job.get("charged"):     # 以前的调用方式（没在开做时算上）：做完算一个
                 MAKE_Q.took(uid, clock.strf("%Y-%m-%d"))
         log(f"[做东西] {conv} {name} 要的{job['kind']} 做完了（{time.time() - t0:.0f} 秒）" + (f"：{what}" if what else ""))
+        if sent and any(str(x).startswith("[发了文件") for x in sent):
+            try:                           # 交了 → 这件事的「答应过、没说时间」划掉（10-30：不然下次他来 她还说「我欠着呢」又做一遍）
+                about = " ".join([what or "", job.get("kind") or "", job.get("what") or ""] + list(job.get("said") or []))
+                cands = commit.prom_open(conv, uid)
+                done = await self._kept_judge(name, about + " " + " ".join(x for x in files if str(x).startswith("[发了文件")),
+                                              cands) if cands else set()
+                if done is None:           # 判断模型调不通：退回粗规则
+                    commit.kept_promises(conv, uid, t0, about, log=log)
+                for p in cands:
+                    if done and p.get("id") in done:
+                        commit.drop_prom(conv, p["id"], by="交了东西、模型判这件就是答应的那件 → ", log=log)
+            except Exception as e:
+                log("[说到做到] 划掉答应出错:", repr(e)[:100])
         if sent:
             # 做的这会儿他把自己的数据删了：last_make 里有他的原话 别再写回去（10-28 Gemini 复查 #4 复查：
             #   删数据刚把群里按人记的那份删掉 这边一交货又原样写回来）
@@ -4837,6 +5698,10 @@ class FatFish:
                             "said": (list(job.get("before") or []) + list(job.get("said") or []))[-6:],
                             "file": info["file"], "what": what, "path": info.get("path") or ""})
                     save_mem(mem)
+            if info.get("file") and job.get("task_n"):     # 到点的那件「做个东西」：文件真发出去了才算做了（10-31 v1.15.17）
+                t = commit.find_task(job["task_n"])
+                if t and t.get("id") == job.get("task_id") and t.get("status") == "pending":
+                    commit.task_done(t, f"（交了文件：{info['file']}）", conv, log=log, by="做东西 交了文件")
             if info.get("file"):               # 承诺表里「明早把画改了」这种同一件事 → 做完了就划掉（10-28）
                 for t in commit.pending_for(uid):
                     if t.get("conv") == conv and maker.task_like(t.get("what")) and \
@@ -4909,7 +5774,8 @@ class FatFish:
             except Exception as e:
                 log(f"[动画] {label} 做好了 但视频没下载下来:", repr(e)[:120])
                 if not job.get("proactive"):
-                    await say_rec(["动画做好了 但是没下载下来…"])
+                    await say_rec([await self._state_line("anim_fail", "你给他做的动画视频做好了 但没拿到手（下载失败）这次发不了。跟他说一声。",
+                                                          "动画做好了 但是没下载下来…")])
                 return
             tid = None
             if scene == "group" and not control.allow("group", target, "bubble" if job.get("proactive") else "at"):
@@ -4922,17 +5788,24 @@ class FatFish:
             pk = "group_id" if scene == "group" else "user_id"
             r = await self._send(action, pk, target, [{"type": "video", "data": {"file": path.resolve().as_uri()}}])
             ok = bool(r) and r.get("retcode") == 0
-            log(f"[动画] {label} 做好了（{tokens} token 约 ¥{cny}）" + ("发出去了" if ok else f" 但 QQ 没发出去：{str(r)[:120]}"))
-            if not ok:
-                await say_rec(["动画做好了 但 QQ 没发出去…"])
+            # QQ 回「Timeout」：多半还在传（10-31 小明 截图：QQ 里视频在转圈 9%，她却说「传不过去」）→ 不当成失败
+            slow = (not ok) and isinstance(r, dict) and "timeout" in str(r.get("message") or r.get("wording") or "").lower()
+            log(f"[动画] {label} 做好了（{tokens} token 约 ¥{cny}）" + ("发出去了" if ok else
+                (f" QQ 回超时 多半还在传（不说失败）：{str(r)[:100]}" if slow else f" 但 QQ 没发出去：{str(r)[:120]}")))
+            if not ok and not slow:
+                if job.get("proactive"):       # 没人要的（她自己想做的）发不出去：什么都不说（以前跟群里说「传不过去 你回来我放电脑里给你看」没头没尾）
+                    return
+                await say_rec([await self._state_line("anim_fail", "你给他做的动画视频做好了 但发不出去（QQ 那边没收）。跟他说一声。",
+                                                      "动画做好了 但 QQ 没发出去…")])
                 return
             if scene == "private" and gone():
                 log(f"[动画] {label} 做的时候他删了数据：视频照发 记忆不写")
                 return
             async with mem_lock(conv):
                 mem = load_mem(conv, scene)
-                add_assistant(mem, "[你发了一个自己做的 5 秒动画]" if gone()     # 群里：他删了数据 不带画的是什么（里面可能有他）
-                              else f"[你发了一个自己做的 5 秒动画：{(job.get('prompt') or '')[:60]}]")
+                add_assistant(mem, ("[你发了一个自己做的 5 秒动画]" if gone()     # 群里：他删了数据 不带画的是什么（里面可能有他）
+                                    else f"[你发了一个自己做的 5 秒动画：{(job.get('prompt') or '')[:60]}]")
+                              + ("（QQ 说传得慢 可能晚一点才到）" if slow else ""))
                 save_mem(mem)
         except Exception as e:
             log("[动画] 出错:", repr(e)[:160])
@@ -5001,7 +5874,7 @@ class FatFish:
             async with mem_lock(key):
                 mem = load_mem(key, scene)
                 system, dyn = build_system(mem, "你刚才说要查一下「" + q + "」 现在查到了。像真人查完回来那样 补一两句"
-                                           "（「查了下 …」）不用重复前面说过的。" + websearch.block([(q, res)]),
+                                           "（怎么开头你自己定）不用重复前面说过的。" + websearch.block([(q, res)]),
                                            q, is_owner, speaker=(uid, name), split=True)
                 msgs = to_messages(mem, dynamic=dyn)
             raw = await llm(system, msgs, max_tokens=400)
@@ -5086,7 +5959,7 @@ class FatFish:
         """刹车时叫认 AI 马上再看一眼：是 AI → 标进名单（以后 10 分钟最多回 3 次）；模型看了是真人 → 马上放开"""
         t0 = time.time()
         try:
-            marked = await aidetect.check(llm, gid, uid, name, log, force=True)
+            marked = await aidetect.check(jllm("aidetect", f"group_{gid}", uids=[uid]), gid, uid, name, log, force=True)
         except Exception as e:
             log("[对聊刹车] 认 AI 出错:", repr(e)[:100])
             return
@@ -5151,7 +6024,7 @@ class FatFish:
         log(f"[说到做到] {key} {name} 找她 但她说了「{str(r.get('say') or '')[:20]}」"
             f"（{commit.KINDS.get(r.get('kind'), ('?',))[0]} 还剩 {left} 分钟）不回" + (f"（{cg['why']}）" if cg.get("why") else ""))
 
-    def _declare(self, key, scene, do, said, uid="", name="", src="state"):
+    def _declare(self, key, scene, do, said, uid="", name="", src="state", ask=""):
         """她说了自己接下来要做什么（状态行的 do / 心情裁判看出来的 / 节奏收尾那句）→ commit.declare；
         要走的话 群聊节奏马上回观望（别再试探、收尾）"""
         if not do or not commit.enabled():
@@ -5167,7 +6040,7 @@ class FatFish:
                 if nm in names and call:
                     names.setdefault(str(call), names[nm])
             recs = commit.declare(key, scene, do, said, time.time(), hist, str(uid or ""), name or "", names, src, log,
-                                  owner_uid=OWNER_QQ, ai=self._is_ai)
+                                  owner_uid=OWNER_QQ, ai=self._is_ai, ask=ask)
         except Exception as e:
             log("[说到做到] 记承诺出错:", repr(e)[:150])
             return []
@@ -5182,6 +6055,17 @@ class FatFish:
         """说到做到：到点的约束结束（她回来了）→ 群里回离开期间最后一个找她的真人 / 私聊里没回的补回；
         到点要做的事（承诺表 10-27）→ 她用自己的话去做；晚了一小时还没做成 → 去道歉"""
         await asyncio.sleep(2)
+        try:                               # 10-31 v1.15.17：现有承诺表里不合新规矩的清掉（只跑一次）
+            commit.cleanup_1031(log=log)
+        except Exception as e:
+            log("[说到做到] 10-31 清理出错:", repr(e)[:150])
+        aidetect.ON_MARK[:] = [self._ai_marked]
+        try:
+            for u in commit.ai_uids():     # 已经记上、后来被认出是别人家 AI 的：全划掉 告诉老板
+                if self._is_ai(u):
+                    self._ai_marked(u, "", "", "开机时查的")
+        except Exception as e:
+            log("[说到做到] 查答应过的人是不是 AI 出错:", repr(e)[:150])
         wait = []                          # 到点结束了、还没回人的：QQ 没连上 / 还在补看下线期间的消息 → 连上以后再回
         while True:
             await self._commit_round(wait)
@@ -5239,6 +6123,36 @@ class FatFish:
             self._task_last[d] = time.time()
         return sent
 
+    def _ai_marked(self, uid, name="", gid="", why=""):
+        """这个号被认出是别人家的 AI（aidetect.mark / 开机扫 / 到点时才发现）：答应他的全划掉 → 私聊告诉老板划掉了哪几条（10-31 v1.15.17）"""
+        out = commit.drop_ai(uid, log=log)
+        if not out or not OWNER_QQ:
+            return out
+        who = f"「{name}」({uid})" if name else uid
+        text = (f"【说到做到】{who} 被认出是别人家的 AI" + (f"（群{gid}）" if gid else "") + f"，答应他的 {len(out)} 条划掉了：\n"
+                + "\n".join(f"- {x}" for x in out[:10]) + ("\n（还有几条 见控制台日历）" if len(out) > 10 else ""))
+        try:
+            asyncio.get_running_loop().create_task(self._owner_tell(text, "说到做到"))
+        except RuntimeError:
+            log(f"[说到做到] 没法私聊老板（不在事件循环里）：{text[:80]}")
+        return out
+
+    async def _owner_tell(self, text, tag="说到做到"):
+        """私聊告诉老板一条固定的通知（不过模型 跟纠错那条一样）；记进跟老板的私聊 他回过来她接得上"""
+        try:
+            if not await self._say_plain("private", OWNER_QQ, [text]):
+                log(f"[{tag}] 私聊告诉老板没发出去：{text[:60]}")
+                return False
+            async with mem_lock(f"private_{OWNER_QQ}"):
+                m = load_mem(f"private_{OWNER_QQ}", "private")
+                add_assistant(m, text)
+                save_mem(m)
+            log(f"[{tag}] 私聊告诉老板了：{text[:60]}")
+            return True
+        except Exception as e:
+            log(f"[{tag}] 私聊告诉老板没成:", repr(e)[:100])
+            return False
+
     def _is_ai(self, uid):
         """别人家的 AI（名单里的 / 模型有把握判过的）—— AI 说的一切不算：跟 AI 约的、AI 让她做的 都不进承诺表"""
         uid = str(uid or "")
@@ -5266,7 +6180,10 @@ class FatFish:
 
     async def _run_task_now(self, t, apology=False):
         who, why = str(t.get("who") or ""), "发不出去"
-        if not who or control.blocked(who) or self._is_ai(who):
+        if who and not control.blocked(who) and (self._is_ai(who) or self._is_ai(t.get("by"))):
+            self._ai_marked(who if self._is_ai(who) else str(t.get("by")), t.get("who_name") or "", "", "到点时发现")
+            return False
+        if not who or control.blocked(who):
             if apology:
                 commit.apology_sent(t, "（对方被屏蔽了 / 是别人家的 AI：不道歉了）", log=log)
             elif t.get("status") == "pending":
@@ -5290,16 +6207,25 @@ class FatFish:
                 ok, out = await self._task_say(t, scene, target, at_uid, apology)
             except Exception as e:
                 ok, out = False, "出错了：" + repr(e)[:60]
+            partial = t.pop("_partial", None)     # 话发出去了 事没做成（唱歌没唱出来 / 说的不是这件事）（10-31 v1.15.17）
+            if ok and not apology and t.get("making"):
+                log(f"[说到做到] #{t.get('n')} 开做了：交了文件才算做了")
+                return True
             if ok:
                 if apology:
                     commit.apology_sent(t, out, log=log)
                 else:
-                    commit.task_done(t, out, f"{scene}_{target}", log=log)
+                    commit.task_done(t, out, f"{scene}_{target}", log=log, by=t.pop("_by", "") or "")
                     stats.add("tasks_done")
                 return True
             if not commit.still(t, apology):
                 return False               # 她写的时候他取消了 / 道过歉了：不算没做成（10-28 审查 commit-14）
-            why = out
+            if partial:                    # 已经说出去了：别再换个地方发一遍；过 5 分钟再试一次 还不行就算没做成（她当场说过了 不另外道歉）
+                t["said_once"] = str(partial)[:80]
+                second = int(t.get("tries") or 0) >= 1
+                if commit.task_failed(t, out, log=log, final=second, retry_in=300, apology=False) == "missed":
+                    stats.add("tasks_missed")
+                return True
             if scene == "private" and len(ways) > 1:
                 log(f"[说到做到] #{t.get('n')} 私聊「{t.get('who_name') or who}」发不出去（{out}）→ 回原来的群 @ 他")
         if apology:
@@ -5319,13 +6245,22 @@ class FatFish:
             if isinstance(last, dict) and last.get("kind"):
                 job.update(again=True, before=list(last.get("said") or [])[-4:], file=last.get("file") or "",
                            what=last.get("what") or "", path=last.get("path") or "")
-        self._start_make(key, {
+        commit.task_making(t)
+        mt = self._start_make(key, {
+            "task_n": t.get("n"), "task_id": t.get("id"),
             "scene": scene, "target": target, "conv": key, "uid": who, "name": t.get("who_name") or "",
             "is_owner": bool(OWNER_QQ) and who == OWNER_QQ, "kind": job["kind"], "ext": job.get("ext") or "",
             "said": [what] + ([t["say"]] if t.get("say") else []), "again": bool(job.get("again")),
             "before": list(job.get("before") or []), "file": job.get("file") or "", "what": job.get("what") or "",
             "path": job.get("path") or ""})
-        log(f"[说到做到] #{t.get('n')} 到点了 是做个东西（{what[:30]}）→ 真去做 做好了用 QQ 文件发")
+        log(f"[说到做到] #{t.get('n')} 到点了 是做个东西（{what[:30]}）→ 真去做 做好了用 QQ 文件发（文件发出去了才算做了）")
+
+        def _made(_f, n=t.get("n"), tid=t.get("id")):      # 做完了还没算做了 = 没做出来 / 文件没发出去（10-31 v1.15.17）
+            x = commit.find_task(n)
+            if x and x.get("id") == tid and x.get("status") == "pending" and x.get("making"):
+                commit.task_failed(x, "东西没做出来 / 文件没发出去", log=log, final=True, apology=False)
+        if mt is not None:
+            mt.add_done_callback(_made)
         return f"（到点了 开始做：{what[:40]}）"
 
     async def _task_say(self, t, scene, target, at_uid, apology):
@@ -5362,7 +6297,8 @@ class FatFish:
                     if commit.has(key, "novoice") and vmode not in ("off", "ask_off"):
                         vmode = "no"
                     dyn += voice.block(vmode)
-                    smode = None if commit.has(key, "nosing") else sing.plan(key, scene, [t.get("what") or ""])
+                    smode = None if commit.has(key, "nosing") else sing.plan(
+                        key, scene, [t.get("what") or ""], force=commit.task_type(t.get("what")) == "sing")   # 答应过要唱：给许可（10-31 v1.15.17）
                     dyn += sing.block(smode, [t.get("what") or ""])
                 msgs = to_messages(mem, dynamic=dyn, hint="（你答应过的事 到点了 现在去做）" if not apology
                                    else "（你答应过的事没做成 现在去道个歉）")
@@ -5379,8 +6315,8 @@ class FatFish:
         if not commit.still(t, apology):          # 她写这句的时候他说了不用了 / 当面道过歉了：不发（10-28 审查 commit-14）
             return False, "取消了"
         sent = list(await self.say(scene, target, segs, conv=key, at_uid=at_uid) or []) if segs else []
+        sinfo = {}
         if sreq:
-            sinfo = {}
             sung = await self._sing(scene, target, key, sreq, None, said=" ".join(segs), info=sinfo)
             if sung:
                 sent.append(sung)
@@ -5390,6 +6326,24 @@ class FatFish:
             commit.save_draft(t, key, first, apology)   # 下次重试照发这句（10-28 审查 commit-5）
             return False, "QQ 没收（私聊不是好友 / 发送失败）" if scene == "private" else "群里发不出去"
         text = " ".join(sent)
+        miss = ""                          # 做没做成真核对（10-31 v1.15.17：以前发出一句话就算做了 —— @ 人说「干一杯」也算）
+        if not apology:
+            if commit.task_type(t.get("what")) == "sing":
+                if sinfo.get("sung"):
+                    t["_by"] = "歌真唱出来了"
+                    try:
+                        commit.sung(str(t.get("conv") or key), who, (sreq or {}).get("name") or "", log=log)
+                    except Exception as e:
+                        log("[说到做到] 唱完划掉答应出错:", repr(e)[:100])
+                else:
+                    f_ = sing.pop_fail(key) or {}
+                    miss = "说了要唱 歌没唱出来" + (f"（{f_.get('why')}）" if f_.get("why") else "（没写唱歌标记）" if not sreq else "")
+            else:
+                ok_ = await self._task_check(t, text)
+                if ok_ is False:
+                    miss = "说的话没把这件事做到"
+                elif ok_:
+                    t["_by"] = "核对过"
         async with mem_lock(key):
             m2 = load_mem(key, scene)
             e = add_assistant(m2, (f"@{name or who} " if at_uid else "") + text)
@@ -5397,7 +6351,28 @@ class FatFish:
             save_mem(m2)
         if scene == "group":
             followup.note_sent(target)
+        if miss:
+            log(f"[说到做到] #{t.get('n')} 话发出去了 但{miss}（{text[:40]}）→ 不算做了")
+            t["_partial"] = text
+            return False, miss
         return True, text
+
+    async def _task_check(self, t, text):
+        """到点那句是不是真在做这件事（「提醒他关火」→ 她真提醒了没有）→ True / False / None（判断模型调不通：不拦）"""
+        system = ("你在帮一个聊天机器人核对：她答应过别人一件事（【答应的】），到点了她发了一句（【她发的】）。"
+                  "判断她发的这句是不是在做这件事：提醒的事真提醒到了、要告诉的真告诉了、要做的真做了 —— 说法不一样也算；"
+                  "只是提了一嘴、答非所问、跟这件事无关的不算。只输出 JSON：{\"done\": \"是\"|\"否\"|\"说不准\"}")
+        try:
+            raw = await jllm("kept")(system, [{"role": "user", "content": f"【答应的】{str(t.get('what') or '')[:120]}"
+                                                                         + (f"（他当时说：{str(t.get('ask'))[:80]}）" if t.get("ask") else "")
+                                                                         + f"\n【她发的】{str(text)[:300]}"}],
+                                     temperature=0.0, max_tokens=40)
+            m = re.search(r"\{.*\}", str(raw or ""), re.S)
+            v = str((json.loads(m.group(0)) if m else {}).get("done") or "")
+        except Exception as e:
+            log("[说到做到] 核对到点那句出错（不拦）:", repr(e)[:80])
+            return None
+        return True if v.startswith("是") else False if v.startswith("否") else None
 
     async def _commit_back(self, key, rec):
         if not self.ws or commit.KINDS.get(rec.get("kind"), ("", ""))[1] not in ("all", "person"):
@@ -5611,18 +6586,23 @@ class FatFish:
                 return None                    # 她自己已经说了不会唱 / 问了想听哪首 就别再补一句
             # 她说了要唱 结果没唱成：补一句 别让人干等（也记进聊天记录 她自己知道没唱成）
             nm = fail.get("name") or "这首"
+            # 照实的状态给她 她自己说（10-30 v1.15.3：以前这几句都写死）；模型调不通才用后面那句照实的
             if fail.get("why") == "还不会":
-                line = "这首我还不会唱"
+                st, fb = f"你刚才说要唱「{nm}」 但这首你还不会。", "这首我还不会唱"
             elif fail.get("why") == "没歌名":     # 写了 [[唱]] 没写歌名（10-28 审查 reply-6）
-                line = "你想听哪首呀"
+                st, fb = "你刚才说要唱歌 但没说唱哪首 —— 你得问他想听哪首。", "你想听哪首呀"
             elif fail.get("why") == "没许可":     # 没人让她唱、或者刚唱过（10-28 审查 reply-6）
-                line = "算了 这次先不唱了"
+                st, fb = "你刚才说要唱 但这次不唱了（没人点歌 / 你刚唱过）。", "算了 这次先不唱了"
             elif fail.get("err"):
-                line = f"「{nm}」这次没唱出来 我这边出了点岔子 你过会儿再点一次试试"
+                st, fb = f"你刚才说要唱「{nm}」 结果没唱出来（你这边出了岔子）；他过会儿再点一次可以再试。", \
+                    f"「{nm}」这次没唱出来 我这边出了点岔子 你过会儿再点一次试试"
             elif fail.get("ne_abroad"):        # 网易云在海外用不了 实际只翻了 B站：照实说
-                line = f"「{nm}」我去B站翻了一圈 没找着能唱的原版 这次唱不了"
+                st, fb = f"你刚才说要唱「{nm}」 你去B站翻了一圈 没找到能唱的原版 这次唱不了。", \
+                    f"「{nm}」我去B站翻了一圈 没找着能唱的原版 这次唱不了"
             else:
-                line = f"「{nm}」我翻了网易云和B站 没找着能唱的原版 这次唱不了"
+                st, fb = f"你刚才说要唱「{nm}」 你在网易云和B站都找了 没找到能唱的原版 这次唱不了。", \
+                    f"「{nm}」我翻了网易云和B站 没找着能唱的原版 这次唱不了"
+            line = await self._state_line("sing_fail", st, fb)
             if await self._deliver("send_group_msg" if scene == "group" else "send_private_msg",
                                    "group_id" if scene == "group" else "user_id", target,
                                    [{"type": "text", "data": {"text": line}}]) is not False:
@@ -5648,7 +6628,8 @@ class FatFish:
         sing.done(conv, ok is not False)
         if ok is False:
             log(f"[唱歌] 没发出去：{str(r)[:120]}")
-            line = "唱的那段没发出去 QQ 没收"        # 10-28 审查 reply-6：以前一句不补（他只看到「咳咳 献丑了」）
+            line = await self._state_line("sing_fail", "你唱好了那段 但没发出去（QQ 那边没收）。跟他说一声。",
+                                          "唱的那段没发出去 QQ 没收")        # 10-28 审查 reply-6：以前一句不补；10-30 v1.15.3 她自己说
             if await self._deliver(action, pk, target, [{"type": "text", "data": {"text": line}}]) is not False:
                 return line
             return None
@@ -5678,10 +6659,11 @@ class FatFish:
                 out.append(y)
         return out
 
-    async def say(self, scene, target, segs, reply_to=None, pic=None, conv=None, at_uid=None, lead=0.0):
+    async def say(self, scene, target, segs, reply_to=None, pic=None, conv=None, at_uid=None, lead=0.0, brake=None):
         """一条条发出去。返回实际发出去的样子（给聊天记录用：语音没发成的记成文字；没发出去的不算）
         at_uid：群里第一条前面 @ 这个人（到点提醒 / 道歉 10-27）
-        lead：她想这句话已经花了几秒（10-27 晚）—— 第一条的「打字时间」先扣掉这几秒 别想完了再干等"""
+        lead：她想这句话已经花了几秒（10-27 晚）—— 第一条的「打字时间」先扣掉这几秒 别想完了再干等
+        brake：这一轮的 ctx（打字刹车 10-30，behavior.typing_brake 开着才用）：她打字时对方补了一句 / 改口 / 撤回 → 没发的不发了"""
         action = "send_group_msg" if scene == "group" else "send_private_msg"
         pk = "group_id" if scene == "group" else "user_id"
         ckey = conv or f"{scene}_{target}"
@@ -5693,12 +6675,21 @@ class FatFish:
             return []
         sent = []
         said_all = stickers.strip(" ".join(segs))          # 这一轮她说的话（看她是不是嘴上说了「这张给你」）
+        bk = brake if (brake is not None and B.get("typing_brake", False)) else None
+        heard0 = (self.__dict__.get("_heard") or {}).get(ckey, 0)
+        stopped, i = None, 0
         for i, seg in enumerate(segs):
-            cps = max(4, int(B.get("typing_speed_cps", 9)))
-            d = min(4.0, 0.5 + len(seg) / cps)
-            if i == 0 and lead:
-                d = max(0.3, d - float(lead))
-            await asyncio.sleep(d)
+            if bk is not None and i > 0:   # 发完一条、下一条开打之前：最自然的转折点
+                stopped = self._brake_why(ckey, bk, heard0, scene, strong=False, boundary=True)
+                if stopped:
+                    break
+            d = self._typing_delay(i, seg, lead, (brake or {}).get("last_text"))
+            if bk is None:
+                await asyncio.sleep(d)
+            else:
+                stopped = await self._typing_wait(ckey, bk, heard0, scene, d)
+                if stopped:
+                    break
 
             stk_after = ""
             if voice.MARK.search(seg) and stickers.MARK.search(seg):
@@ -5728,7 +6719,7 @@ class FatFish:
                 else:                          # 没发图就别记成发了（以前聊天记录里留着 [[IMG]] 她以为发过封面）
                     hist_seg = bili.IMG_MARK.sub("", hist_seg).strip()
 
-            had_mark = bool(stickers.MARK.search(seg))
+            had_mark = bool(stickers.MARK.search(seg) or stickers.LOOSE.search(seg))
             seg, sticker, slabel = stickers.resolve2(seg, ckey, said_all)
             if sticker and not await self._sticker_fits(slabel, said_all, ckey):
                 sticker, slabel = None, None   # 跟她这句对不上（10-28）：不发
@@ -5785,7 +6776,72 @@ class FatFish:
                             voice.note_line(ckey)
             if i < len(segs) - 1:
                 await asyncio.sleep(random.uniform(0.4, 1.1))
+        if sent and scene == "group" and attention is not None:   # 注意力存档：她说的话是锚点
+            try:
+                attention.on_self(str(target), " ".join(sent), time.time(), reply_to=reply_to)
+            except Exception as e:
+                log("[注意力] 记她的话出错:", repr(e)[:100])
+        if stopped:
+            if bk is not None:
+                bk["braked"] = stopped
+            log(f"[刹车] {ckey} 打到第 {i + 1}/{len(segs)} 条停了：{stopped}；没发的：{' / '.join(segs[i:])[:60]}")
         return sent
+
+    # ---- 打字节奏 / 打字刹车（10-30；behavior.typing_human / typing_brake 两个开关 默认都关）----
+    BRAKE_STRONG = re.compile(r"算了|不用了|不用回|别回了?|没事了|当我没说|不是问这个|不是这个意思|不是问你|说错了|发错了")
+    BRAKE_ACK = re.compile(r"(嗯+|哦+|噢+|好+的?|好吧|行+|ok|收到|哈+|嘿+|嘻+|2333*|666*|6+|草|笑死|确实|是的|对+)[!！。.~～]*", re.I)
+
+    @staticmethod
+    def _typing_delay(i, seg, lead=0.0, last_in=""):
+        """这一条要「打」多久。开关关着 = 以前的算法；开着 = 按真人：读对方的话 + 字数 / 每秒几个字（±20%）"""
+        if not B.get("typing_human", False):
+            cps = max(4, int(B.get("typing_speed_cps", 9)))
+            d = min(4.0, 0.5 + len(seg) / cps)
+            if i == 0 and lead:
+                d = max(0.3, d - float(lead))
+            return d
+        cps = max(0.8, float(B.get("typing_human_cps", 2.5)) * random.uniform(0.8, 1.2))
+        n = len(re.sub(r"\[\[[^\]]*\]\]|\[[^\]]*\]|\s", "", seg or ""))     # 表情包 / 语音标记不算字
+        d = n / cps
+        if i == 0:                         # 第一条：先读完对方的话（每秒 15 字，0.6~2 秒），已经想过的时间扣掉
+            core = re.sub(r"\[[^\]]*\]|\s", "", last_in or "")
+            d += min(2.0, max(0.6, len(core) / 15.0)) - float(lead or 0)
+        return min(float(B.get("typing_human_max_sec", 7)), max(0.6, d))
+
+    def _brake_why(self, ckey, bk, heard0, scene, strong=False, boundary=False):
+        """要不要刹车 → 原因 / None。strong=True 只认强信号（打到中间）"""
+        if bk.get("recalled"):
+            return "他把她在回的那句撤回了"
+        head = str(bk.get("uid") or "")
+        lt = (self.__dict__.get("_typed_last") or {}).get((ckey, head))
+        if head and lt and lt[0] > float(bk.get("t0") or 0):
+            txt = str(lt[1] or "")
+            who = (bk.get("name") or "他")[:8]
+            if self.BRAKE_STRONG.search(txt):
+                return f"{who}又说「{txt[:20]}」"
+            core = re.sub(r"\[[^\]]*\]|\s", "", txt)
+            queued = any(str(x.get("uid")) == head and x.get("seq", 0) > (bk.get("seq0") or 0) for x in bk.get("who") or [])
+            if not strong and queued and len(core) > 2 and not self.BRAKE_ACK.fullmatch(core):
+                return f"{who}又说「{txt[:20]}」（下一轮一起回）"
+        if boundary and scene == "group":
+            n = (self.__dict__.get("_heard") or {}).get(ckey, 0) - heard0
+            if n >= int(B.get("typing_brake_flood", 5)):
+                return f"她打字的时候群里又来了 {n} 句（话题可能过去了）"
+        return None
+
+    async def _typing_wait(self, ckey, bk, heard0, scene, d):
+        """边「打字」边看新消息：打了不到 30% 有值得停的就停；30~80% 只认强信号；80% 以后先打完"""
+        t_s = time.time()
+        while True:
+            el = time.time() - t_s
+            if el >= d:
+                return None
+            prog = el / d if d > 0 else 1.0
+            if prog < 0.8:
+                why = self._brake_why(ckey, bk, heard0, scene, strong=prog >= 0.3)
+                if why:
+                    return why
+            await asyncio.sleep(min(0.25, max(0.02, d - el)))
 
     async def _sticker_fits(self, label, said, conv):
         """表情包发之前让小模型核对一下：图上的字 / 适合的场合 跟她这一轮的话对不对得上（10-28 小明：「表情包用错 和自身说的话不匹配」）
@@ -5964,7 +7020,7 @@ class FatFish:
         said = stickers.strip(voice.strip(" ".join(sent)))
         if st and st.get("do"):
             self._declare(key, "group", st.get("do"), said)
-        asyncio.create_task(_judge(llm, "", " ".join(segs), "她自己在群里冒泡", log,       # 状态行写了 do：裁判不再记一遍（10-28 审查 commit-3）
+        asyncio.create_task(_judge(jllm("mood", key), "", " ".join(segs), "她自己在群里冒泡", log,       # 状态行写了 do：裁判不再记一遍（10-28 审查 commit-3）
                                    on_do=None if (st and st.get("do")) else
                                    (lambda d, k=key, t=said: self._declare(k, "group", d, t, src="judge")), conv=key))
         if st:
@@ -6102,6 +7158,14 @@ class FatFish:
                 return ""                  # 他在让她做事：这轮不整、点单也留到下次（整人那轮的 do 不记 别把真要做的丢了 复查）
             if prankmod.pending(key):
                 return ""                  # 这个对话里还有别人那个没拆穿（拆穿按对话记）
+            if prankmod.is_test(texts):    # 拿 #sl 这种指令测她（10-30 v1.15.1）：这一轮一定给「假状态」（其余的闸照旧）
+                cs, why = prankmod.test_offer(key, scene, gid, uid, recent, isbot=isbot,
+                                              blocked=self._prank_blocked(key, scene, gid, uid))
+                if cs:
+                    info.update(mode="offer", cards=cs)
+                    log(f"[恶作剧] {key} {name} 在拿指令测试她 → 这一轮给「假状态」")
+                    return prankmod.offer_block(cs, name)
+                log(f"[恶作剧] {key} {name} 在拿指令测试她 但不整：{why}")
             o = prankmod.take_next_order(key, uid)
             if o:
                 c = prankmod.card(o.get("card")) or {}
@@ -6128,6 +7192,203 @@ class FatFish:
         except Exception as e:
             log("[恶作剧] 出错（这轮不带）:", repr(e)[:120])
             return ""
+
+    async def _kept_judge(self, name, delivered, proms):
+        """她交了一个东西：以前答应他的哪几件 就是这次交的（10-30 v1.15.1 小明：「不能有智能的判断吗」—— 不再靠对词）
+        → 判是的那几条的 id（set）；判断模型调不通 → None（外面退回粗规则）"""
+        if not proms:
+            return set()
+        lines = "\n".join(f"{i + 1}. {str(p.get('what') or '')[:80]}（{max(1, int((time.time() - float(p.get('t0') or 0)) // 3600))} 小时前答应的）"
+                          for i, p in enumerate(proms[:8]))
+        system = ("你在帮一个聊天机器人管她「答应过、还没兑现的事」。她刚交给「" + str(name or "对方") + "」一个东西（【交的】）。"
+                  "【答应过的】是她以前答应这个人、还挂着的事。逐条判断：这次交的东西是不是就是在兑现那一条 —— 同一件事（说法不一样、"
+                  "这次做的版本改了一点 都算）；只是同一类的另一件事（都是网页、都是画）不算。"
+                  "只输出 JSON，键是编号：{\"1\": \"是\", \"2\": \"否\"}；拿不准写「说不准」（当没兑现）")
+        try:
+            raw = await jllm("kept")(system, [{"role": "user", "content": f"【交的】{str(delivered)[:300]}\n【答应过的】\n{lines}"}],
+                                     temperature=0.0, max_tokens=120)
+            m = re.search(r"\{.*\}", str(raw or ""), re.S)
+            js = json.loads(m.group(0)) if m else None
+            if not isinstance(js, dict):
+                return None
+        except Exception as e:
+            log("[说到做到] 判「交的是不是答应的那件」出错:", repr(e)[:80])
+            return None
+        return {proms[int(k) - 1]["id"] for k, v in js.items()
+                if str(k).strip().isdigit() and 1 <= int(k) <= len(proms[:8]) and str(v).strip().startswith("是")}
+
+    async def _announce_loop(self):
+        """版本更新播报：开机等一会儿 → 这一版要播 → 挑出用户感觉得到的变化 → 活跃群（先查禁言）和熟人 一个一个说（隔几分钟）"""
+        try:
+            await asyncio.sleep(float(announce.C.get("start_delay", 300)))
+            ver = announce.pending(_app_version())
+            if not ver:
+                return
+            since = announce.base()
+            ch = announce.changes(ver)
+            if ch is None:
+                text = announce.changelog_text(ver, since, [ROOT.parent / "github" / "fatfish-bot" / "CHANGELOG.md",
+                                                            ROOT.parent / "CHANGELOG.md"])
+                ch = await announce.pick_changes(lambda sy, m: llm(sy, m, temperature=0.2, max_tokens=400, tag="版本播报"), text)
+                announce.set_changes(ver, ch)
+            if not ch:
+                log(f"[版本播报] v{ver}：日志里没挑出用户感觉得到的变化 → 不播")
+                announce.finish(ver)
+                return
+            try:
+                fav = json.loads((DATA / "favor.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                fav = {}
+            targets = [("group", g, "") for g, _n in announce.active_groups(DATA, is_bot=control.is_bot)] + \
+                [("private", u, nm) for u, nm, _f in announce.friends(fav, DATA, owner=OWNER_QQ)]
+            log(f"[版本播报] v{since} → v{ver}：{len(ch)} 条变化，准备说给 {len(targets)} 处（{'；'.join(ch)[:80]}）")
+            gap = announce.C.get("gap_sec") or [180, 420]
+            for scene, target, name in targets:
+                if announce.done(ver, f"{scene}_{target}"):
+                    continue
+                while announce.quiet(int(clock.strf("%H", time.time()))):
+                    await asyncio.sleep(600)
+                ok = await self._announce_one(scene, target, name, ver, since, ch)
+                announce.mark(ver, f"{scene}_{target}", ok)
+                if ok:
+                    await asyncio.sleep(random.uniform(float(gap[0]), float(gap[-1])))
+            announce.finish(ver)
+            log(f"[版本播报] v{ver} 播完了")
+        except Exception as e:
+            log("[版本播报] 出错:", repr(e)[:150])
+
+    async def _announce_one(self, scene, target, name, ver, since, ch):
+        """跟一个群 / 一个人说一声更新了：群先现查禁言（她被禁 / 全员禁 / 静音 / 少说 都跳过）；她自己说 也可以不说"""
+        key = f"{scene}_{target}"
+        if not self.ws:
+            return False
+        if scene == "group":
+            try:
+                md = (await self.call("get_group_member_info", group_id=int(target), user_id=int(self.self_id), no_cache=True) or {}).get("data") or {}
+                g = (await self.call("get_group_info", group_id=int(target), no_cache=True) or {}).get("data") or {}
+                if md or g:
+                    self._sync_ban(target, md, g)
+            except Exception as e:
+                log(f"[版本播报] 群{target} 查禁言出错:", repr(e)[:80])
+            if not control.allow("group", target, "bubble") or commit.hold(key):
+                log(f"[版本播报] 群{target} 现在不能 / 不该说话（禁言 / 静音 / 少说 / 她说了要走）→ 跳过")
+                return False
+        elif control.blocked(target) or not control.allow("private", target, "proactive"):
+            return False
+        async with mem_lock(key):
+            mem = load_mem(key, scene)
+            recent = " ".join(h.get("text", "") for h in mem["history"][-6:])
+            scene_txt = "你在一个 QQ 群里。" if scene == "group" else f"你在跟「{name or target}」私聊。"
+            system, dyn = build_system(mem, scene_txt, recent, scene == "private" and str(target) == str(OWNER_QQ),
+                                       speaker=(target, name) if scene == "private" else None, split=True)
+            msgs = to_messages(mem, dynamic=dyn + announce.block(ver, since, ch, (CFG.get("self_info") or {}).get("repo") or "", scene))
+        raw = await llm(system, msgs, max_tokens=300, tag="版本播报")
+        raw, _st = strip_state(raw)
+        segs = [] if "[[不说]]" in raw else split_reply(detic(raw), 2)
+        if not segs:
+            log(f"[版本播报] {key}：她想了想没说")
+            return False
+        sent = await self.say(scene, target, segs, conv=key)
+        if not sent:
+            return False
+        async with mem_lock(key):
+            fresh = load_mem(key, scene)
+            add_assistant(fresh, " ".join(sent))
+            save_mem(fresh)
+        log(f"[版本播报] {key} → {' / '.join(segs)}")
+        return True
+
+    async def _sticker_deep(self, sid, url):
+        """表情包词典：后台认真认一张（看图 → 查出处 → 合成词条）"""
+        try:
+            await stickerdict.deep(
+                sid, url,
+                look=lambda b, m, p: vision.look(b, m, p, log),
+                llm=lambda sy, msgs: llm(sy, msgs, temperature=0.2, max_tokens=500, tag="表情包词典"),
+                search=lambda q: websearch.search(q, log),
+                fetch=vision.fetch, log=log)
+        except Exception as e:
+            log("[表情包词典] 后台认图出错:", repr(e)[:120])
+
+    async def _sticker_loop(self):
+        """每 30 秒：攒着的存盘；控制台改的词条改进去；标了「重新认」的去认（图链接过期了就等下次有人发）"""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if hasattr(style, "overuse_refresh"):      # 她最近在重复什么：半小时让模型看一次（10-31 v1.15.6）
+                    await style.overuse_refresh(DATA, lambda sy, m: llm(sy, m, temperature=0.2, max_tokens=300, tag="口头禅"), log)
+            except Exception as e:
+                log("[口头禅] 出错:", repr(e)[:100])
+            try:
+                stickerdict.flush()
+                for sid in stickerdict.apply_edits():
+                    e = stickerdict.get(sid) or {}
+                    if e.get("url"):
+                        asyncio.create_task(self._sticker_deep(sid, e["url"]))
+            except Exception as e:
+                log("[表情包词典] 定时出错:", repr(e)[:100])
+
+    async def _retro_kept(self):
+        """开机补划（10-30 v1.15.1）：答应以后在同一个对话里已经交过文件的 → 让模型判是不是同一件 → 是就划掉；调不通退回粗规则"""
+        if self.__dict__.get("_retro_done"):
+            return
+        self._retro_done = True
+        try:
+            cands = commit.retro_candidates(DATA)
+        except Exception as e:
+            log("[说到做到] 开机补划：读不出来", repr(e)[:80])
+            return
+        n, fallback = 0, False
+        for c in cands:
+            p = c["prom"]
+            done = await self._kept_judge(p.get("name") or p.get("who"), " / ".join(c["files"]), [p])
+            if done is None:
+                fallback = True
+                continue
+            if p.get("id") in done and commit.drop_prom(c["key"], p["id"], by="开机补划：之后已经交过、模型判就是这件 → ", log=log):
+                n += 1
+        if fallback:
+            n += commit.retro_kept(DATA, log)
+        if cands:
+            log(f"[说到做到] 开机补划：看了 {len(cands)} 条答应过、之后交过文件的 → 划掉 {n} 条")
+
+    async def _congrats_send(self, act):
+        """恭喜（10-30 v1.15.1）：等几秒 → 写死的「生日快乐 / 恭喜」（冲她说的那种不发字 她自己回）+ 恭喜动图（每个群隔一阵才发一次）"""
+        try:
+            await asyncio.sleep(max(0.0, float(act.get("delay", 5))))
+            ok, gif = congrats.ready(act)
+            if not ok:
+                return
+            scene = act["scene"]
+            target = act["gid"] if scene == "group" else act["conv"].split("_", 1)[1]
+            action = "send_group_msg" if scene == "group" else "send_private_msg"
+            pk = "group_id" if scene == "group" else "user_id"
+            done = []
+            if act.get("text"):
+                msg = []
+                if scene == "group" and act.get("reply_mid") and act.get("mode") == "lead":
+                    msg.append({"type": "reply", "data": {"id": str(act["reply_mid"])}})
+                msg.append({"type": "text", "data": {"text": act["text"]}})
+                r = await self._send(action, pk, target, msg)
+                if r and r.get("retcode") == 0:
+                    done.append(act["text"])
+            if gif:
+                if done:
+                    await asyncio.sleep(random.uniform(0.8, 1.6))
+                r = await self._send(action, pk, target, [{"type": "image", "data": {"file": congrats.gif_path().resolve().as_uri()}}])
+                if r and r.get("retcode") == 0:
+                    done.append("[恭喜动图]")
+            if not done:
+                return
+            congrats.mark_sent(act, "[恭喜动图]" in done)
+            stats.add("sent_" + scene)
+            async with mem_lock(act["conv"]):
+                mem = load_mem(act["conv"], scene)
+                add_assistant(mem, " ".join(done))
+                save_mem(mem)
+            log(f"[恭喜] {act['conv']} {act.get('name') or ''}（{ {'lead': '带头', 'follow': '跟着大家', 'wave': '一阵祝福'}.get(act.get('mode'), '') }）→ {' '.join(done)}")
+        except Exception as e:
+            log("[恭喜] 发的时候出错:", repr(e)[:100])
 
     async def _prank_reveal(self, key, scene, target, uid, name, rid, reply_to=None, delay=None):
         """整了还没拆穿、他一直没说话：1~2.5 分钟后她自己拆穿（他先说话的话 那一轮拆穿）
@@ -6424,6 +7685,8 @@ class FatFish:
 
     async def _repeat_follow(self, gid, key, phrase):
         """复读跟风（10-27 晚 humor.py）：群里好几个人在刷同一句 她也跟一句（不过模型）"""
+        if cmd_echo(phrase, 999):
+            return
         try:
             await asyncio.sleep(random.uniform(2, 6))
             if not self.ws or not control.allow("group", gid, "auto") or commit.hold(key):
@@ -6723,6 +7986,37 @@ class FatFish:
     def _qz_system(self, rules):
         """带人设的提示（评论、回评论、发说说用）：前面跟聊天一样（DeepSeek 前缀缓存）"""
         return persona_text() + honest() + rules
+
+    @staticmethod
+    def _qz_refs(text, now=None, limit=1):
+        """说说要说的这件事 在她 48 小时内刷过的 B站 视频里有没有出处（对上 ≥2 个两字词）→ [{"title", "bvid"}]（10-30 v1.15.1）"""
+        bg = followup._bigrams(text or "")
+        if len(bg) < 2:
+            return []
+        now = now or time.time()
+        scored = []
+        for i in bili.load_trends().get("items") or []:
+            if not i.get("bvid") or now - float(i.get("ts") or 0) > 48 * 3600:
+                continue
+            n = len(bg & followup._bigrams(" ".join(str(i.get(k) or "") for k in ("top", "take", "share_line"))))
+            if n >= 2:
+                scored.append((n, float(i.get("ts") or 0), {"title": str(i.get("top") or "")[:40], "bvid": i["bvid"]}))
+        scored.sort(key=lambda z: (-z[0], -z[1]))
+        return [x for _, _, x in scored[:limit]]
+
+    async def _qz_clear(self, text):
+        """只看这一条说说的陌生人看得懂在说什么吗 → (看得懂, 缺什么)；判不了当看得懂（别因为判断出错就不发）"""
+        try:
+            r = await llm("你在帮人检查一条 QQ 空间说说：只看这一条、不知道作者今天经历了什么的陌生人，看不看得懂它在说什么？"
+                          "心情 / 日常 / 感慨这种本来就不用出处的，算看得懂；提到了具体的东西（某段视频、某个梗、某个人、某件事）却没交代是什么、"
+                          "让人一头雾水的，算看不懂。只回一行：「懂」或者「不懂：缺什么（10 个字以内）」",
+                          [{"role": "user", "content": text}], temperature=0.0, max_tokens=30, tag="空间看得懂")
+        except Exception:
+            return True, ""
+        r = str(r or "").strip()
+        if r.startswith("不懂"):
+            return False, r.split("：", 1)[-1].strip()[:30] or "没交代在说什么"
+        return True, ""
 
     async def _qz_safe(self, system, user, raw_text, names, facts, ctx_text, limit, stop, allow=()):
         """防漏：认识的人的名字、QQ 号、私聊里才有的词 → 让她重写一次；还有就不发"""
@@ -7091,28 +8385,47 @@ class FatFish:
             user = (f"你刚在 B站 刷到《{mat.get('top', '')}》。你的感觉：{mat.get('take', '')}；你本来想配的话：{mat.get('share_line', '')}\n"
                     f"链接：https://b23.tv/{mat.get('bvid')}\n发一条分享这个视频的说说（把链接原样带上）。")
         elif src == "group":
-            user = (f"你最近跟大家聊到的事（你自己的印象 别点名 别说是谁说的、在哪个群）：{mat.get('text', '')}\n"
+            user = (f"你最近跟大家聊到的事（你自己的印象 别点名 别说是谁说的、别写群名；可以笼统地说是群里在聊的）：{mat.get('text', '')}\n"
                     "发一条说说（像自言自语地吐槽 / 感慨）。")
         else:
             nm, how = clock.state()
             mw = _mood_word()              # 心情文件一时打不开：不带心情（别按默认的「不错」写）
             user = (f"你现在：{nm}（{how}）。" + (f"心情：{mw}。\n随手发一条日常 / 心情的说说。" if mw is not None
                                                   else "\n随手发一条日常的说说。"))
+        refs = [] if src == "bili" else self._qz_refs(" ".join(str(mat.get(k) or "") for k in ("post", "text")))
+        if refs:                           # 说说带出处（10-30 v1.15.1）：日记 / 群里的事说到的视频 → 给她出处和链接
+            user += "\n这件事的出处（写进说说 让没看过的人也看得懂；链接原样带上）：" + "；".join(
+                f"B站《{r['title']}》 https://b23.tv/{r['bvid']}" for r in refs)
         try:
             raw = await llm(system, [{"role": "user", "content": user}], temperature=0.95, max_tokens=200)
         except Exception as e:
             log("[空间] 写说说失败:", str(e)[:100])
             return {"ok": False, "error": "写说说的时候模型出错了"}
-        allow = (f"https://b23.tv/{mat.get('bvid')}",) if src == "bili" else ()
+        allow = (f"https://b23.tv/{mat.get('bvid')}",) if src == "bili" else tuple(f"https://b23.tv/{r['bvid']}" for r in refs)
         text, bad = await self._qz_safe(system, user, raw, self._qz_names(), self._qz_all_pfacts(),
                                         str(mat.get("post") or mat.get("text") or mat.get("take") or ""), 120, "[[不发]]", allow)
         if bad:
             log(f"[空间] 说说带出了{bad} → " + (f"重写成：{text}" if text else "这次不发了"))
+        if text:                           # 陌生人看得懂吗（10-30 v1.15.1）：看不懂 → 带着缺的重写一次；还看不懂就不发
+            clear, miss = await self._qz_clear(text)
+            if not clear:
+                try:
+                    raw2 = await llm(system, [{"role": "user", "content": user + f"\n\n[系统] 你刚写的「{text}」只看这一条的人看不懂：{miss}。"
+                                                                          "把在说什么交代清楚（出处 / 是什么东西）再写一遍；实在说不清就只写 [[不发]]"}],
+                                     temperature=0.8, max_tokens=200)
+                except Exception:
+                    raw2 = ""
+                t2, bad2 = await self._qz_safe(system, user, raw2, self._qz_names(), self._qz_all_pfacts(),
+                                               str(mat.get("post") or mat.get("text") or mat.get("take") or ""), 120, "[[不发]]", allow) \
+                    if raw2 else ("", "")
+                ok2 = bool(t2) and (await self._qz_clear(t2))[0]
+                log(f"[空间] 说说「{text}」陌生人看不懂（{miss}）→ " + (f"重写成：{t2}" if ok2 else "这次不发了"))
+                text = t2 if ok2 else ""
         if not text:
             plan["done"] = True
             qzone.save(s)
             log(f"[空间] 想发条说说（{src}）她没写出来 / 不想发")
-            return {"ok": False, "error": "她这次没写出来（或者不想发）"}
+            return {"ok": False, "error": "她这次没写出来（或者不想发 / 写出来只有她自己看得懂）"}
         if qzone.dry("post"):
             s.setdefault("dry_posts", []).append({"sid": sid, "text": text, "ts": time.time(), "src": src})
             s["dry_posts"] = s["dry_posts"][-20:]
@@ -7564,6 +8877,7 @@ class FatFish:
         unanswered = bool(hist) and hist[-1].get("role") == "assistant" and lp > 0 and lp >= (m.get("last_active") or 0)
         nudge = final = 0
         due, qz_hint = [], []
+        owe, lm_p = [], None             # 挂着的是那件欠着没改的东西（v1.11.1）
         if unanswered:
             streak = max(1, int(m.get("pro_streak") or 0))
             mx = nudge_max(uid, is_owner)
@@ -7597,6 +8911,17 @@ class FatFish:
             scene_txt = (f"你有{clock.ago(m.get('last_active'))}没跟这个人说话了。"
                          f"你一直记着一件事：{loop['text']}。现在你主动去找他问这个。"
                          "别客套 像想起来顺手一问 别解释你为什么记得。")
+            # 挂着的正是那件答应了改、其实一直没改的东西（10-28 22:39 v1.11.1：她以为改完了 主动问「改好了 你收到没」）
+            lm_p = m.get("last_make") if MK.get("enabled", True) else None
+            owe = maker.pending(lm_p, hist) if maker.about(lm_p, [loop.get("text")]) else []
+            if owe:
+                owe_ok, owe_why = MAKE_Q.allow(uid, is_owner, clock.strf("%Y-%m-%d"))
+                scene_txt = (f"你有{clock.ago(m.get('last_active'))}没跟这个人说话了。你一直记着：{loop['text']}。"
+                             + (maker.owed_scene(lm_p, owe) if owe_ok else
+                                f"系统记录：你答应他改「{lm_p.get('file')}」但一直没改、也没发过新文件；今天做不了了（{owe_why}）。"
+                                "老实跟他说那个还没改 别说改好了、别问收到没。"))
+                if not owe_ok:
+                    owe = []
             loop["asked"] = time.time()
         else:
             scene_txt = ("你已经很久没跟这个人说话了，现在你主动去找他。"
@@ -7649,7 +8974,12 @@ class FatFish:
             for x in qz_hint:
                 if qzone.mentioned(x, " ".join(sent)):
                     qzone.mark(x["tid"], "p")
-            if (st or {}).get("do") and not nudge:        # 说到做到（追的那句「再也不理你了」是撒娇 不当真）
+            if owe:                        # 刚跟他说了「那个还没改 我这就改」→ 真的去改（10-28 v1.11.1）
+                nm = next((h.get("name") for h in reversed(hist) if h.get("role") == "user" and h.get("name")), "") or ""
+                log(f"[做东西] {p.stem} 主动找他说那件欠着没改的「{lm_p.get('file')}」→ 这就照他交货以后说的重做")
+                self._start_make(p.stem, self._make_job_of(maker.fix_job(lm_p, owe), "private", uid, p.stem, uid, nm,
+                                                           is_owner, [], None))
+            elif (st or {}).get("do") and not nudge:      # 说到做到（追的那句「再也不理你了」是撒娇 不当真）
                 self._declare(p.stem, "private", st["do"], stickers.strip(voice.strip(" ".join(sent))), uid)
         if st:
             st.pop("call", None)
@@ -8040,9 +9370,13 @@ async def probe_model():
         log(f"[模型自检] 梗百科：{await memewiki.selftest(log)}")
     except Exception as e:
         log("[模型自检] 梗百科出错:", repr(e)[:120])
+    try:                                   # 判断模型实验（10-29 judge.py）：开没开、切了哪几样、key 和模型通不通
+        await judge.probe(log)
+    except Exception as e:
+        log("[判断模型] 自检出错:", repr(e)[:120])
     if groupadmin.enabled():
         try:                               # 群管判断：提示词改过才真问一遍（7 句 不到一分钱）
-            log(f"[模型自检] 群管：{await groupadmin.selftest(llm, GROUP_CARD or BOT_NAME, log)}")
+            log(f"[模型自检] 群管：{await groupadmin.selftest(jllm('groupadmin'), GROUP_CARD or BOT_NAME, log)}")
         except Exception as e:
             log("[模型自检] 群管出错:", repr(e)[:120])
     try:
@@ -8101,7 +9435,7 @@ async def panel_upgrade():
         if v and v != "old":
             log(f"[控制台] 换好了：控制台现在是新版本 {v}（网页刷新一下）")
             return
-    log("[控制台] 新控制台没换上（原因看 data\\panel.log）：关掉所有 FatFish control panel 黑窗口 再双击 控制台.bat")
+    log("[控制台] 新控制台没换上（原因看 data\\panel.log）：关掉所有 FatFish control panel 黑窗口 再双击 大肥鱼.bat 选「打开控制台」")
 
 
 _FAVOR_CACHE = {"t": 0.0, "d": {}}
@@ -8190,7 +9524,7 @@ async def start_admin(bot):
 async def main():
     if not control.single_instance(ROOT / "data" / "bot.lock", log):
         log("[启动] 已经有一个大肥鱼在运行了（两个一起跑 每句话会回两遍）这个就不启动了")
-        return 3                       # botloop.bat 看到 3 就不再拉起
+        return 3                       # 守护循环看到 3 就不再拉起
     cleanup_memories()
     shared.configure(CFG.get("shared") or {}, log)
     bot = FatFish()

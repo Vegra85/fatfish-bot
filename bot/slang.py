@@ -58,7 +58,7 @@ async def learn(term, llm_fn, log=print, chat_lines=None, hint="", src="learned"
     return None
 
 
-def note_usage(text, who=""):
+def note_usage(text, who="", gid=""):
     return None
 
 

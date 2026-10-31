@@ -35,7 +35,8 @@ _CJK = re.compile(r"[㐀-鿿]")
 _STOP = set("什么 怎么 这个 那个 不是 没有 就是 你们 我们 他们 一下 一个 还是 可以 知道 觉得 现在 真的 这么 那么 "
             "然后 但是 因为 所以 已经 还有 这样 那样 有点 一点 大肥 肥鱼 鲸鱼 哈哈 呵呵 嘿嘿 啊啊 嗯嗯 哦哦 "
             "好的 是的 对的 还好 好吧 行吧 啊这 我们 咱们 一样".split())
-_Q = re.compile(r"[?？]|吗|呢|啥|什么|怎么|怎样|如何|为什么|为啥|咋|哪|几|多少|是不是|有没有|行不行|好不好|能不能|要不要")
+# 「几」：「好几遍 / 这几天 / 几乎 / 几次」不是在问（10-30：「你已经说过好几遍修好再说了」被当成在问）
+_Q = re.compile(r"[?？]|吗|呢|啥|什么|怎么|怎样|如何|为什么|为啥|咋|哪|(?<![好这那前后头末])几(?![乎遍次回])|多少|是不是|有没有|行不行|好不好|能不能|要不要")
 
 
 def configure(cfg):
@@ -146,6 +147,18 @@ def check(gid, uid, name, text, now, history, only_pic=False, is_owner=False, al
     if common:
         s += 2.5 if len(common) >= 2 else 1
         why.append("接了她的词「" + "、".join(sorted(common)[:3]) + "」")
+    # 跟别人刚说的话对得上、比跟她的还像 → 多半在回那个人（10-30：「你已经说过好几遍修好再说了」是冲洄的「修吧，弄好再说」）
+    mine_b = _bigrams(text)
+    best, best_h = set(), None
+    for h in after[-8:]:
+        if str(h.get("uid")) == str(uid):
+            continue
+        c2 = mine_b & _bigrams(h.get("text") or "")
+        if len(c2) > len(best):
+            best, best_h = c2, h
+    if len(best) >= 2 and len(best) > len(common):
+        s -= 2.5
+        why.append(f"跟{(best_h.get('name') or '别人')[:8]}刚说的对上了「" + "、".join(sorted(best)[:3]) + "」多半在回他")
     if dt <= 30:
         s += 1
         why.append(f"紧跟着她 {int(max(dt, 0))} 秒")
@@ -156,6 +169,16 @@ def check(gid, uid, name, text, now, history, only_pic=False, is_owner=False, al
     if len(others) >= 2:
         s -= 1.5
         why.append(f"中间有别人插了 {len(others)} 句")
+    # 开头叫的是群里别人的名字（「小明来段语音」）→ 多半在跟那个人说（10-31 盲测：她当成接她的话 去回了）
+    her_names = {(h.get("name") or "") for h in hist if h.get("role") == "assistant"} | set(_cfg.get("her_names") or [])
+    lead = re.sub(r"^[@\s　]+", "", text or "")
+    callee = next((n for n in sorted({_short(h.get("name") or "") for h in hist if h.get("role") == "user"
+                                      and str(h.get("uid")) != str(uid)}, key=len, reverse=True)
+                   if len(n) >= 2 and n not in her_names and not any(n in hn or hn in n for hn in her_names if hn)
+                   and lead.startswith(n)), None)
+    if callee:
+        s -= 4
+        why.append(f"开头叫的是「{callee[:8]}」多半在跟他说")
     if any(f"@{n}" in (h.get("text") or "") for h in others for n in {name, _short(name)} if n):
         s -= 2.5
         why.append("别人刚 @ 了他 多半在回那个人")

@@ -22,6 +22,11 @@ from pathlib import Path
 import httpx
 
 import imgprep
+try:                    # 表情包词典（10-30 v1.16.0）：认过的表情包直接用词条 不再重新看图
+    import stickerdict
+except ImportError:
+    stickerdict = None
+import judge          # 调用记录 trace（10-29；公开版空壳不记）
 import localai
 import safeio
 import stats
@@ -262,12 +267,12 @@ def _to_png(b64):
         return b64
 
 
-async def _ask_one(spec, b64, mime, note="", ctx=None):
+async def _ask_one(spec, b64, mime, note="", ctx=None, prompt=None):
     prov = spec.get("provider", "openai")
     if prov == "ollama" and mime in ("image/gif", "image/webp"):
         b64 = _to_png(b64)
-    ref = self_ref_b64() if (prov == "openai" and V.get("self_ref", True)) else None
-    prompt = build_prompt(note, ctx, ref=bool(ref))
+    ref = self_ref_b64() if (prov == "openai" and V.get("self_ref", True) and prompt is None) else None
+    prompt = prompt or build_prompt(note, ctx, ref=bool(ref))
     mt = int(V.get("max_tokens", 600))
     if prov == "ollama":
         return await localai.chat([{"role": "user", "content": prompt}], images=[b64],
@@ -294,6 +299,7 @@ async def _ask_one(spec, b64, mime, note="", ctx=None):
     if spec.get("thinking") == "disabled":        # deepseek-flash 默认会思考：看图不用想 关掉
         body["thinking"] = {"type": "disabled"}
     hdr = {"Authorization": f"Bearer {spec['api_key']}"} if spec.get("api_key") else {}
+    t0 = time.time()
     async with httpx.AsyncClient(timeout=60) as c:
         url = spec["base_url"].rstrip("/") + "/chat/completions"
         r = await c.post(url, json=body, headers=hdr)
@@ -306,16 +312,25 @@ async def _ask_one(spec, b64, mime, note="", ctx=None):
             stats.llm(d.get("usage"), spec["model"], "看图", budget=False)   # 单独记账（小明 10-27）不进省 token 曲线
         except Exception:
             pass
-        return (d["choices"][0]["message"]["content"] or "").strip()
+        out = (d["choices"][0]["message"]["content"] or "").strip()
+        try:                                       # trace（10-29）：提示词 + 输出；图本身不记（只记成 [图]）
+            u = d.get("usage") or {}
+            judge.trace("vision", "", body["messages"], out, provider="deepseek", model=d.get("model") or spec["model"],
+                        ms=(time.time() - t0) * 1000, tag="看图",
+                        tok={"in": int(u.get("prompt_tokens") or 0), "out": int(u.get("completion_tokens") or 0),
+                             "hit": int(u.get("prompt_cache_hit_tokens") or 0)})
+        except Exception:
+            pass
+        return out
 
 
-async def _ask(b64, mime, log=print, primary_only=False, note="", ctx=None):
-    """先用主模型 失败了换备用（fallback → fallback2）"""
+async def _ask(b64, mime, log=print, primary_only=False, note="", ctx=None, prompt=None):
+    """先用主模型 失败了换备用（fallback → fallback2）；prompt：换成自己的提示（表情包词典深度认用）"""
     specs = _specs(primary_only)
     last = None
     for i, spec in enumerate(specs):
         try:
-            out = await _ask_one(spec, b64, mime, note, ctx)
+            out = await _ask_one(spec, b64, mime, note, ctx, prompt=prompt)
             if out:
                 if i:
                     log(f"[识图] 主模型不可用，已用备用 {spec.get('model')}")
@@ -349,9 +364,16 @@ async def describe(key, url, log=print, primary_only=False, headers=None, ctx=No
     ctx：{"sender", "to_me", "chat", "conv"} 谁发的、是不是发给她的、发之前在聊什么、哪个对话（10-27 晚）
     缓存（10-28 审查 media-6）：没带上下文看的 / 从整段里挑出来的干净部分（_plain）按图存 谁都能用；
       带上下文看的整段另存一份 只给同一个对话、同一个发图人用 —— 以前整段按图缓存 私聊里的事会跟着同一张表情包带到群里"""
+    img = key
+    if stickerdict is not None and img:    # 表情包词典里认过的（深度认过 / 老板改过）→ 直接用词条（识图关着也能用）
+        try:
+            hit = stickerdict.lookup(img)
+            if hit:
+                return hit
+        except Exception:
+            pass
     if not enabled() or not url:
         return None
-    img = key
     key = CACHE_VER + img
     sig = _ctx_sig(ctx)
     ckey = f"{CACHE_VER[:-1]}@{sig}:{img}" if sig else None     # 「v7@xxxx:图」：删数据按「:」后面的图认 两份一起删
@@ -377,6 +399,19 @@ async def describe(key, url, log=print, primary_only=False, headers=None, ctx=No
         if not mime:
             return _skip(img, now)
         import asyncio
+        dh = ""
+        if stickerdict is not None:        # 长得几乎一样、已经认过的（同一张表情被压缩过 / 换了尺寸 哈希就变了）→ 用那条
+            try:
+                dh = stickerdict.dhash(data)
+                same = stickerdict.near(dh, exclude=img)
+                if same:
+                    stickerdict.link(img, same)
+                    hit = stickerdict.lookup(img)
+                    if hit:
+                        log(f"[表情包词典] {img[:16]} 跟认过的 {same[:16]} 是同一张 → 用词条")
+                        return hit
+            except Exception:
+                dh = ""
         data, mime, note = await asyncio.to_thread(imgprep.prep, data, mime, 1280)  # 动图拼帧 / 大图缩小
         if len(data) > MAX_BYTES:                  # 缩完还是太大（没装 Pillow / 缩不动）（10-28 审查 media-8：先缩再判）
             return _skip(img, now)
@@ -385,6 +420,11 @@ async def describe(key, url, log=print, primary_only=False, headers=None, ctx=No
         cap = _trim(cap)
         if cap and note and not cap.startswith("动图"):
             cap = "动图：" + cap
+        if cap and stickerdict is not None:
+            try:
+                stickerdict.note_auto(img, _plain(cap, ctx) if sig else cap, dh, url)
+            except Exception:
+                pass
         if cap:
             if sig:                            # 带上下文的整段只给这个对话 + 发图人；按图那份只放干净的部分（别的对话用）
                 plain = _plain(cap, ctx)
@@ -395,6 +435,22 @@ async def describe(key, url, log=print, primary_only=False, headers=None, ctx=No
         return cap or None
     except Exception as e:
         log("[识图] 失败:", repr(e)[:150])
+        return None
+
+
+async def look(b64, mime, prompt, log=print):
+    """用识图模型按自己的提示看一张图（表情包词典深度认 10-30 v1.16.0）"""
+    return await _ask(b64, mime, log, False, "", None, prompt=prompt)
+
+
+async def fetch(url, headers=None):
+    """下载一张图（表情包词典深度认用）；太大 / 失败 → None"""
+    try:
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0", **(headers or {})})
+            r.raise_for_status()
+            return r.content if len(r.content) <= DL_MAX else None
+    except Exception:
         return None
 
 

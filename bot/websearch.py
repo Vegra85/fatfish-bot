@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 大肥鱼上网查东西
-  搜索源（按顺序试，哪个能用用哪个）：DeepSeek 官方搜索 → 百度 → 必应 → B站视频
+  搜索源（按顺序试，哪个能用用哪个）：DeepSeek 官方搜索 → 百度 → 必应（10-30 先要 RSS）→ DuckDuckGo（10-30 兜底）→ B站视频
     DeepSeek 官方搜索 = api.deepseek.com/v1/tools/search（用聊天同一个 key；不会被要验证码）
     fetch()：DeepSeek 官方「读网页」接口 把一个网页转成纯文字（学梗时读百科正文用）
   decide()：回复前判断这几句话里有没有「需要上网查」的东西（不认识的梗、人名、新闻、她不确定的事实）
@@ -25,6 +25,7 @@ _page_cache = {}       # url -> (ts, text)
 _client = None
 stats = {}             # 每个搜索源最近一次的结果数（自检用）
 _ds = {"off_until": 0}  # DeepSeek 搜索：key 不对/没余额时先停一会儿 别每次都白请求
+outage = {}             # 所有搜索源都不通：{"since": 从什么时候开始}（10-30 C21：功能坏了时她怎么说 读这个）
 
 
 def _ds_conf():
@@ -162,6 +163,34 @@ async def _baidu(c, q):
 
 
 async def _bing(c, q):
+    """必应（10-30 C10）：先要 RSS —— 结构化 XML，被拦 / 要验证时给的不是 XML，会明说「被拦」而不是悄悄 0 条；
+    RSS 不行再退回抠网页（以前只抠网页 b_algo：结构一变就常常 0 条）"""
+    why = ""
+    try:
+        r = await c.get("https://cn.bing.com/search", params={"q": q, "format": "rss", "setlang": "zh-hans", "cc": "cn"})
+        t = (r.text or "").lstrip()
+        if r.status_code != 200 or not (t.startswith("<?xml") or "<rss" in t[:400]):
+            raise RuntimeError(f"RSS 没给 XML（HTTP {r.status_code}，多半被拦 / 要验证）")
+        import xml.etree.ElementTree as ET
+        out = []
+        for it in ET.fromstring(t.encode("utf-8")).iter("item"):
+            title, desc = _strip(it.findtext("title") or ""), _strip(it.findtext("description") or "")
+            if title or desc:
+                out.append({"title": title[:60], "snippet": desc[:220], "url": (it.findtext("link") or "").strip()})
+            if len(out) >= 8:
+                break
+        if out:
+            return out
+        why = "RSS 0 条"
+    except Exception as e:
+        why = repr(e)[:80]
+    out = await _bing_html(c, q)
+    if not out:
+        raise RuntimeError(f"必应 0 条（{why}；网页也没抠到）")
+    return out
+
+
+async def _bing_html(c, q):
     r = await c.get("https://cn.bing.com/search", params={"q": q, "setlang": "zh-hans", "cc": "cn"})
     out = []
     for blk in re.findall(r'<li class="b_algo".*?</li>', r.text, re.S)[:8]:
@@ -205,7 +234,30 @@ async def _bili(c, q):
     return out
 
 
-SOURCES = (("DeepSeek", _deepseek), ("百度", _baidu), ("必应", _bing), ("B站", _bili))
+async def _ddg(c, q):
+    """DuckDuckGo 的网页版（10-30 C10 兜底）：不要 key；被当成机器人时会给「anomaly」页 → 明说"""
+    r = await c.post("https://html.duckduckgo.com/html/", data={"q": q, "kl": "cn-zh"},
+                     headers={"Referer": "https://html.duckduckgo.com/", "Origin": "https://html.duckduckgo.com"})
+    t = r.text or ""
+    if r.status_code != 200 or "anomaly" in t[:6000].lower() or "captcha" in t[:6000].lower():
+        raise RuntimeError(f"DuckDuckGo 不给结果（HTTP {r.status_code}，多半被当成机器人）")
+    out = []
+    for blk in re.split(r'class="[^"]*\bresult__body\b[^"]*"', t)[1:12]:     # 真页面是 class="links_main links_deep result__body"
+        a = re.search(r'<a[^>]*class="[^"]*\bresult__a\b[^"]*"[^>]*>(.*?)</a>', blk, re.S)
+        href = re.search(r'href="([^"]+)"', a.group(0)) if a else None
+        sn = re.search(r'class="[^"]*\bresult__snippet\b[^"]*"[^>]*>(.*?)</(?:a|div|td)>', blk, re.S)
+        title, snip = (_strip(a.group(1)) if a else ""), (_strip(sn.group(1)) if sn else "")
+        url = href.group(1).replace("&amp;", "&") if href else ""
+        if "uddg=" in url:                 # 跳转链接 //duckduckgo.com/l/?uddg=真地址
+            url = urllib.parse.unquote(url.split("uddg=", 1)[1].split("&", 1)[0])
+        if title or snip:
+            out.append({"title": title[:60], "snippet": snip[:220], "url": url})
+        if len(out) >= 8:
+            break
+    return out
+
+
+SOURCES = (("DeepSeek", _deepseek), ("百度", _baidu), ("必应", _bing), ("DuckDuckGo", _ddg), ("B站", _bili))
 
 
 async def search(q, log=print, want=8, ori=None):
@@ -231,6 +283,10 @@ async def search(q, log=print, want=8, ori=None):
             stats[name] = f"失败 {repr(e)[:60]}"
         if len(res) >= want or (name == "DeepSeek" and len(res) >= 4):
             break
+    if res:
+        outage.clear()
+    elif stats and not any(isinstance(v, int) for v in stats.values()):
+        outage.setdefault("since", time.time())     # 一个来源都没跑通（不是「搜了但 0 条」）
     log(f"[搜索] 「{q}」→ " + " ".join(f"{k}:{v}" for k, v in stats.items()))
     _cache[q] = (time.time(), res)
     return res

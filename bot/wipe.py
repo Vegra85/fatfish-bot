@@ -12,6 +12,9 @@
     - 好感度（连外号）、动画次数和记录、梗里记下的他的原话、他发的图的描述缓存、心情记录里的名字
     - 共享印象：分不清哪条来自他 全清掉 过一会儿从剩下的聊天重新提炼
     - 控制台留的备份里有他的 也删
+    - 调模型的记录 data/trace/（10-29 判断模型实验 最多留 3 天）：跟他有关的整行删
+    - 注意力存档 data/attention/（10-30 影子模式）：带他 QQ 号的行删
+    - 影子日志 data/court、data/ambiguity、data/cooling（10-30 阶段 0：法庭 / 歧义 / 冷却）：带他 QQ 号或名字的行删
     - 每天的 data 包（daily/data_*.zip）、记忆卫生迁移前的整份备份（memhyg_*）、迁移记录和报告、读坏另存的 .bad-*：
       按上面一样的规矩改一遍（10-28 审查 memory-3：以前这些里他的东西原样都在 拿出来放回 data 就全回来了）
   记一笔什么时候删的（data/wiped.json 只有 QQ 号和时间）：重启补看漏掉的消息时 不会把删之前的又捡回来
@@ -434,6 +437,53 @@ def archives(data, uid, names, texts):
     return rep
 
 
+def traces(data, uid, names):
+    """调模型的记录（10-29 judge.py：data/trace/<日期>.jsonl 最多留 3 天）：跟他有关的整行删掉 ——
+    他的私聊、窗口里有他说的话（uids）、哪儿带着他的 QQ 号、提到他的名字（多删几行没关系 本来就是排查用的）"""
+    data, uid = Path(data), str(uid)
+    rep = {"trace_lines": 0}
+    num = re.compile(r"(?<!\d)" + re.escape(uid) + r"(?!\d)")
+    strong = [n for n in (names or ()) if n and not _weak_name(n)]
+    for p in sorted((data / "trace").glob("*.jsonl")):
+        lines = _read_lines(p)
+        if lines is None:
+            continue
+        out = []
+        for ln in lines:
+            if num.search(ln) or mentions(ln, strong):
+                rep["trace_lines"] += 1
+                continue
+            out.append(ln)
+        if len(out) != len(lines):
+            _write_lines(p, out)
+    for p in sorted((data / "attention").glob("*.jsonl")):     # 注意力存档（10-30 影子模式）：带着他的 QQ 号的行删掉（不记原文）
+        lines = _read_lines(p)
+        if lines is None:
+            continue
+        out = [ln for ln in lines if not num.search(ln)]
+        if len(out) != len(lines):
+            rep["attention_lines"] = rep.get("attention_lines", 0) + len(lines) - len(out)
+            _write_lines(p, out)
+    for kind in ("court", "ambiguity", "cooling"):    # 影子日志（10-30 阶段 0：法庭 / 歧义 / 冷却）：带着他的 QQ 号 / 名字的行删掉
+        for p in sorted((data / kind).glob("*.jsonl")):
+            lines = _read_lines(p)
+            if lines is None:
+                continue
+            out = [ln for ln in lines if not (num.search(ln) or mentions(ln, strong))]
+            if len(out) != len(lines):
+                rep["shadow_lines"] = rep.get("shadow_lines", 0) + len(lines) - len(out)
+                _write_lines(p, out)
+    for p in sorted((data / "judge_eval").glob("eval_*")):     # 离线盲评的结果（从 trace 抽的）：带着他的 整份删（能重新跑）
+        try:
+            t = p.read_text(encoding="utf-8", errors="ignore")
+            if num.search(t) or mentions(t, strong):
+                p.unlink()
+                rep["judge_eval_files"] = rep.get("judge_eval_files", 0) + 1
+        except OSError:
+            pass
+    return rep
+
+
 def anim_state(s, uid):
     """动画记账里去掉他（s 是动画的状态 就地改）"""
     uid, n = str(uid), 0
@@ -606,6 +656,7 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
         d = _rj(data / f)
         if d is not None and _drop_keys(d, {uid, f"private_{uid}"}):
             _wj(data / f, d)
+    rep.update(traces(data, uid, names))          # 调模型的记录（10-29）
     if with_anim:
         st = _rj(data / "anim_state.json")
         if st and anim_state(st, uid):

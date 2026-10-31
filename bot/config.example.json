@@ -63,6 +63,12 @@
   "greet_new_friend": true
  },
  "behavior": {
+  "read_layer": {
+   "_说明": "「读懂」层（10-31 v1.15.10 实验 默认关）：被叫到 / 私聊的回复之前 先让判断模型写 2~4 行理解笔记（话里有话 / 指的是谁 / 想要什么回应）当状态给她；judge.routes.read 指 anthropic 就用 Claude 否则 DeepSeek；timeout 秒内没读完就照常回",
+   "enabled": false,
+   "direct_only": true,
+   "timeout": 8
+  },
   "group_reply_prob": 0.15,
   "name_boost": 0.55,
   "group_cooldown_sec": 90,
@@ -71,6 +77,14 @@
   "group_context_messages": 70,
   "max_segments": 6,
   "typing_speed_cps": 14,
+  "typing_human": true,
+  "typing_human_cps": 2.5,
+  "typing_human_max_sec": 7,
+  "outage_persona": true,
+  "typing_brake": true,
+  "typing_brake_flood": 5,
+  "recall_line_prob": 0.5,
+  "recall_line_cooldown_min": 10,
   "proactive_private": true,
   "proactive_min_hours": 12,
   "proactive_prob": 0.35,
@@ -322,6 +336,14 @@
   "group_days": 3
  },
  "voice": {
+  "local": {
+   "_说明": "本地肥鱼声音（10-31 v1.15.9 实验）：feiyu_voice 常驻说话（C:\\QQBot\\feiyu_voice\\启动肥鱼说话-常驻.bat 开着才有）。enabled 打开后 mode=backup：MiniMax 不行时用它；prefer：先用它。key 从 key_file 读",
+   "enabled": true,
+   "url": "http://127.0.0.1:9881",
+   "key_file": "",
+   "mode": "prefer",
+   "timeout": 25
+  },
   "_说明": "第五期 语音。听：别人发的语音用本地 SenseVoice 听写（先双击 安装语音.bat）；stt 改 off 就不听。说：MiniMax 专属声音（双击 设计声音.bat 填 key、挑声音）；enabled 改 false 就不发语音。private_every=私聊大约每几句来一条语音；群里只在有人要她发语音时发；daily_max=每天最多发几条；max_chars=一条语音最多几个字；proactive_prob=主动找人时用语音的概率",
   "enabled": true,
   "tts": "minimax",
@@ -451,7 +473,14 @@
   "gap_sec": 60,
   "daily_max": 30,
   "online": true,
-  "online_sec": 12
+  "online_sec": 18,
+  "cover": {
+   "_说明": "唱歌换声（10-31 v1.15.13 实验）：网上现找的原唱 → feiyu_voice 常驻唱歌换声（C:\\QQBot\\feiyu_voice\\启动肥鱼唱歌-常驻.bat 开着才有）换成她的声音；没开 / 出错 → 照旧发原唱",
+   "enabled": true,
+   "url": "http://127.0.0.1:9882",
+   "key_file": "",
+   "timeout": 90
+  }
  },
  "memewiki": {
   "_说明": "梗百科：cnmeme.wiki 的离线词库（data/memewiki/memes.db 来自 github.com/in1t1a1/astrbot_plugin_memewiki MIT）。有人问梗先查本地 没有再在线查（online）最后才上网学；hints 对方的话里有词库里的梗就给她看一眼；sync 每天凌晨同步新词条",
@@ -586,5 +615,38 @@
   "max_tokens": 32000,
   "effort": "high",
   "timeout_sec": 600
+ },
+ "fixup": {
+  "_说明": "纠错（10-28 v1.11.0 fixup.py）：只管验证程序 / 机器人那种场合（真人、老板说的不算）—— 她连着被判不对（验证失败 / 被撤回 / 被踢）→ 下一条换个做法；验证题（「请在 60 秒内发送 X 的运算结果 否则移出」这种）只发一个数字 发之前用代码查（只从她写的里面取 不替她算 取不出来重写一次 还不行就不发）；纠错以后还连着失败 stop_after 次 → 对这个人停 stop_min 分钟、私聊告诉老板（一个对话 owner_gap_hours 小时说一次）；事后记教训（data/fixup.json 控制台「纠错」页能看能删 lesson_days 天没碰到就不带）",
+  "enabled": true,
+  "window_min": 15,
+  "reply_gap_sec": 120,
+  "stop_after": 2,
+  "stop_min": 30,
+  "tell_owner": true,
+  "owner_gap_hours": 6,
+  "lesson_days": 30,
+  "max_lessons": 60,
+  "temperature": 0.3
+ },
+ "bot_qq": "",
+ "self_info": {
+  "_说明": "她自己的公开资料（10-31 v1.15.5）：有人问她是什么 / 怎么做的 / 开源没有 / 版本号 → 她可以照实说并给这个链接；repo 空着 = 不给",
+  "repo": "https://github.com/Vegra85/fatfish-bot"
+ },
+ "announce": {
+  "_说明": "版本更新播报（10-31 v1.15.5）：1.x / 2.0 变了 → 开机 5 分钟后跟活跃群（先查禁言）和熟人各说一声；levels: minor（默认）/ all / off；quiet = 她那边几点到几点不发",
+  "levels": "minor"
+ },
+ "stickerlib": {
+  "_说明": "她自己的表情包库（C31 10-31 v1.15.14）：表情包词典里认清楚（把握 ≥ min_conf 或老板核对过）、群里 ≥ min_people 个人发过的 → 原图收进 bot\\data\\sticker_lib；shadow=true 时她每说一句让判断模型挑「接哪张 / 不接」只记不发（控制台「表情包词典」页最上面看 + 标）。gap_min 同一个地方几分钟最多挑一次 daily 一天最多挑几次 max_items 库里最多几张",
+  "enabled": true,
+  "shadow": true,
+  "min_conf": 60,
+  "min_people": 2,
+  "max_items": 300,
+  "cands": 8,
+  "gap_min": 5,
+  "daily": 150
  }
 }

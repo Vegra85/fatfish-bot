@@ -12,14 +12,14 @@
   以后覆盖解压升级只换模板、不碰用户自己写的 persona.md
 
 宁可不导出 也不把隐私传上去：
-  1. 只拷白名单里的文件（代码、bat、控制台网页）；聊天记录、记忆、日志、表情包图片、备份、config.json 都不拷
-  2. config.json → bot/config.example.json：key / token / SESSDATA 清空，老板 QQ 换成占位符，群号列表清空
-  3. run.bat 里的机器人 QQ 号换成 %BOT_QQ%（文件开头 set BOT_QQ=…）
+  1. 只拷白名单里的文件（代码、大肥鱼.bat、控制台网页）；聊天记录、记忆、日志、表情包图片、备份、config.json 都不拷
+  2. config.json → bot/config.example.json：key / token / SESSDATA 清空，老板 QQ 换成占位符，机器人 QQ（bot_qq）和群号列表清空
+  3. 机器人的 QQ 号不在任何导出的文件里（v1.12.0 起记在 config.json 的 bot_qq；以前的 run.bat 不导出了）
   4. tools/export_rules.json（它自己不会被导出）里的替换规则：提示词例子里的真名、电脑上的个人路径…
   5. 最后把导出结果整个再查一遍：config 里任何一个 key/token 的值、聊过天的人的 QQ 号和群号、名字、长得像 key 的字符串
      有一处对上 就整个不导出（导出目录一个字都不改）并告诉你是哪个文件哪一行
 
-用法：双击 C:\\QQBot\\导出到GitHub.bat
+用法：双击 C:\\QQBot\\大肥鱼.bat →「维护」→「导出到 GitHub」
      或 python tools/export_github.py [QQBot 目录] [导出目录] [规则文件]
 """
 import fnmatch
@@ -35,26 +35,26 @@ RULES = Path(sys.argv[3]) if len(sys.argv) > 3 else HERE / "export_rules.json"
 BOT = ROOT / "bot"
 DATA = BOT / "data"
 
-ROOT_FILES = ["启动.bat", "停止.bat", "run.bat", "修复启动.bat", "开机自启.bat", "控制台.bat", "重启机器人.bat", "导出到GitHub.bat",
-              "安装语音.bat", "安装本地AI.bat", "安装视频支持.bat", "导入表情包.bat", "整理表情包.bat",
-              "首次设置.bat"]   # 首次设置.bat：10-27 v1.2.0 首次设置向导（打包群文件.bat 只给群主用 不导出）
+ROOT_FILES = ["大肥鱼.bat"]   # v1.12.0：以前那十几个 .bat 合成了一个菜单（逻辑都在 tools/fish.py）；公开仓库里旧的 .bat 导出时会删掉
 BOT_FILES = ["bot.py", "budget.py", "catchup.py", "clock.py", "control.py", "followup.py", "galgame.py", "imgprep.py",
              "localai.py", "machine.py", "media.py", "memory.py", "mood2.py", "rhythm.py", "shared.py", "slang.py",
              "soul.py", "speakup.py", "stats.py", "stickers.py", "style.py", "vision.py", "voice.py", "websearch.py",
-             "bili.py", "bili2.py", "panel.py", "panel.html", "botloop.bat", "persona.md", "setup_voice.py",
+             "bili.py", "bili2.py", "panel.py", "panel.html", "persona.md", "setup_voice.py",
              "apply_stickers.py", "import_nekowhale.py", "sticker_curate.py", "anim.py", "cross.py", "wipe.py", "sing.py",
              "music.py", "aidetect.py", "memewiki.py", "groupadmin.py", "safeio.py", "commit.py",
-             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py", "prank.py"]   # version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）
+             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py", "prank.py", "fixup.py", "judge.py", "outage.py", "shadowlog.py", "congrats.py", "stickerdict.py", "announce.py", "stickerlib.py"]   # fixup.py：纠错（10-28 v1.11.0 公开）；version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）
 # 不公开的「灵魂」：导出的是 tools/public_stubs/ 里同名的空壳（10-26）
+# judge.py：判断模型实验 + 调用记录 trace（10-29 v1.12.1 小明：只是实验 不发到公开仓库 —— 空壳 = 全走 DeepSeek、不记 trace）
 PRIVATE = {"persona.md", "soul.py", "memory.py", "mood2.py", "galgame.py", "cross.py", "slang.py", "style.py", "shared.py",
-           "commit.py", "humor.py", "prank.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）；prank.py 恶作剧（10-28 v1.10.0）
+           "commit.py", "humor.py", "prank.py", "judge.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）；prank.py 恶作剧（10-28 v1.10.0）
 STUBS = HERE / "public_stubs"
 PUBLIC_AS = {"persona.md": "persona.example.md"}   # 空壳换个名字导出（v1.2.0：人设模板 → 升级不冲掉用户的 persona.md）
-TOOL_FILES = ["export_github.py", "setup_wizard.py"]   # setup_wizard.py：首次设置向导（v1.2.0）；pack_qqbot.py 只给群主用 不导出
+TOOL_FILES = ["export_github.py", "setup_wizard.py", "fish.py"]   # setup_wizard.py：首次设置向导（v1.2.0）；fish.py：大肥鱼菜单（v1.12.0）；pack_qqbot.py 只给群主用 不导出
 HANDWRITTEN = {"README.md", "CHANGELOG.md", ".gitignore", ".gitattributes", "LICENSE",
                "requirements.txt"}   # 导出目录里手写的 不覆盖也不删
 SECRET_KEY = re.compile(r"key|token|sessdata|secret|password|cookie", re.I)
 PATTERNS = [(r"sk-[A-Za-z0-9]{16,}", "像 API key"),
+            (r"sk-ant-[A-Za-z0-9_-]{16,}", "像 Anthropic 的 key"),
             (r"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}", "像 JWT（MiniMax 的 key 长这样）"),
             (r"SESSDATA=[^;\s'\"]{8,}", "像 B 站 SESSDATA"),
             (r"(?i)bearer\s+[A-Za-z0-9._-]{24,}", "像 token")]
@@ -74,10 +74,13 @@ def jload(p, default=None):
 
 # ───────────── 哪些东西算隐私（都从本机的私有数据里现找 不写死在这个文件里） ─────────────
 def private_numbers(cfg):
-    nums = {str(cfg.get("owner_qq") or "")}
-    m = re.search(r"launcher\.bat\s+(\d{5,})", read(ROOT / "run.bat")) if (ROOT / "run.bat").exists() else None
+    nums = {str(cfg.get("owner_qq") or ""), str(cfg.get("bot_qq") or "")}
+    rb = ROOT / "run.bat"                  # 以前的 run.bat（v1.12.0 起收进备份了；还在就照样当隐私）
+    m = re.search(r"launcher(?:-win10)?\.bat\s+(\d{5,})", read(rb)) if rb.exists() else None
     if m:
         nums.add(m.group(1))
+    for p in (ROOT / "NapCat" / "config").glob("*.json"):      # NapCat 登录过的号（onebot11_<号>.json）
+        nums.update(re.findall(r"\d{5,}", p.name))
     for p in list((DATA / "memory").glob("*.json")) + list((DATA / "archive").glob("*/*.jsonl")):
         nums.update(re.findall(r"\d{5,}", p.name))
     nums.update((jload(DATA / "favor.json", {}) or {}).keys())
@@ -117,7 +120,8 @@ def secret_values(o, out=None):
 
 
 # 她自己的名字和 QQ 资料（属于「灵魂」那部分 不公开）：导出时换成通用的
-PERSONAL = {"bot_name": "大肥鱼", "group_card": "", "strong_aliases": [],
+PRIVATE_CFG = {"judge"}   # config 里整节不导出的（10-29 判断模型实验 私有）
+PERSONAL = {"bot_name": "大肥鱼", "group_card": "", "strong_aliases": [], "bot_qq": "",
             "profile": {"nickname": "", "note_suffix": ""}}
 
 
@@ -138,7 +142,7 @@ def example_config(cfg, nums):
         if str(o) in nums or (isinstance(o, str) and any(n in o for n in nums)):    # 带着私人号码的整句清空
             return ""
         return o
-    out = clean(cfg)
+    out = clean({k: v for k, v in cfg.items() if k not in PRIVATE_CFG})
     for k, v in PERSONAL.items():
         if k not in out:
             continue
@@ -166,15 +170,6 @@ def build(cfg, nums, rules):
         if (HERE / name).exists():
             files["tools/" + name] = read(HERE / name)
     files["bot/config.example.json"] = example_config(cfg, nums)
-    if "run.bat" in files:                 # 机器人 QQ 号 → 变量（用的人改第一行就行）
-        t = files["run.bat"]
-        m = re.search(r"launcher\.bat\s+(\d{5,})", t)
-        if m:
-            t = t.replace(m.group(0), "launcher.bat %BOT_QQ%")
-            nl = "\r\n" if "\r\n" in t else "\n"
-            t = t.replace("@echo off" + nl, "@echo off" + nl + "rem your bot's QQ number (the account NapCat logs in with)" + nl
-                          + "set BOT_QQ=123456789" + nl, 1)
-        files["run.bat"] = t
     for r in rules.get("replace") or []:
         pat, old, new = r.get("files", "*"), r.get("old", ""), r.get("new", "")
         if not old:
