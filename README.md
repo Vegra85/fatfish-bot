@@ -8,7 +8,7 @@ DeepSeek 当脑子，[NapCat](https://github.com/NapNeko/NapCatQQ) 接 QQ（OneB
 > **这不是一个下载就能用的成品 AI。** 仓库里是思路、工具和集成：怎么接 QQ、怎么在群里接话、掉线了怎么补回、怎么看图 / 唱歌 / 做东西、怎么省 token、怎么做本机控制台……
 > **她是谁、记得什么、心情怎么变、跟谁有多熟 —— 这些「灵魂」不公开**，仓库里是能跑的空壳，要你自己造一个你自己的 AI。
 >
-> 当前版本 **v1.15.17**（2026-10-31）· [更新日志](CHANGELOG.md) · 作者每天在跑：Windows 11 + Python 3.15 · API key、聊天记录、记忆都不在仓库里
+> 当前版本 **v1.16.2**（2026-11-01）· [更新日志](CHANGELOG.md) · 作者每天在跑：Windows 11 + Python 3.15 · API key、聊天记录、记忆都不在仓库里
 
 ![控制台总览（演示数据）](docs/screenshots/overview.png)
 
@@ -61,7 +61,7 @@ DeepSeek 当脑子，[NapCat](https://github.com/NapNeko/NapCatQQ) 接 QQ（OneB
 
 **能做事**
 - 写网页、小游戏、SVG、脚本：另起一轮慢慢做完，存成文件用 QQ 文件发过去；说「改一下」就带着旧文件改
-- 唱歌：歌单里的直接唱；没学过的去网易云 / B站 找原唱，找副歌那段唱；能接本地换声服务换成她自己的声音
+- 唱歌：歌单里的直接唱；没学过的去 QQ 音乐 / 网易云 / 酷狗 / B站 / YouTube 找原唱（国内平台扫码登录你自己的账号），找副歌那段唱；贴链接也能点；同名歌拿不准先问你要哪个；能接本地换声服务换成她自己的声音
 - 发语音（MiniMax，或者接你自己的本地 TTS）、做 5 秒小动画（火山方舟 Seedance）、刷 QQ 空间点赞评论、生日 / 好消息说声恭喜
 
 **靠谱**
@@ -169,7 +169,9 @@ flowchart LR
 - 听：本地 SenseVoice（sherpa-onnx）；30 秒以上带伴奏的只记「在放歌」
 - 要语音认得全：「发个早安的语音」「来段生日语音」都算
 - 唱歌：控制台「唱歌」页管歌单（粘 B 站链接导入、上传、设唱哪段），剪一段当 QQ 语音发
-- 点了没学过的歌：网易云 → B站 找**原唱**（核对标题和歌手、现场版 / 伴奏 / 翻唱往后排、不到 80 秒的试听片段不要），找整首里重复出现的副歌、开头挪到换气处，默认 18 秒左右；**VIP / 地区限制不绕过**，找不到就直说
+- 点了没学过的歌：按 `sing.sources`（默认 QQ 音乐 → 网易云 → 酷狗 → B站 → YouTube，没登录 / 用不了的跳过、外文歌 YouTube 提前）找**原唱**（核对标题和歌手、现场版 / 伴奏 / 翻唱 / DJ / sped up 往后排或不要、不到 80 秒的试听片段不要），按歌词或旋律找副歌、开头挪到换气处，默认 18 秒左右；**VIP / 地区限制不绕过**（国内平台用你扫码登录的账号的权限），找不到就直说
+- 贴链接点歌：B站 / YouTube 直接唱那个视频；网易云 / QQ 音乐 / 酷狗的链接先按链接拿、拿不到按歌名歌手去别处找
+- 拿不准先问：同名歌没说歌手、前几名是不同的人 → 她列 2~3 个问要哪个，`sing.choice_sec` 秒没人选唱第一个；有人说「不是这首 / 全是怪音」这个版本以后不用
 - 换声（实验，默认关）：`sing.cover` 填上本地换声服务（`POST /cover {"input", "output"}`，请求头 `X-API-Key`），原唱片段先换成她的声音再发；服务没开就发原唱
 
 </details>
@@ -244,6 +246,8 @@ flowchart LR
 | 听语音 | 本地 SenseVoice（菜单里「安装语音」） |
 | 她自己的声音说话 / 唱歌换声 | 自己搭本地 TTS / 换声服务，接口见上面「语音和唱歌」；`voice.local` / `sing.cover` |
 | 唱歌、视频截帧 | ffmpeg（菜单里「视频支持」） |
+| 从 YouTube 找歌 | yt-dlp + Deno（菜单里「YouTube 点歌支持」） |
+| 从 QQ 音乐 / 网易云 / 酷狗找歌 | 控制台「唱歌」页扫码登录你自己的账号（手机 App 扫） |
 | 本地识图兜底 | Ollama + `qwen3-vl`（菜单里「本地 AI」） |
 | 梗百科离线词库 | 从 [astrbot_plugin_memewiki](https://github.com/in1t1a1/astrbot_plugin_memewiki) 下载 `data/memes.db` 放到 `bot\data\memewiki\memes.db`（没有也能跑：只用在线接口） |
 | 表情包 | 仓库里不带图：`bot/stickers/` 放图片和 `index.json`（格式见 `stickers.py` 开头）。nekowhale 动图的标注来自 dsh-nekowhale-stickers（CC BY-NC 4.0）：把它的 `meta/nekowhale.json` 放到 `bot/stickers/nekowhale.json`，再在菜单里选「导入表情包」 |
