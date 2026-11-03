@@ -4911,6 +4911,7 @@ class FatFish:
         if control.blocked(uid):
             if catch is None and blocklist is not None:   # 她拉黑案审理中 / 冷却中的人：冲她说的话只当证据收进案子（11-03 v1.17.13 不进记忆、不回）
                 await self._block_ev(ev, uid, self_id)
+                self._appeal_msg(ev, uid)  # 私聊里明说「申诉…」→ 只转给老板（11-03 v1.17.15：不回他、不进记忆 / 对话；冷却中的这句上面照旧当证据收了）
             return                         # 控制台里屏蔽了的人：完全不理
         mid = ev.get("message_id")
         if mid is not None:
@@ -9050,6 +9051,125 @@ class FatFish:
             log("[拉黑] 收冷却中的证据出错:", repr(e)[:100])
             return False
 
+    def _appeal_msg(self, ev, uid):
+        """永久拉黑 / 冷却中的人私聊发来的（handle 开头 control.blocked 那里；11-03 v1.17.15 小明 定的「她的名字也加申诉」）
+        只看他自己打的字（文字段：语音不听写、转发不读、图不看）：明说申诉（blocklist.is_appeal：开头是「申诉」）→ 后台转给老板（_appeal）；
+        别的话什么都不做（永久拉黑的照旧不读；冷却中的照旧只当证据 —— _block_ev 已经收过了）；群里说的不算 → 算不算申诉"""
+        try:
+            if blocklist is None or not hasattr(blocklist, "is_appeal") or ev.get("message_type") != "private":
+                return False
+            segs = ev.get("message") or []
+            plain = cq_text(segs) if isinstance(segs, str) else "".join(
+                str((s.get("data") or {}).get("text") or "") for s in segs if isinstance(s, dict) and s.get("type") == "text")
+            if not blocklist.is_appeal(plain):
+                return False
+            self._blk_bg(self._appeal(uid, "私聊", plain, mid=ev.get("message_id"), ev=ev))
+            return True
+        except Exception as e:
+            log("[申诉] 出错:", repr(e)[:100])
+            return False
+
+    async def _appeal(self, uid, via, text, mid=None, ev=None):
+        """申诉（11-03 v1.17.15 小明 定的「她的名字也加申诉」：被她拉黑（永久）/ 冷却的人有一条路让老板知道他想申诉）
+        via：加好友（验证消息）/ 私聊（明说申诉）。记进 blocklist.json（控制台「她拉黑的人」看得到）→ 同一个人 appeal_days 天里最多私聊转给老板一次
+        （谁、哪个案子、当时判的什么、原因、他写的话、怎么撤；两条路一起算、没发出去的不算）
+        给老板的是通知：直接发（_say_plain）、不记进她跟老板的聊天记录（E1：不进她的提示）；她这边什么都不知道 —— 不回他、不进记忆 / 对话 / 存档
+        不转：老板自己、控制台「不理的人」（老板自己屏蔽的）、别人家的 AI、已经不在名单里 / 冷却到点了的（那就是普通人 照常走）
+        appeal_ack（默认关）：私聊的申诉转成了 → 给他回一条固定的系统提示（不是她说话：直接调 NapCat、不记成她发的）→ 转给老板了没有"""
+        try:
+            uid = str(uid or "")
+            if blocklist is None or not hasattr(blocklist, "appeal_add") or not uid or (OWNER_QQ and uid == OWNER_QQ):
+                return False
+            if uid in (control.rules().get("blocked") or {}):
+                return False                   # 老板在控制台屏蔽的人：完全不理（申诉也不转）
+            tg = blocklist.appeal_target(uid)
+            if not tg:
+                return False
+            if self._is_ai(uid):
+                log(f"[申诉] {uid} 是别人家的 AI → 不转（AI 说的不算）")
+                return False
+            r = blocklist.appeal_add(uid, via, text, mid=mid, what=tg.get("what"), case=tg.get("case"))
+            if not r:
+                return False
+            if not r.get("send"):
+                log(f"[申诉] {uid}（{tg.get('what')}中）{via}申诉了 → 不转给老板（{r.get('why')}；记在控制台）")
+                return False
+            if not OWNER_QQ:
+                blocklist.appeal_sent(uid, r.get("id"), False, "没设老板 QQ（config owner_qq）")
+                log(f"[申诉] {uid} {via}申诉了 → 没设老板 QQ 转不了（记在控制台）")
+                return False
+            ack = via == "私聊" and bool(blocklist.C.get("appeal_ack", False))
+            ok = await self._say_plain("private", OWNER_QQ, [self._appeal_notice(uid, tg, via, r.get("text") or "", ack)])
+            blocklist.appeal_sent(uid, r.get("id"), bool(ok), "" if ok else "私聊发给老板没发出去")
+            if not ok:
+                log(f"[申诉] {uid} {via}申诉了 → 私聊发给老板没发出去（不算名额：他下次申诉照样转）")
+                return False
+            log(f"[申诉] {uid}（{tg.get('what')}中）{via}申诉了 → 转给老板了（不进她的聊天记录；{blocklist._f('appeal_days'):g} 天内不再转）")
+            if ack:
+                await self._appeal_ack(uid, ev)
+            return True
+        except Exception as e:
+            log("[申诉] 出错:", repr(e)[:120])
+            return False
+
+    def _appeal_notice(self, uid, tg, via, text, ack=False):
+        """申诉转给老板的那条（固定格式、不过模型；11-03 v1.17.15）：谁、哪个案子、当时判的什么、原因、他写的话、怎么撤
+        删过他的数据（名单里名字、原因抹掉了）→ 只写号"""
+        wiped = bool(tg.get("wiped")) or tg.get("why") == "（删数据时抹掉了）"
+        name = "" if wiped else str(tg.get("name") or "")
+        who = f"「{name}」({uid})" if name else (f"({uid}，他的数据删了)" if wiped else f"({uid})")
+        blk = tg.get("what") == "拉黑"
+        src = {"加好友": "加她好友时写的验证消息（" + ("好友申请照旧自动拒绝了" if blk else "冷却中的好友申请照旧不通过也不拒绝") + "）",
+               "私聊": "私聊发给她的（没回他、没进她的记忆和聊天记录）"}.get(via, str(via))
+
+        def hm(t):
+            return clock.strf("%m-%d %H:%M", t) if t else "?"
+        if blk:
+            st = f"她 {hm(tg.get('t'))} 永久拉黑了他（所有群和私聊都不理、再加好友自动拒绝" + ("；好友已经删了" if tg.get("deleted") else "") + "）"
+        else:
+            st = f"他在冷却中，到 {hm(tg.get('until'))}（所有群和私聊先不理他）" + ("；法庭还在审，判完会另外告诉你" if tg.get("state") == "审理中" else "")
+        lines = [f"【申诉】{who} 想申诉 —— {src}：", f"「{text or '（没写）'}」", f"{st}；她写的原因：{tg.get('why') or '没写'}"]
+        if tg.get("case") and not tg.get("case_ok"):
+            lines.append(f"案子 {tg['case']}：案子的记录已经过期了（只剩名单 / 冷却里那一项）")
+        elif tg.get("case"):
+            vd, res, rw = tg.get("verdict") or "", tg.get("result") or "", tg.get("result_why") or ""
+            rs = "" if wiped else str(tg.get("reason") or "")
+            seg = f"案子 {tg['case']}（{tg.get('stage') or '一审'}）："
+            if vd:
+                seg += f"法庭判{vd}" + (f"（{rs}）" if rs else "") + (f" → {res}" + (f"（{rw}）" if rw else "") if res and res != vd else "")
+            elif tg.get("state") == "审理中":
+                seg += "法庭还在审"
+            else:
+                seg += (res or "法庭没判") + (f"（{rw}）" if rw else "")
+            if tg.get("end"):
+                seg += f"；{tg['end']}"
+            if tg.get("friend") or tg.get("wipe"):
+                seg += f"；删好友：{tg.get('friend') or '—'}；清数据：{tg.get('wipe') or '—'}"
+            lines.append(seg)
+        lines.append("要撤：控制台「群和人 → 她拉黑的人」点「撤销」（解除拉黑和冷却、清掉「冷却过」，之前的线索和案子不再算；删掉的好友要他重新加，"
+                     "清掉的数据回不来）；不撤就不用管")
+        lines.append(f"同一个人 {blocklist._f('appeal_days'):g} 天里只转一次（这期间他再申诉只记在控制台）。这条只给你看：没进她的聊天记录，她不知道；"
+                     + ("系统给他回一条固定的「已经转给管理员」（不是她说的）" if ack else
+                        ("系统没回他（config blocklist.appeal_ack 关着）" if via == "私聊" else "加好友的申诉回不了他")))
+        return "\n".join(lines)
+
+    async def _appeal_ack(self, uid, ev=None):
+        """appeal_ack 开着（默认关；11-03 v1.17.15）：私聊的申诉转给老板了 → 给他回一条固定的系统提示（blocklist.APPEAL_ACK）
+        不是她说话：不过模型、直接调 NapCat 发（不走 _send：不记成她发的话）、不进记忆；QQ 临时会话（不是好友）事件里带了群号就带上"""
+        try:
+            t = blocklist.APPEAL_ACK.format(d=f"{blocklist._f('appeal_days'):g}")
+            kw = {"user_id": int(uid), "message": [{"type": "text", "data": {"text": t}}]}
+            gid = (ev or {}).get("group_id") or ((ev or {}).get("sender") or {}).get("group_id")
+            if gid and str(gid).isdigit():
+                kw["group_id"] = int(gid)
+            r = await asyncio.wait_for(self.call("send_private_msg", **kw), 15)
+            ok = isinstance(r, dict) and r.get("retcode") == 0
+            log(f"[申诉] 给 {uid} 回了一条系统提示（不是她说的）" + ("" if ok else f"：没发出去（{str(r)[:60]}）"))
+            return ok
+        except Exception as e:
+            log("[申诉] 系统提示没发出去:", repr(e)[:80])
+            return False
+
     def _rt_kick(self, cid):
         """冷却中有了没审过的证据 → 这个案子的再审去抖任务（一个案子一个；已经在等的不另起）"""
         ts = self.__dict__.setdefault("_rt_tasks", {})
@@ -10290,9 +10410,13 @@ class FatFish:
             if blocklist is not None and blocklist.is_blocked_forever(uid):   # 她自己拉黑的人又来加好友（11-02 v1.17.6 C80）→ 自动拒绝
                 r = await self.call("set_friend_add_request", flag=flag, approve=False, remark="")
                 log(f"[好友] {uid} 是她拉黑的人 → 自动拒绝" + ("" if (r and r.get("retcode") == 0) else f"（拒绝没成：{str(r)[:60]}）"))
+                if str(ev.get("comment") or "").strip():   # 验证消息里写了字 = 申诉（11-03 v1.17.15）：照旧拒绝；另外转给老板（同一个人 appeal_days 天一次）
+                    self._blk_bg(self._appeal(uid, "加好友", str(ev.get("comment") or "")))
                 return
             if blocklist is not None and blocklist.cooling(uid):   # 冷却中（11-02 v1.17.10 阶段1）：不同意也不拒绝（申请留着）
                 log(f"[好友] {uid} 正在冷却（到 {clock.strf('%m-%d %H:%M', blocklist.cooling(uid))}）→ 不通过也不拒绝（申请留着）")
+                if getattr(blocklist, "is_appeal", lambda t: False)(ev.get("comment") or ""):   # 冷却中的：验证消息明说申诉才算（11-03 v1.17.15）→ 转给老板
+                    self._blk_bg(self._appeal(uid, "加好友", str(ev.get("comment") or "")))
                 return
             if control.blocked(uid):           # 屏蔽了的人：完全不理 —— 不通过、不打招呼（10-28 审查 media-9：以前照样通过还热情招呼）
                 log(f"[好友] {uid} 在屏蔽名单里 → 不通过（申请留着 过几天自己失效）")

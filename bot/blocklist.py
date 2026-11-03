@@ -42,6 +42,14 @@
   控制台撤销（unblock）= 解除拉黑和冷却 + 清「冷却过」+ 记赦免（冷却早就到期的、只剩「冷却过」的也能撤 Gemini 2-F1）
   data/blocklist.json 新字段：cooled {QQ: {t, last, case, n}}；案子多了 stage（一审 / 二审）、evok（冷却中收不收证据）、ev [证据]、ev_last、
         retrials [再审]、quotes（核实过的原话 每句 ≤60 字）、favor（扣了多少）；state 多一种「冷却中」（判了冷却、还在收证据 / 等再审）
+11-03 v1.17.15 申诉（小明 定的「她的名字也加申诉」；bot.py _appeal_msg / _appeal、handle_request）：被她拉黑（永久）/ 冷却中的人有一条路让老板知道
+  他想申诉（以前只能老板自己去控制台撤，他们什么办法都没有）—— 她本人照旧不跟他们说话、不知道有人申诉
+  两条路：① 加她好友时写的验证消息：永久拉黑的 → 好友申请照旧自动拒绝，验证消息里写了字就算申诉；冷却中的 → 申请照旧留着，验证消息明说申诉才算
+        ② 私聊里明说申诉（is_appeal：开头是「申诉」，「我要申诉」「我想申诉」也算）：不回他、不进记忆 / 对话；冷却中的这句照旧也当证据收
+        别的话照旧（永久拉黑的不读）；群里说的不算申诉；控制台「不理的人」、别人家的 AI 不转
+  只私聊转给老板（谁、哪个案子、当时判的什么、原因、他写的话、怎么撤）：同一个人 appeal_days（7）天最多转一次（两条路一起算；没发出去的不算）；
+        给老板的是通知：不进她跟老板的聊天记录、不进她的提示（E1）；appeal_ack（默认关）= 转成了给他回一条固定的系统提示（APPEAL_ACK，不是她说话）
+  data/blocklist.json 新字段：appeals {QQ: [{id, t, via, what, case, text ≤200 字, sent, no, mid}]}（每人最近 APPEAL_MAX 条）；控制台撤销 / 删数据时整个删
 config → blocklist（见 DEFAULTS）
 """
 import copy
@@ -79,7 +87,11 @@ DEFAULTS = {"enabled": True,
             "retrial_min_total": 2,  # 再审判删除：冷却期间核实的（至少 1 句）+ 立案时核实过的 一共至少几句
             "second_min": 2,         # 二审判删除：这次卷宗里核实过的至少几句
             "wipe_mode": "shadow",   # 删除时清他的数据：shadow 只记「本来会清」、告诉老板；auto 真清（调机器人删数据的流程）
-            "cool_favor_drop": 10}   # 判冷却 / 删除（核实过至少 1 句）→ 他的好感扣这么多（最低 0；放过不扣）
+            "cool_favor_drop": 10,   # 判冷却 / 删除（核实过至少 1 句）→ 他的好感扣这么多（最低 0；放过不扣）
+            # 11-03 v1.17.15 申诉（小明：「她的名字也加申诉」）
+            "appeal": True,          # 被她拉黑 / 冷却中的人申诉（加好友的验证消息 / 私聊明说「申诉」）→ 转给老板；false = 不收不转（照旧不理）
+            "appeal_days": 7,        # 同一个人几天里最多转给老板一次（两条路一起算；0 = 每次都转）
+            "appeal_ack": False}     # 私聊申诉转给老板以后 给他回一条固定的系统提示（不是她说话）；默认关 = 什么都不回
 C = dict(DEFAULTS)
 KINDS = {"sexy": "擦边 / 色情的话", "jailbreak": "要她改设定", "fake_owner": "冒充老板", "favor_min": "她给他的好感打了最低分",
          "ignore": "她说过不理他"}
@@ -138,7 +150,8 @@ def path():
 
 
 EMPTY = {"blocked": {}, "marks": {}, "deletes": [], "tries": [], "cool": {}, "cases": [], "pardons": {}, "pending": {}, "off": {},
-         "cooled": {}}
+         "cooled": {}, "appeals": {}}
+# appeals（11-03 v1.17.15）：{QQ: [申诉]} 被拉黑 / 冷却中的人的申诉（每人最近 APPEAL_MAX 条；控制台撤销 / 删数据时整个删）
 # cooled（11-03 v1.17.13）：{QQ: {t 第一次, last 最近一次冷却到几点, case, n 次数}} 冷却过的人（冷却到点才算 再被写 block 走二审）
 # off：{QQ: [[开始, 结束 或 null], …]} 他被冷却 / 拉黑的时间段（只有时间 没有文字）—— 开机补回时这段时间里他发的话不补（复核 R3）
 
@@ -330,6 +343,7 @@ def unblock(uid, by="控制台", now=None):
         live = c is not None and float(c.get("until") or 0) > now
         if e is None and c is None and cd is None:
             return False
+        d["appeals"].pop(uid, None)        # 他的申诉（11-03 v1.17.15）：撤销了就了结了（以后再被拉黑 / 冷却重新算、马上又能转给老板）
         if live:
             d["cool"].pop(uid, None)       # 早就到期的冷却：记录留着（只剩时间段 已经不挡他了）
         if e is not None:
@@ -624,7 +638,8 @@ def sweep(now=None):
 
     def upd(d):
         out["k"] = _sweep(d, now)
-        return None if out["k"] else False
+        pr = _ap_prune(d, now)             # 过期的申诉（11-03 v1.17.15：超过 max(keep_days, appeal_days) 天的）顺手扔掉
+        return None if (out["k"] or pr) else False
     _update(upd)
     return out["k"]
 
@@ -909,6 +924,160 @@ def retrial_end(cid, rec, **fields):
     return out["ok"]
 
 
+# ───────────── 11-03 v1.17.15：申诉 ─────────────
+# 小明 11-03「她的名字也加申诉」：被她拉黑（永久）/ 冷却中的人有一条路让老板知道他想申诉（bot.py _appeal 转给老板；她本人照旧不跟他们说话）
+APPEAL_RE = re.compile(r"^[\s【\[［(（<《「『#＃/／]*(?:我(?:要|想)?|要|想)?申[诉述]")
+APPEAL_MAX = 5               # 每个人留最近几条申诉（最近一次转给老板的那条一直留着：限次要看它）
+APPEAL_ACK = "（系统消息）你的申诉已经转给管理员了；同一个人 {d} 天内只转一次。这条是系统自动发的。"
+
+
+def is_appeal(text):
+    """明说申诉（11-03 v1.17.15：私聊的、冷却中加好友时的验证消息）：开头是「申诉」（打成「申述」也算）—— 前面可以有空格、括号、#、/；
+    「我要申诉」「我想申诉」「我申诉」「要申诉」「想申诉」也算。只看开头：「你好 我想申诉」不算（别的话照旧；拿不准的往不转的方向）"""
+    return bool(APPEAL_RE.match(str(text or "")))
+
+
+def _ap_items(d, uid):
+    xs = d["appeals"].get(str(uid))
+    return [x for x in xs if isinstance(x, dict)] if isinstance(xs, list) else []
+
+
+def _ap_target(d, uid, now):
+    """他这会儿算不算能申诉的（她拉黑的 / 正在冷却的）→ 名单 / 冷却那一项 + 那个案子的情况 / None"""
+    uid = str(uid)
+    e, c = d["blocked"].get(uid), d["cool"].get(uid)
+    if isinstance(e, dict):
+        src, out = e, {"what": "拉黑", "t": e.get("t"), "until": 0, "deleted": e.get("deleted") or 0}
+    elif isinstance(c, dict) and float(c.get("until") or 0) > now:
+        src, out = c, {"what": "冷却", "t": c.get("t"), "until": c.get("until")}
+    else:
+        return None
+    out.update(name=str(src.get("name") or ""), why=str(src.get("why") or ""), case=str(src.get("case") or ""))
+    cs = next((x for x in reversed(d["cases"]) if isinstance(x, dict) and out["case"] and str(x.get("id")) == out["case"]), None)
+    out["case_ok"] = cs is not None        # 案子的记录还在（结了的案子 keep_days 天以后就过期了 只剩名单 / 冷却那一项）
+    for k in ("stage", "state", "verdict", "result", "result_why", "reason", "end", "friend", "wipe", "wiped"):
+        if cs and cs.get(k):
+            out[k] = cs[k]
+    return out
+
+
+def appeal_target(uid, now=None):
+    """他现在能不能申诉（11-03 v1.17.15）→ 他这会儿的情况（给老板的通知用）/ None
+    只认她自己拉黑的（blocked 永久）和正在冷却的（cool 那一项还没到点：审理中的占位 / 判了冷却 / 没判成只冷却）；控制台「不理的人」不归这里管
+    → {what 拉黑 / 冷却, t 拉黑 / 冷却从什么时候, until 冷却到几点（拉黑 0）, name, why, case, deleted（好友删了）,
+       stage, state, verdict, result, result_why, reason, end, friend, wipe, wiped —— 案子过期了 / 老名单没有案子 → 案子那几项没有}"""
+    uid = str(uid or "")
+    if not uid:
+        return None
+    try:
+        return _ap_target(_load(), uid, float(now or time.time()))
+    except (TypeError, ValueError):
+        return None
+
+
+def appeal_add(uid, via, text, now=None, mid=None, what="", case=""):
+    """记一条申诉（11-03 v1.17.15）→ {"send": 这条要不要转给老板, "why": 不转的原因, "id": 这一条的编号, "text": 存下的话, "last": 上次转给老板的时间}
+    / None（appeal 关着 / 同一个消息 id 记过了 / blocklist.json 写不进去）
+    限次：同一个人 appeal_days 天里最多转一次（两条路一起算；转成功的才算 —— 没发出去 appeal_sent(…, False) 把名额退回来；控制台撤销之前的不算）
+    存在 appeals {QQ: [{id, t, via, what, case, text（≤200 字）, sent, no 没转的原因, mid}]}：每人最近 APPEAL_MAX 条（最近一次转了的那条一直留着）、
+    超过 max(keep_days, appeal_days) 天的扔掉；控制台撤销（unblock）、删数据（forget）整个删"""
+    uid = str(uid or "")
+    if not uid or not bool(C.get("appeal", True)):
+        return None
+    now = float(now or time.time())
+    days = max(0.0, _f("appeal_days"))
+    out = {}
+
+    def upd(d):
+        _ap_prune(d, now)                  # 所有人过期的申诉顺手扔掉
+        xs = _ap_items(d, uid)
+        if mid is not None and any(x.get("mid") is not None and str(x.get("mid")) == str(mid) for x in xs):
+            return False
+        pd = float((d.get("pardons") or {}).get(uid) or 0)
+        last = max([float(x.get("t") or 0) for x in xs if x.get("sent") and float(x.get("t") or 0) > pd] or [0.0])
+        send = not (last and days > 0 and now - last < days * 86400)
+        rec = {"id": uuid.uuid4().hex[:8], "t": round(now, 3), "via": _clip(via, 10), "what": _clip(what, 6), "case": str(case or ""),
+               "text": _clip(text, 200), "sent": send}
+        if not send:
+            rec["no"] = f"{days:g} 天内转过了（{clock.strf('%m-%d %H:%M', last)}）"
+        if mid is not None:
+            rec["mid"] = str(mid)
+        xs = xs + [rec]
+        top = xs[-APPEAL_MAX:]
+        hit = next((x for x in reversed(xs) if x.get("sent")), None)
+        if hit is not None and hit not in top:         # 最近一次转了的那条别挤掉（不然他连发几条 7 天的限次就没了）
+            top = [hit] + xs[-(APPEAL_MAX - 1):]
+        d["appeals"][uid] = top
+        out.update(send=send, why=rec.get("no", ""), id=rec["id"], text=rec["text"], last=last)
+    r = _update(upd)
+    return dict(out) if (r is not None and out) else None
+
+
+def _ap_prune(d, now):
+    """过期的申诉扔掉（超过 max(keep_days, appeal_days) 天的；一个人的都过期了 → 那一项删掉）→ 动了没有
+    appeal_add（有人申诉时）和 sweep（开机收尾、冷却到点结案时）都顺手调"""
+    keep = now - max(_f("keep_days"), _f("appeal_days")) * 86400
+    hit = False
+    for u in list(d["appeals"]):
+        raw = d["appeals"].get(u)
+        ys = [x for x in _ap_items(d, u) if float(x.get("t") or 0) >= keep]
+        if not ys:
+            d["appeals"].pop(u, None)
+            hit = True
+        elif not isinstance(raw, list) or len(ys) != len(raw):
+            d["appeals"][u] = ys
+            hit = True
+    return hit
+
+
+def appeal_sent(uid, aid, ok, why=""):
+    """转给老板以后（11-03 v1.17.15）：发出去了 → 这条算转了；没发出去 → 这条记成没转（不算进限次：他下次申诉照样转）→ 改上了没有"""
+    uid = str(uid or "")
+    res = {"ok": False}
+
+    def upd(d):
+        x = next((x for x in _ap_items(d, uid) if x.get("id") == aid), None)
+        if x is None:
+            return False
+        if ok:
+            x["sent"] = True
+            x.pop("no", None)
+        else:
+            x["sent"] = False
+            x["no"] = _clip(why or "没发出去", 40)
+        res["ok"] = True
+    _update(upd)
+    return res["ok"]
+
+
+def _ap_view(d, now):
+    out = {}
+    for uid in list(d["appeals"]):
+        tg = _ap_target(d, str(uid), now)
+        if not tg:
+            continue
+        t0 = float(tg.get("t") or 0) - 1
+        pd = float((d.get("pardons") or {}).get(str(uid)) or 0)
+        xs = [x for x in _ap_items(d, uid) if float(x.get("t") or 0) > pd
+              and ((tg["case"] and str(x.get("case") or "") == tg["case"]) or float(x.get("t") or 0) >= t0)]
+        if not xs:
+            continue
+        sent = [float(x.get("t") or 0) for x in xs if x.get("sent")]
+        out[str(uid)] = {"n": len(xs), "last": {k: xs[-1].get(k) for k in ("t", "via", "what", "text", "sent", "no") if k in xs[-1]},
+                         "sent_t": max(sent) if sent else 0}
+    return out
+
+
+def appeals_view(now=None):
+    """控制台「她拉黑的人」（11-03 v1.17.15）：拉黑 / 冷却中的人有没有申诉 →
+    {QQ: {"n": 这次的几条, "last": 最近那条 {t, via, what, text, sent, no}, "sent_t": 最近一次转给老板的时间}}（没申诉过的不列）
+    只算这次拉黑 / 冷却的（这个案子的、或者这次开始以后的；以前冷却过、早就到期那次的不算；控制台撤销之前的不算）"""
+    try:
+        return _ap_view(_load(), float(now or time.time()))
+    except (TypeError, ValueError):
+        return {}
+
+
 # ───────────── 删好友：进行中（幂等）─────────────
 def pending_start(uid, day, rec=None, now=None):
     """删好友之前先落盘「进行中」（幂等键 = QQ + 北京日期）→ True 这次可以删 / False 今天已经在删或删过他了 / 写不进去"""
@@ -1029,6 +1198,8 @@ def forget(uid, names=(), data_dir=None):
     if isinstance(cd, dict):               # 「冷却过」只留号和时间（11-03 v1.17.13：还算冷却过 —— 删数据不等于洗白）
         d["cooled"][uid] = {k: cd.get(k) for k in ("t", "last") if k in cd}
         n += 1
+    if d["appeals"].pop(uid, None) is not None:    # 他的申诉（11-03 v1.17.15）：整个删（他写的话、什么时候、走哪条路都不留）
+        n += 1
     nm = [str(x) for x in names or [] if x and len(str(x)) >= 2]
 
     def sc(s):
@@ -1083,6 +1254,10 @@ def forget(uid, names=(), data_dir=None):
     for k2, c2 in (d.get("cool") or {}).items():
         if isinstance(c2, dict) and k2 != uid:
             c2["why"] = sc(c2.get("why"))
+    for xs in d["appeals"].values():       # 别人的申诉里出现他的名字 → 「某人」（11-03 v1.17.15）
+        for x in xs if isinstance(xs, list) else []:
+            if isinstance(x, dict) and x.get("text"):
+                x["text"] = sc(x.get("text"))
     safeio.write_json(p, d)
     _B["m"] = None
     return n
@@ -1102,5 +1277,5 @@ def view(now=None):
             "cooling": {u: e for u, e in (d.get("cool") or {}).items() if isinstance(e, dict) and float(e.get("until") or 0) > now},
             "cases": list(reversed((d.get("cases") or [])[-30:])), "marks": {u: v for u, v in ms.items() if v},
             "tries": (d.get("tries") or [])[-30:], "deletes": (d.get("deletes") or [])[-30:], "pardons": pd,
-            "cooled": d.get("cooled") or {}, "wipe_mode": wipe_mode(),
+            "cooled": d.get("cooled") or {}, "wipe_mode": wipe_mode(), "appeals": appeals_view(now),
             "pending": {k: v for k, v in (d.get("pending") or {}).items() if isinstance(v, dict) and v.get("state") == "进行中"}}

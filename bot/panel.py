@@ -618,6 +618,8 @@ def people():
             "her_cases": (list(reversed(blocklist.cases(n=15))) if blocklist is not None and hasattr(blocklist, "cases") else []),
             # 冷却过的人（11-03 v1.17.13：再被写 block 直接二审；「清掉」= 撤销 —— 记赦免、清掉冷却过）
             "her_cooled": (blocklist.cooled_list() if blocklist is not None and hasattr(blocklist, "cooled_list") else {}),
+            # 申诉（11-03 v1.17.15）：拉黑 / 冷却中的人有没有申诉、几条、最近一条的时间和内容、转没转给老板
+            "her_appeals": (blocklist.appeals_view() if blocklist is not None and hasattr(blocklist, "appeals_view") else {}),
             "self_off": control.self_off_list(now),
             "gadm_hours": (cfg().get("group_admin") or {}).get("default_hours", 3)}
 

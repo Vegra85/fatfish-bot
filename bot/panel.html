@@ -449,6 +449,12 @@ const pad2 = n => String(n).padStart(2, "0");
 const bjday = ts => { const t = BJ(ts); return `${t.y}-${pad2(t.m)}-${pad2(t.d)}`; };
 const bjhm = ts => { const t = BJ(ts); return `${pad2(t.H)}:${pad2(t.M)}`; };
 function hm(ts) { const t = BJ(ts); return `${t.m}-${t.d} ${pad2(t.H)}:${pad2(t.M)}`; }
+function apl(d, uid) {    // 她拉黑 / 冷却的人有没有申诉（11-03 v1.17.15）：几条、最近一条的时间和内容、转没转给你
+  const a = ((d && d.her_appeals) || {})[uid];
+  if (!a || !a.last) return '<span class="muted small" style="margin-left:6px">没申诉</span>';
+  const x = a.last;
+  return `<span class="small" style="margin-left:6px;color:var(--warn)">申诉 ${Number(a.n || 1)} 条 · 最近 ${hm(x.t)}（${esc(x.via || "")}${x.sent ? "，转给你了" : "，没转：" + esc(x.no || "")}）「${esc(String(x.text || "").slice(0, 80))}」</span>`;
+}
 function whenText(ts) {
   const a = BJ(ts), b = BJ(Date.now() / 1000);
   const days = Math.round((Date.UTC(a.y, a.m - 1, a.d) - Date.UTC(b.y, b.m - 1, b.d)) / 86400000);
@@ -1661,9 +1667,9 @@ VIEWS.people = async main => {
               <div>${list}</div><div class="muted small" data-qnone="${kind}" style="display:none;padding:6px 0">没搜到</div></details>`; })()}
           <div class="row" style="margin-top:10px"><input type="text" placeholder="QQ 号" id="${kind}_id" style="width:130px"><input type="text" placeholder="备注（谁）" id="${kind}_note" style="width:150px"><button class="btn" data-add="${kind}">添加</button></div></div>`).join("")}
       </div>
-      <div class="card"><h2>她自己拉黑的人</h2><p class="small muted" style="margin-top:-4px">她在状态行里写了不想再理的人（11-03 v1.17.13）：先不回他、等法庭（一审）判放过（马上恢复）或冷却（所有群和私聊 24 小时不理他，到点自动恢复）；冷却期间他冲她说的话只当证据收着，说完安静 5 分钟再审（最多 3 次），还越线就删除；冷却过的人再被写 block 直接二审：删除 / 保留。删除 = 永久拉黑（消息不进记忆、再加她好友自动拒绝）+ 删好友 + 清他的数据（影子模式只告诉你「本来会删 / 本来会清」）。最亲的人 / 好感 ≥ 60 只走一审、不会被删除。每个案子都会私聊告诉你。撤销 / 清掉 = 解除冷却和拉黑、清掉「冷却过」、之前的线索和案子不再算（删掉的好友要他重新加；清掉的数据回不来）</p>
-        ${Object.entries(d.her_blocked || {}).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · 拉黑 ${hm(e.t)} · ${esc(e.why || "")}${(e.cites || []).length ? " · 核实引用 " + (e.cites || []).length + " 条" : ((e.marks || []).length ? " · 记过 " + (e.marks || []).length + " 次" : "")}${e.deleted ? " · 删了好友" : ""}</span><span class="spacer"></span><button class="btn small" data-hb="${uid}">撤销</button></div>`).join("")}
-        ${Object.entries(d.her_cool || {}).filter(([uid]) => !(d.her_blocked || {})[uid]).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · 冷却到 ${hm(e.until)} · ${esc(e.why || "")}</span><span class="spacer"></span><button class="btn small" data-hb="${uid}">撤销</button></div>`).join("")}
+      <div class="card"><h2>她自己拉黑的人</h2><p class="small muted" style="margin-top:-4px">她在状态行里写了不想再理的人（11-03 v1.17.13）：先不回他、等法庭（一审）判放过（马上恢复）或冷却（所有群和私聊 24 小时不理他，到点自动恢复）；冷却期间他冲她说的话只当证据收着，说完安静 5 分钟再审（最多 3 次），还越线就删除；冷却过的人再被写 block 直接二审：删除 / 保留。删除 = 永久拉黑（消息不进记忆、再加她好友自动拒绝）+ 删好友 + 清他的数据（影子模式只告诉你「本来会删 / 本来会清」）。最亲的人 / 好感 ≥ 60 只走一审、不会被删除。每个案子都会私聊告诉你。撤销 / 清掉 = 解除冷却和拉黑、清掉「冷却过」、之前的线索和案子不再算（删掉的好友要他重新加；清掉的数据回不来）。被拉黑 / 冷却中的人能申诉（11-03 v1.17.15）：加她好友时写验证消息（永久拉黑的写了字就算），或者私聊发「申诉…」—— 只私聊转给你（同一个人 7 天最多一次，config blocklist.appeal_days）、她不知道、不回他；每个人后面写着有没有申诉、最近一条的时间和内容</p>
+        ${Object.entries(d.her_blocked || {}).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · 拉黑 ${hm(e.t)} · ${esc(e.why || "")}${(e.cites || []).length ? " · 核实引用 " + (e.cites || []).length + " 条" : ((e.marks || []).length ? " · 记过 " + (e.marks || []).length + " 次" : "")}${e.deleted ? " · 删了好友" : ""}</span>${apl(d, uid)}<span class="spacer"></span><button class="btn small" data-hb="${uid}">撤销</button></div>`).join("")}
+        ${Object.entries(d.her_cool || {}).filter(([uid]) => !(d.her_blocked || {})[uid]).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · 冷却到 ${hm(e.until)} · ${esc(e.why || "")}</span>${apl(d, uid)}<span class="spacer"></span><button class="btn small" data-hb="${uid}">撤销</button></div>`).join("")}
         ${(Object.keys(d.her_blocked || {}).length || Object.keys(d.her_cool || {}).length) ? "" : '<div class="muted small">（没有）</div>'}
         ${Object.keys(d.her_cooled || {}).length ? `<h3 style="margin:12px 0 4px">冷却过的人（再被写 block 直接二审）</h3>` + Object.entries(d.her_cooled || {}).filter(([uid]) => !(d.her_blocked || {})[uid]).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${uid}</b><span class="muted">冷却过 ${Number(e.n || 1)} 次 · 最近一次到 ${hm(e.last)}</span><span class="spacer"></span><button class="btn small" data-hb="${uid}">清掉</button></div>`).join("") : ""}
         ${(d.her_cases || []).length ? `<h3 style="margin:12px 0 4px">最近的拉黑案</h3><table><tr><th>时间</th><th>名片</th><th>她的原因</th><th>法庭判词</th><th>理由</th><th>结果</th></tr>
