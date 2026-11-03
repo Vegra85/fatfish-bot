@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-KINDS = ("court", "ambiguity", "cooling")
+KINDS = ("court", "ambiguity", "cooling", "social")
 _dir = Path(__file__).resolve().parent / "data"
 _lock = threading.Lock()
 _cleaned = {}

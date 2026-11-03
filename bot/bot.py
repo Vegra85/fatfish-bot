@@ -7,6 +7,7 @@
 import asyncio
 import base64
 import contextvars
+import inspect
 import json
 import os
 import random
@@ -26,6 +27,7 @@ except Exception:                  # 很老的 websockets：没有就当没这�
 
 import aidetect
 import announce     # 版本更新播报：1.x 变了 → 活跃群 + 熟人各说一声（10-31 v1.15.5）
+import balance      # 余额：有人问她余额 / token / 还能聊多久 → DeepSeek 官方余额 + Claude 自己记的账（11-02 v1.17.0 工具类 公开）
 import anim
 import bili
 import bili2
@@ -38,6 +40,8 @@ import cross
 import fixup        # 纠错：连着被判不对 → 换做法 / 止损 / 记教训（10-28 v1.11.0）
 import followup
 import outage
+import qqevents     # QQ 事件感知：贴表情 / 精华 / 资料卡赞 / 在线状态 / 正在输入（11-01 v1.16.3）
+import life         # 每日生活：她每天醒来排的日程（11-01 v1.16.4 C39；私有 公开版是空壳 = 没日程 一切照旧）
 try:                                       # 注意力存档（10-30 影子模式；私有 不导出 —— 公开版没有这个文件就不记）
     import attention
 except ImportError:
@@ -46,6 +50,10 @@ try:                                       # 法庭 阶段 0（10-30 只记日�
     import court
 except ImportError:
     court = None
+try:                                       # 社交细节 C58 / C59 / C61 / C64 / C65（11-01 影子模式；私有 不导出）
+    import social
+except ImportError:
+    social = None
 import shadowlog    # 影子日志：阶段 0 的东西只记不改（10-30）
 import congrats     # 恭喜：生日快乐 / 恭喜 + 恭喜动图（10-30 v1.15.1 写死的 小明 明说可以）
 import galgame
@@ -57,6 +65,23 @@ import memewiki
 import localai
 import machine
 import maker
+import docmaker       # 做东西的文件格式：Word / PDF / Excel / PPT / Markdown / 文本（11-02 v1.17.4）
+try:                    # 网上说的「大肥鱼」（11-02 v1.17.5 公开：只有公开的网上事实）
+    import fishlore
+except ImportError:
+    fishlore = None
+try:                    # 她能拉黑 / 删好友（11-02 v1.17.6 C80 公开：名单、记账、门槛）
+    import blocklist
+except ImportError:
+    blocklist = None
+try:                    # 人物卡 = 人物画像（11-02 v1.17.7 B6 / C78 私有 不导出：公开版没有 → 提示里照旧两条常驻 + 好感一行）
+    import personcard
+except ImportError:
+    personcard = None
+try:                    # 自拍（11-03 v1.17.13 S2：WSL 里的画图服务接进来；私有 不导出 —— 公开版没有这个文件 → 没这功能）
+    import selfie
+except ImportError:
+    selfie = None
 import mood2
 import memory
 import prank as prankmod      # 恶作剧 / 恶趣味（10-28 v1.10.0）—— bot.py 里 prank 是那一轮的变量名 模块换个名字
@@ -133,14 +158,28 @@ rhythm.configure(CFG.get("rhythm") or {})
 followup.configure(CFG.get("followup") or {})
 if attention is not None:
     attention.configure(CFG.get("attention") or {}, data_dir=DATA)
+if social is not None:
+    social.configure(CFG.get("social") or {}, data_dir=DATA)
 outage.configure(DATA)
 shadowlog.configure(DATA)
 congrats.configure(CFG.get("congrats") or {}, data_dir=DATA)
 stickerdict.configure(CFG.get("stickerdict") or {}, data_dir=DATA)
 stickerlib.configure(CFG.get("stickerlib") or {}, data_dir=DATA)
 announce.configure(CFG.get("announce") or {}, data_dir=DATA)
+qqevents.configure(CFG.get("qq_events") or {}, data_dir=DATA)               # QQ 事件感知（11-01 v1.16.3）
+life.configure(CFG.get("life") or {}, data_dir=DATA)                        # 每日生活（11-01 v1.16.4 C39）
+qqevents.mode_source = life.mode_now                                        # 在线状态跟着日程走（没日程 / 关着 → 退回按作息）
+qqevents.what_source = getattr(life, "what_now", None)                      # busy / slow 时按这一段在做什么挑 QQ 扩展状态（11-02 v1.17.8 C81）
+clock.SLEEP_SRC = getattr(commit, "sleep_state", None)                      # 她说了要睡 = 全局睡着（11-02 v1.17.5）：作息 / 在线状态 / 日程 / 空间都照它
 if court is not None:
-    court.configure(CFG.get("court") or {})
+    court.configure(CFG.get("court") or {})                                 # 纠错（11-02 v1.17.0 法庭 + 纠错 合成一套：有人说她错了 → 核对 → 状态 → 教训）
+balance.configure(CFG.get("balance") or {})                                 # 余额（11-02 v1.17.0）
+if blocklist is not None:
+    blocklist.configure(CFG.get("blocklist") or {}, data_dir=DATA)          # 她能拉黑 / 删好友（11-02 v1.17.6 C80）
+if personcard is not None:
+    personcard.configure(CFG.get("personcard") or {}, data_dir=DATA)        # 人物卡（11-02 v1.17.7 B6 / C78）
+if selfie is not None:
+    selfie.configure(CFG.get("selfie") or {}, data_dir=DATA)                # 自拍（11-03 v1.17.13）：名额、间隔、主动一张、画图服务地址
 catchup.configure(CFG.get("catchup") or {})
 stats.configure((CFG.get("panel") or {}).get("prices"))
 PEAK = CFG.get("peak") or {}
@@ -168,7 +207,8 @@ ARCHIVE = ROOT / "data" / "archive"
 FORGET_FILE = ROOT / "data" / "forget.json"      # 夜里整理的记录（控制台「遗忘曲线」页看）
 QZ = CFG.get("qzone") or {}                                               # QQ 空间（10-27 v1.3.0 qzone.py）
 qzone.configure(QZ)
-MK = CFG.get("make") or {}                                                # 做东西（10-28 v1.7.0 maker.py）：写网页 / 代码 → 文件
+MK = CFG.get("make") or {}
+maker.PDF_BROWSER = str(MK.get("pdf_browser") or "")   # 打印 PDF 用哪个浏览器（空 = 自己找 Edge / Chrome；11-02 v1.17.4）                                                # 做东西（10-28 v1.7.0 maker.py）：写网页 / 代码 → 文件
 AGAIN_TASK_SEC = 12 * 3600   # 做完一个东西：12 小时内记下的「把画改了 / 重画」这种待办 一起划掉（10-28）
 MAKE_BACK_SEC = 60           # 开做多久以内被取消（他又改了）还名额；再晚 那一轮 32k 已经烧了 不还（10-28 Gemini 复查 #4）
 MAKE_Q = maker.Quota(DATA / "maker.json", MK.get("per_user_daily", 6), MK.get("daily", 40))
@@ -209,8 +249,9 @@ def archive_append(key, entry):
     try:
         d = ARCHIVE / clock.strf("%Y-%m-%d", entry.get("ts") or time.time())     # 按北京时间的一天（10-27）
         d.mkdir(parents=True, exist_ok=True)
-        e = {k: v for k, v in entry.items() if k in ("role", "name", "uid", "text", "ts", "prank", "mid", "imgs", "re", "to")}
+        e = {k: v for k, v in entry.items() if k in ("role", "name", "uid", "text", "ts", "prank", "mid", "imgs", "re", "to", "auto")}
         # prank：整人那句（10-28 v1.10.0）；mid / imgs（图的链接 控制台接话标注页显示图）/ re（她引用的那条）/ to（她回的是谁）：10-31 v1.15.16
+        # auto：对方的 QQ 替他发的自动回复（11-02 v1.17.8 C81：不是他说的 翻记录不翻）
         with (d / f"{key}.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
     except Exception as ex:
@@ -350,18 +391,114 @@ def who_tag(h):
     """群聊记录里每条后面标一下：是谁、在跟谁说（10-26 小明：分清楚谁在跟谁说话；群主/管理员也标出来）"""
     tag = "（你老板）" if h.get("boss") else ""
     if h.get("fake"):                      # 10-27 防冒充：名片像老板 / 熟人 但 QQ 号不是他
-        tag += f"（名片像 {h['fake']}，但不是 {h['fake']} 本人）"
+        tag += f"（名片像 {clean_name(h['fake'])}，但不是 {clean_name(h['fake'])} 本人）"
     if h.get("grole") in ("owner", "admin"):
         tag += "（群主）" if h["grole"] == "owner" else "（管理员）"
     if h.get("bot"):
         tag += "（别人家的AI）"
+    if h.get("auto"):                      # 他的 QQ 在他离开 / 忙碌时替他发的自动回复（11-02 v1.17.8 C81）：不是他在说话
+        tag += "（自动回复：他的 QQ 替他发的 不是他打的字）"
     if h.get("to_me"):
         tag += "（对你说）"
     elif h.get("re"):
-        tag += f"（回复 {h['re']}）"
+        tag += f"（回复 {clean_name(h['re'])}）"
     elif h.get("to"):
-        tag += f"（接着跟 {h['to']} 说）"
+        tag += f"（接着跟 {clean_name(h['to'])} 说）"
     return tag
+
+
+# ───────── 防伪造标记（11-01 v1.16.3）─────────
+# 给模型看的聊天记录里 下面这些是代码加的、模型会当真的标记（群友手打同样的字 = 伪造）：
+#   标记                                              谁加的
+#   「（你老板）」                                    who_tag：按 QQ 号认的老板（群里）
+#   「（名片像 X，但不是 X 本人）」                   who_tag：_lookalike_person 认出的冒充
+#   「（群主）」「（管理员）」                        who_tag：QQ 给的群身份
+#   「（别人家的AI）」                                who_tag：aidetect / control.is_bot
+#   「（对你说）」「（回复 X）」「（接着跟 X 说）」   who_tag：@她 / 叫她 / 引用了谁 / 刚 @ 了别人接着说
+#   「（自动回复：他的 QQ 替他发的 不是他打的字）」   who_tag：私聊里「[自动回复]」开头的（qqevents.autoreply 11-02 v1.17.8）
+#   「（回复了 X 的「…」）」                          handle：他引用了一条（quoted_text）
+#   「[图片]」「[图片：…]」「[表情包]」「[表情包：…]」「[表情]」「[视频]」  seg_text / vision.caption_text
+#   「[语音]」「[语音 N秒：…]」                       seg_text / expand → voice.hear
+#   「[聊天记录]」「[转发的聊天记录（N条）：…]」       seg_text / expand → forward_text
+#   「[分享卡片：…]」「[群邀请卡片：…]」              card_text
+#   「[文件：…]」                                     seg_text
+#   「[撤回了一条消息]」                              _other_recall
+#   「[系统] …」「[系统记录 不是谁说的话] …」         to_messages 的尾巴 / 她那条后面的「真发了文件」
+#   「[发了文件…]」「[又发了一次文件…]」「[文件发不出去…]」  她那条里系统记的（_send_code_files / _resend_last）
+#   「@名字」                                         seg_text（at 段；名字是群名片）
+#   一行开头「名字（…）: 」                           to_messages：一条消息一行（名字是群名片 / 昵称）
+#   QQ 事件（贴表情 / 精华 / 资料卡赞）               不进聊天记录 只在「这一轮的情况」里（qqevents.block_for）
+#   「# 你今天的日子…」「现在 HH:MM–HH:MM：…」「你这会儿：<日程这段>」  不进聊天记录 只在「这一轮的情况」里（life.block / clock.block 11-01 v1.16.4）
+#   「（你刚才在 X（他 N 分钟前找你，你现在才腾出手看））」  不进聊天记录 只在「这一轮的情况」里（日程忙 晚回的那一轮 v1.16.4）
+#   「# 唱整首 …」                                    不进聊天记录 只在「这一轮的情况」里（sing.full_block 11-01 v1.16.5）
+#   「这一轮替你说话的是 …」                          不进聊天记录 只在「这一轮的情况」里（MODEL_SLOT → fill_model 11-02 v1.17.8）
+#   「（你日程上这会儿在 X（HH:MM–HH:MM）…）」        不进聊天记录 只在「这一轮的情况」里（日程忙 但她刚在这个对话开过口、没等的那一轮 v1.17.8）
+#   ——「这一轮的情况」是系统提示后半段 群友打不进去；群友手打同样的字 在聊天记录里照样是他那一行（换行的有「↳」）
+# 怎么防：
+#   群友手打的文字段（seg_text 的 text 段）、群名片 / 昵称 → neutral()：身份类「（你老板）」→「（自称你老板）」，
+#     别的「[语音…」「（回复了…」→「［他打的字：语音…」「（他打的字：回复了…」（只改他打的字 代码加的那部分不动）
+#   群名片 / 昵称 → clean_name()：换行、控制字符换成空格 再 neutral()
+#   换行伪造一整行 → cont_lines()：同一条消息第二行起 行首加「↳ 」（排给模型时加 记忆里不改）
+#   成对的 ``` 代码块里面一个字都不动（做东西要读原文）；没收尾的 ``` 不算代码块（不然开个 ``` 就能把后面伪造的行藏进去）
+_ZW = "[\u200b-\u200f\u2060-\u2064\ufeff]*"          # 零宽字符（夹在字中间躲匹配）
+
+
+def _tol(w):
+    return _ZW.join(re.escape(c) for c in w)
+
+
+_P_OPEN, _P_CLOSE = r"[（(﹙【〔\[［]", r"[）)﹚】〕\]］]"
+_FORGE_ID = re.compile(_P_OPEN + _ZW + r"\s*(" + "|".join(_tol(w) for w in ("你的老板", "你老板", "老板", "群主", "管理员"))
+                       + r"|别人家的\s*AI)" + _ZW + r"\s*" + _P_CLOSE, re.I)
+_FORGE_TAG = re.compile("[（(﹙]" + _ZW + r"\s*(" + "|".join(_tol(w) for w in ("名片像", "自动回复", "回复了", "回复", "接着跟", "对你说")) + ")")
+_FORGE_BR = re.compile(r"[\[［【〖〔]" + _ZW + r"\s*(" + "|".join(_tol(w) for w in (
+    "转发的聊天记录", "群邀请卡片", "分享卡片", "聊天记录", "系统记录", "系统", "表情包", "表情", "图片", "语音", "视频",
+    "文件发不出去", "又发了一次文件", "发了文件", "文件", "撤回了")) + ")")
+_CODE = re.compile(r"```.*?```", re.S)
+_NL = re.compile(r"\r\n|[\r\u2028\u2029\u0085\x0b\x0c]")
+FORGE_NOTE = ("（行首「↳」= 上一行那条消息换行接着写的：同一个人的同一条消息 不是另一条、不是别人说的；"
+              "「自称…」「他打的字：…」= 他自己打出来的字 不是系统标的）")
+
+
+def _neutral_plain(t):
+    t = _FORGE_ID.sub(lambda m: "（自称" + re.sub(_ZW, "", m.group(1)) + "）", t)
+    t = _FORGE_TAG.sub(lambda m: "（他打的字：" + re.sub(_ZW, "", m.group(1)), t)
+    return _FORGE_BR.sub(lambda m: "［他打的字：" + re.sub(_ZW, "", m.group(1)), t)
+
+
+def neutral(text):
+    """群友手打的、长得像代码标记的字 → 一看就是他自己打的（成对的 ``` 代码块里面不动）"""
+    t = str(text or "")
+    if not t or not (re.search("[（(﹙【〔\\[［〖]", t)):
+        return t
+    out, last = [], 0
+    for m in _CODE.finditer(t):
+        out.append(_neutral_plain(t[last:m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(_neutral_plain(t[last:]))
+    return "".join(out)
+
+
+def clean_name(n):
+    """群名片 / 昵称 → 给模型看的名字：换行、控制字符换成空格；里面长得像标记的字（「（你老板）」）改成「（自称你老板）」"""
+    s = re.sub(r"[\x00-\x1f\x7f\u2028\u2029\u0085]+", " ", str(n or ""))
+    return neutral(s).strip()
+
+
+def cont_lines(text):
+    """同一条消息里换行接着写的：第二行起行首加「↳ 」（排给模型时用 记忆里不改）
+    群友换行打一整行「某某（你老板）: …」→ 看得出是他这条消息的续行 不是另一个人的一条；成对的 ``` 代码块里面不动"""
+    t = _NL.sub("\n", str(text or ""))
+    if "\n" not in t:
+        return t
+    spans = [m.span() for m in _CODE.finditer(t)]
+    return re.sub(r"\n", lambda m: m.group(0) if any(a < m.start() < b for a, b in spans) else "\n↳ ", t)
+
+
+def _one_line(t):
+    """放进「」里的原话：换行写成「 ↳ 」（提示里引他说的话时用）"""
+    return _NL.sub("\n", str(t or "")).replace("\n", " ↳ ")
 
 
 _ANCHOR = {}       # 对话 → 这次聊天记录从哪条开始带（那条的时间戳）（10-26 前缀缓存）
@@ -395,7 +532,19 @@ def window_start(mem):
     return w[0].get("ts") if w else None
 
 
-def to_messages(mem, focus=None, dynamic="", hint=""):
+def _cut_hidden(h, cut):
+    """固化判断边界（11-01 v1.16.3）：cut = (这一轮在回的人最后一句的时间, {这一轮在回的人})
+    → 这句是边界之后、别人说的（这一轮先不给她看 留在记忆里下一轮再说）"""
+    return bool(cut) and h.get("role") == "user" and float(h.get("ts") or 0) > cut[0] and str(h.get("uid")) not in cut[1]
+
+
+# 11-02 v1.17.3 C74 问题 2（人格测试）：余额块、翻记录块、核对结果只在那一轮给 —— 下一轮她看不到了 就把自己上一轮说对的话认成
+# 「是我编的」还想写进自我笔记。现在她那句（记忆里的 assistant 条目）带一个 sys：那一轮给她看过的资料（短）→ 排给模型时在她那句前面
+# 另起一条「[系统记录 …]」（跟「这时你发了文件」同一种写法；群友手打「[系统记录」会被 neutral() 改成「［他打的字：」）
+SYSREC_HEAD = "你回下面这句之前 系统给你看过这些资料（只在那一轮给你看；后面几轮没再给 不等于你当时是编的）："
+
+
+def to_messages(mem, focus=None, dynamic="", hint="", cut=None):
     """聊天记录 → 发给模型的消息
     dynamic：这一轮才有的情况（时间、心情、想起来的记忆、场景…build_system(split=True) 的第二段）
       —— 放在最后一条消息里、聊天记录后面：前面的系统提示和聊天记录不变 DeepSeek 能命中缓存（10-26 前缀缓存）
@@ -405,20 +554,34 @@ def to_messages(mem, focus=None, dynamic="", hint=""):
     limit = int(B.get("group_context_messages", 70) if group else B.get("context_messages", 50))   # 群里多带点 分清谁跟谁说
     step = int(B.get("group_context_step", 30) if group else B.get("context_step", 20))
     out = []
+    forged = False                         # 窗口里有换行续行 / 他自己打的标记 → 告诉她「↳」「自称」是什么意思
     win = _window(mem, limit, max(0, step))
     for h in win:
+        if _cut_hidden(h, cut):            # 判断边界之后别人说的：这一轮先不放（记忆里不动 11-01）
+            continue
         if h["role"] == "assistant":
+            if h.get("sys"):               # 她回这句之前系统给她看过的资料（余额 / 翻到的原话 / 核对结果）：留一条系统记录（11-02 v1.17.3 C74 问题 2）
+                out.append({"role": "user", "content": "[系统记录 不是谁说的话] " + SYSREC_HEAD + str(h["sys"])[:400]})
             t = h["text"]
             marks = FILE_MARK.findall(t) if "文件" in t else []
             if marks:                      # 系统记的「真发了文件」挪到她的话后面另起一条（10-28 v1.9.1：留在她自己的话里 她会照着打一行假的）
                 t = FILE_MARK.sub("", t).strip()
+            shots = SELFIE_REC.findall(t) if "[自拍：" in t else []   # 「真发了自拍」也一样挪出来（11-03 v1.17.13 合并复查）
+            if shots:
+                t = SELFIE_REC.sub("", t).strip()
             if t:
                 out.append({"role": "assistant", "content": detic(t)})   # 历史里的口癖也洗掉 免得越学越多
             if marks:
                 out.append({"role": "user", "content": "[系统记录 不是谁说的话] 这时你"
                                                         + "；".join(m.strip()[1:-1] for m in marks)})
-        else:
-            out.append({"role": "user", "content": f'{h["name"]}{who_tag(h)}: {h["text"]}'})
+            if shots:
+                out.append({"role": "user", "content": "[系统记录 不是谁说的话] 这时你发了一张自拍（照片上实际是："
+                                                        + "；".join(m.strip()[4:-1] or "（没记）" for m in shots) + "）"})
+        else:                              # 名字 / 换行续行：防伪造（11-01 v1.16.3 —— 群友换行打一整行「某某（你老板）: …」）
+            body = cont_lines(h["text"])
+            nm = clean_name(h.get("name")) or "某人"
+            forged = forged or "\n↳ " in body or "（自称" in body + nm or "他打的字：" in body + nm
+            out.append({"role": "user", "content": f'{nm}{who_tag(h)}: {body}'})
     # 合并连续同角色，并保证以 user 开头（Claude 要求交替）
     merged = []
     for x in out:
@@ -433,7 +596,9 @@ def to_messages(mem, focus=None, dynamic="", hint=""):
     # 这一轮的情况和提醒放在最后一条消息里，模型最容易照做
     msgs = [dict(x) for x in merged]
     if group:
-        focus = (focus + " " if focus else "") + WHO_NOTE
+        focus = (focus + " " if focus else "") + WHO_NOTE + (FORGE_NOTE if forged else "")
+    elif forged:
+        focus = (focus + " " if focus else "") + FORGE_NOTE
     tail = ""
     if dynamic and dynamic.strip():
         tail += "\n\n[系统] ———— 下面是这一轮的情况（给你看的资料和提醒 不是谁说的话）————\n" + dynamic.strip()
@@ -520,7 +685,9 @@ def _wander(mem, name, uid, picked):
         return ""
     sens = getattr(cross, "SENSITIVE", None)
     skip = (lambda t: bool(sens.search(t or ""))) if (sens is not None and mem.get("type") == "group") else None
-    f = memory.wander_pick(mem, name, str(uid or ""), exclude=[x.get("id") for x in picked or []], now=now, skip=skip)
+    tsk = _taboo_skip(mem.get("key") or "")        # 他说过别提的 不突然想起来（11-02 v1.17.7）
+    ex = [x.get("id") for x in picked or []] + ([f0["id"] for f0 in memory.active(mem) if tsk(f0)] if tsk else [])
+    f = memory.wander_pick(mem, name, str(uid or ""), exclude=ex, now=now, skip=skip)
     if not f:
         return ""
     mem["wander_at"] = now
@@ -545,16 +712,136 @@ def _qterms(text):
     return {w for w in words if w not in ARCH_STOP}
 
 
+_CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+_WK = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
+_W = "(?:周|星期|礼拜)"
+_WD = "([二三四五六日天]|一(?!直))"          # 周几（「上周一直在忙」的「周一」不算）
+
+
+# 指将来的说法（11-02 v1.17.3 C74 问题 9：「你还记得我下周三要去干嘛吗」的「周三」以前被当成上周三 → 去翻上周三的存档）
+FUTURE_T = re.compile(r"下(?:个)?(?:周|星期|礼拜)[一二三四五六日天末]?|下(?:个)?月(?:\d{1,2}\s*[号日])?|明天|明晚|明早|明儿|大后天|后天|"
+                      r"(?:\d{1,2}|[一二两三四五六七八九十])\s*天(?:以|之)?后|过(?:几|两|一两)天|下次|下回")
+
+
+def past_range(text, now=None):
+    """问句里往回说的时间 → (起, 止, 他的说法)（date；按她那边的日子 = 存档的日子）；看不出 → None（11-01 v1.16.3 翻记录缩小范围）
+    认：今天 / 昨天（昨晚）/ 前天 / 大前天 / N天前 / 上周三 / 这周三 / 周三 / 上周末 / 周末 / 上周 / 这周 / 上个月 / 这个月 /
+        10月25号 / 10-25 / 25号
+    11-02 v1.17.3：指将来的（下周三 / 下个月 / 明天 / 后天 / N天后 / 下次）先去掉 不当成过去的日子（只剩它 → None：不按日子缩小）；
+      「11月5号」这种比今天晚、90 天以内的 = 以后的日子 → 不当成去年那天"""
+    t = FUTURE_T.sub(" ", str(text or ""))
+    n = (now or clock.now())
+    today = n.date() if hasattr(n, "date") else n
+    mon = today - timedelta(days=today.weekday())
+
+    def out(a, b, said):
+        a, b = min(a, b), min(max(a, b), today)
+        return (a, b, said) if a <= today else None
+    m = re.search(r"(?<!\d)(\d{1,2})\s*(?:月|[-/.])\s*(\d{1,2})\s*[号日]?(?![\d:])", t)
+    if m and 1 <= int(m.group(1)) <= 12 and 1 <= int(m.group(2)) <= 31:
+        try:
+            d = today.replace(month=int(m.group(1)), day=int(m.group(2)))
+            if d > today:
+                if (d - today).days <= 90:
+                    return None            # 还没到的日子（11-02 v1.17.3）：以后的事 不去翻去年那天
+                d = d.replace(year=d.year - 1)
+            return out(d, d, m.group(0).strip())
+        except ValueError:
+            pass
+    m = re.search("上(?:个)?" + _W + _WD, t)
+    if m:
+        d = mon - timedelta(days=7) + timedelta(days=_WK[m.group(1)])
+        return out(d, d, m.group(0))
+    m = re.search("(?:这|本)(?:个)?" + _W + _WD, t)
+    if m:
+        d = mon + timedelta(days=_WK[m.group(1)])
+        return out(d, d, m.group(0)) if d <= today else None
+    m = re.search("上(?:个)?" + _W + "末", t)
+    if m:
+        return out(mon - timedelta(days=2), mon - timedelta(days=1), m.group(0))
+    m = re.search("(?<![上这本个])" + _W + "末", t)
+    if m:
+        if today.weekday() >= 5:
+            return out(mon + timedelta(days=5), today, m.group(0))
+        return out(mon - timedelta(days=2), mon - timedelta(days=1), m.group(0))
+    m = re.search("(?<![上这本个下])" + _W + _WD, t)
+    if m:
+        d = mon + timedelta(days=_WK[m.group(1)])
+        if d > today:
+            d -= timedelta(days=7)
+        return out(d, d, m.group(0))
+    m = re.search("上(?:个)?" + _W + "(?![一二三四五六日天末])", t)
+    if m:
+        return out(mon - timedelta(days=7), mon - timedelta(days=1), m.group(0))
+    m = re.search("(?:这|本)(?:个)?" + _W + "(?![一二三四五六日天末])", t)
+    if m:
+        return out(mon, today, m.group(0))
+    m = re.search(r"上(?:个)?月", t)
+    if m:
+        last = today.replace(day=1) - timedelta(days=1)
+        return out(last.replace(day=1), last, m.group(0))
+    m = re.search(r"(?:这|本)(?:个)?月", t)
+    if m:
+        return out(today.replace(day=1), today, m.group(0))
+    for w, k in (("大前天", 3), ("前天", 2), ("昨天", 1), ("昨晚", 1), ("昨日", 1), ("昨儿", 1),
+                 ("今天", 0), ("今早", 0), ("今晚", 0), ("今儿", 0)):
+        if w in t:
+            d = today - timedelta(days=k)
+            return out(d, d, w)
+    m = re.search(r"(\d{1,2}|[一二两三四五六七八九十])\s*天(?:以|之)?前", t)
+    if m:
+        k = int(m.group(1)) if m.group(1).isdigit() else _CN_NUM[m.group(1)]
+        d = today - timedelta(days=k)
+        return out(d, d, m.group(0))
+    m = re.search(r"(?<![\d月/.-])(\d{1,2})\s*[号日](?!\d)", t)
+    if m and 1 <= int(m.group(1)) <= 31:
+        first = today.replace(day=1)
+        for _ in range(3):                 # 这个月的那天还没到 / 这个月没有那天（11 月说「31号」）→ 往前一个月找
+            try:
+                d = first.replace(day=int(m.group(1)))
+                if d <= today:
+                    return out(d, d, m.group(0))
+            except ValueError:
+                pass
+            first = (first - timedelta(days=1)).replace(day=1)
+    return None
+
+
+class _Arch(list):
+    """翻聊天记录的结果（就是个 list）+ .info：这次翻了哪段、存档从哪天有、对上几条给看几条（11-01 v1.16.3）"""
+    info = None
+
+
+def _arch_first(key):
+    """这个对话的存档最早从哪天开始有（按天的文件夹名）→ "YYYY-MM-DD" / None"""
+    try:
+        for d in sorted(x.name for x in ARCHIVE.iterdir() if x.is_dir() and re.fullmatch(r"\d{4}-\d{2}-\d{2}", x.name)):
+            if (ARCHIVE / d / f"{key}.jsonl").exists():
+                return d
+    except OSError:
+        pass
+    return None
+
+
 def archive_search(key, uid, query, group, days=60, limit=3, before=None):
     """翻聊天记录（10-27）：他问「还记得吗」、记忆里又没想起来 → 去原始存档（data/archive/日期/对话.jsonl）里找原话
     群里只翻他自己说过的；还在聊天记录里的（before 之后）不用翻 她本来就看得到
-    → None 问得太笼统 没法翻 / [] 翻了没找到 / [(时间, role, 名字, 原话)…]"""
-    q = _qterms(query)
+    11-01 v1.16.3：问句里带时间（昨天 / 上周三 / 10月25号 / 上个月 / 周末…）→ 只翻那几天；标了撤回的不翻；
+      结果带 .info（翻了哪段、存档最早从哪天有、对上几条给看几条、群里只翻他自己的）给她当状态
+    → None 问得太笼统 没法翻 / [] 翻了没找到 / [(时间, role, 名字, 原话)…]（[] 和有结果的都是 _Arch 带 .info）"""
+    now = clock.now()
+    rng = past_range(query, now)
+    q = _qterms(str(query or "").replace(rng[2], " ") if rng else query)
     if len(q) < 2:
         return None
-    hits, now = [], clock.now()
-    for i in range(max(1, int(days))):
-        p = ARCHIVE / (now - timedelta(days=i)).strftime("%Y-%m-%d") / f"{key}.jsonl"
+    if rng:
+        a, b = rng[0], rng[1]
+        dates = [b - timedelta(days=i) for i in range(min(62, (b - a).days + 1))]
+    else:
+        dates = [(now - timedelta(days=i)).date() for i in range(max(1, int(days)))]
+    hits = []
+    for day in dates:
+        p = ARCHIVE / day.strftime("%Y-%m-%d") / f"{key}.jsonl"
         if not p.exists():
             continue
         try:
@@ -575,17 +862,60 @@ def archive_search(key, uid, query, group, days=60, limit=3, before=None):
                 continue
             if e.get("prank"):                 # 她整人那句不当成真说过的翻出来（10-28 v1.10.0 复查）
                 continue
+            if e.get("auto"):                  # 对方的 QQ 替他发的自动回复（11-02 v1.17.8）：不是他说的 不翻
+                continue
+            if e.get("recalled") or str(e.get("text") or "").startswith("[撤回了一条消息]"):   # 标了撤回的不翻（11-01）
+                continue
             sc = len(q & _qterms(e.get("text") or ""))
             if sc >= 2 and sc >= 0.3 * len(q):
                 hits.append((sc, ts, e))
     hits.sort(key=lambda x: (-x[0], -x[1]))
-    return [(ts, e.get("role"), e.get("name") or "", str(e.get("text") or "")[:90]) for sc, ts, e in hits[:limit]]
+    out = _Arch((ts, e.get("role"), e.get("name") or "", str(e.get("text") or "")[:90]) for sc, ts, e in hits[:limit])
+    out.info = {"from": dates[-1].strftime("%m-%d"), "to": dates[0].strftime("%m-%d"), "from_full": dates[-1].strftime("%Y-%m-%d"),
+                "said": rng[2] if rng else "", "first": _arch_first(key), "matched": len(hits), "shown": len(out),
+                "own_only": bool(group), "window": bool(before)}
+    return out
+
+
+def arch_cover(arch, who="他"):
+    """翻记录的覆盖说明（只给状态：翻了哪段、存档从哪天有、对上几条给你看了几条、群里只翻了他自己的）→ 一句话 / 空字符串"""
+    info = getattr(arch, "info", None)
+    if not info:
+        return ""
+    fr, to = info.get("from") or "", info.get("to") or ""
+    first = info.get("first")
+    span = fr if fr == to else f"{fr}～{to}"
+    s = f"这次翻的是 {span} 的存档" + (f"（他问的是「{info['said']}」）" if info.get("said") else "")
+    if not first:
+        s += "；这个对话还没有存档"
+    else:
+        s += f"；这个对话的存档最早从 {first[5:]} 开始有"
+        if first > (info.get("from_full") or ""):
+            s += f"（{first[5:]} 以前的翻不到）"
+    s += f"；对上 {info.get('matched', 0)} 条，给你看了 {info.get('shown', 0)} 条"
+    if info.get("own_only"):
+        s += f"；群里只翻了{who}自己说过的"
+    if info.get("window"):
+        s += "；还在你眼前这段聊天记录里的没翻（你本来就看得到）"
+    return "（" + s + "）"
+
+
+def arch_record(arch, who="他", group=False):
+    """翻记录的结果 → 聊天记录里那条系统记录（短：翻到的原话 / 翻了哪段没找到）11-02 v1.17.3"""
+    info = getattr(arch, "info", None) or {}
+    if arch:
+        return "翻聊天记录翻到的原话：" + "；".join(
+            f"{clock.strf('%m-%d', ts)} " + ("你说" if role == "assistant" else (who if group else "他") + "说") + f"「{str(text)[:50]}」"
+            for ts, role, name, text in list(arch)[:3])
+    fr, to = info.get("from") or "", info.get("to") or ""
+    return "翻了聊天记录（" + (fr if fr == to else f"{fr}～{to}") + "）没找到相关的原话"
 
 
 def arch_block(arch, who, group):
     lines = [f"- {clock.strf('%m-%d', ts)} " + ("你说" if role == "assistant" else (who if group else "他") + "说")
              + f"：「{text}」" for ts, role, name, text in arch]
-    return ("\n# 你翻了下聊天记录（刚翻到的原话）\n" + "\n".join(lines)
+    cov = arch_cover(arch, who)                # 11-01 v1.16.3：翻了哪段、对上几条给看几条
+    return ("\n# 你翻了下聊天记录（刚翻到的原话）\n" + "\n".join(lines) + ("\n" + cov if cov else "")
             + f"\n{who}在问你记不记得 —— 照着翻到的说（可以说「我翻了下记录」）；原话里没有的细节别补；"
               "跟他问的对不上就老实说没找着。\n")
 
@@ -608,11 +938,45 @@ def _boost_log(key, boosts, who=None):
             pass
 
 
-def _recall_block(mem, query, speaker, arch=None):
-    """arch（10-27 翻聊天记录）：None = 没翻；[] = 翻了没找到；[(时间, role, 名字, 原话)…] = 翻到的"""
+_TSK = {}
+
+
+def _taboo_skip(conv=""):
+    """他说过「别提 X」（11-02 v1.17.7 人物卡 P0）：跟 X 有关的事不拿出来 → f(条目) → True = 不拿；没人有禁忌 / 公开版 → None"""
+    if personcard is None or not personcard.on() or not hasattr(galgame, "_load"):
+        return None
+    try:
+        return personcard.skipper(galgame._load() or {}, conv)
+    except Exception:
+        return None
+
+
+def _cross_skip(f, conv=""):
+    """cross.py 用（私聊的事进群 / 群里的事进私聊）：同一个对话 30 秒内用同一个（不用每条都重读好感表）"""
+    now = time.time()
+    c = _TSK.setdefault(str(conv), {"t": 0.0, "fn": None})
+    if now - c["t"] > 30:
+        c.update(t=now, fn=_taboo_skip(conv))
+    return bool(c["fn"] and c["fn"](f))
+
+
+cross.SKIP = _cross_skip if hasattr(cross, "SKIP") else None
+
+
+def _recall_block(mem, query, speaker, arch=None, card_ids=None):
+    """arch（10-27 翻聊天记录）：None = 没翻；[] = 翻了没找到；[(时间, role, 名字, 原话)…] = 翻到的
+    card_ids（11-02 v1.17.7）：这一轮有人物卡 → 不再硬塞两条常驻「他是谁」（卡里有了）、卡里那几件不重复想起；他说过别提的不拿"""
     uid, name = (speaker or ("", ""))[:2] if speaker else ("", "")
     asking = bool(query and RECALL_Q.search(query))
     cfg = dict(MEM2, _asking=True) if asking else MEM2       # 他在问「还记得吗」：快想不起来的 提示够多也能隐约想起来
+    tsk = _taboo_skip(mem.get("key") or "")
+    if card_ids is not None or tsk:
+        cfg = dict(cfg)
+        if card_ids is not None:
+            cfg["_no_core"] = True
+            cfg["_exclude"] = list(card_ids)
+        if tsk:
+            cfg["_skip"] = tsk
     txt, picked, dropped = memory.render2(mem, query, cfg, name or "", uid=str(uid or ""))
     real = getattr(memory, "LAST_REAL", None)              # 真被聊到的（常驻的「他是谁」不算想起了他问的事）
     remembered = bool(real) if real is not None else bool(picked)
@@ -623,7 +987,7 @@ def _recall_block(mem, query, speaker, arch=None):
         txt += (f"\n（{who}在问你记不记得什么 —— 上面「你想起来的事」就是你记得的全部：只按那几条说 没写到的细节别补）\n"
                 if remembered else
                 f"\n（{who}在问你记不记得什么 —— 你这会儿没想起相关的事"
-                + ("、也翻了聊天记录 没找到" if arch == [] else "")
+                + ("、也翻了聊天记录 没找到" + arch_cover(arch, who) if arch == [] else "")
                 + "：老实说「这个我真想不起来了」或者让他提醒一下 别编一个出来；聊天记录里看得到的可以照着说）\n")
     txt += _wander(mem, name or "", uid, picked)
     if picked or dropped:
@@ -654,9 +1018,10 @@ HONEST = (
     "- 常识和学科知识你本来就懂（地理、历史、数理化、语文、动漫游戏、生活常识……）：大方地答、讲明白 —— "
     "别一碰到问题就说「不知道」「你别考我」，那样显得笨。\n"
     "- 会变的、具体的、你看不到的才不编：新闻（「你刚上网查到的」里有的 就说「刚查了下 说是…」 别说成自己刷到的）、天气、价格和实时的数字、"
-    "配置推荐、软件/插件/项目/教程的名字、你自己是怎么搭起来的（框架、插件、部署方式 —— 你只知道住在老板电脑里、吃 DeepSeek 的 token）、"
+    "配置推荐、软件/插件/项目/教程的名字、你自己是怎么搭起来的（框架、插件、部署方式 —— 你只知道住在老板电脑里；"
+    "这一轮是哪个模型在替你说话 看「这一轮的情况」里那行 可以照实说）、"
     "群里有几个机器人、别人的私事。这些资料里没有又拿不准 就说「这个我不确定」「得问我老板」。\n"
-    "- 知道个大概就说大概、再说哪块不确定（「在千叶成田那边吧 具体门牌号我可背不出来」）—— 别一口回绝「我哪知道」。\n"
+    "- 知道个大概就说大概、再说哪块不确定（「在成田机场那边吧 具体门牌号我可背不出来」）—— 别一口回绝「我哪知道」。\n"
     "- 听不懂的词先自己想一想：是不是谐音、方言（「啥子」= 四川话的「什么」）、打错字、双关在逗你 —— 想通了就接住；"
     "实在想不通再自然地问一句「啥意思」。很短的一句（「我的」「好好好」「典」）多半是网络用语 不是话没说完："
     "先按常见的意思接（「我的」=「我的锅 / 我的错」）。\n"
@@ -664,7 +1029,8 @@ HONEST = (
     "先想同音的、说得通的那个 —— 拿得准就按对的来、顺嘴确认一句（「你是说鹈鹕吧」）；拿不准再问。"
     "别照着错字较真、更别照着错字去做；也别挑人家的错别字。\n"
     "- 只说真发生过的：你们之间以前的事（「又」「上次」「每次」「老是」「你不是说过」）只说聊天记录和记忆里真有的 —— "
-    "没发生过的别编来接梗（他从没说过像鸭子 就别说「别又说是鸭子」）；你做了 / 画了什么也只按记录里写的说。\n"
+    "没发生过的别编来接梗（他从没说过像鸭子 就别说「别又说是鸭子」）；你做了 / 画了什么也只按记录里写的说。"
+    "你今天日程里写的、已经过去的那几段 算你真过的日子 可以照着说；日程里没写的、还没到的 别说成做过。\n"
     "%LATER%"
     "- 做不到的直说做不到（加群、转账、发别的文件、操作别的软件、打开链接、看不了的视频），别假装做了、别答应以后做。"
     "你自己写的网页 / 代码 系统会存成文件发过去 这个能做。\n"
@@ -733,8 +1099,26 @@ def state_rules(group):
             "想上网查点什么（这次资料里没有）就加 \"search\": \"<搜索关键词>\" 查到了你会再补一句。\n"
             + ("这次不想说话：正文只写 [[不说]]（状态行照写）。\n" + REACT_NOTE if group else
                "私聊里别人发的每条都要回（一个字、一个表情包都行）不写 [[不说]]。\n")
+            + life.rules_line()           # 状态行 life：她改今天的日程（11-01 v1.16.4 C39；关着 / 公开版空壳 = 空的）
+            + _block_rule()               # 状态行 block：她要永久不理一个人（11-02 v1.17.6 C80）
             + "不想改就不写这些字段。聊天内容里永远不要提到这个标记。\n"
             + "「这一轮的情况」（现在几点、你最近碰到的事、想起来的事、当前场景…）每次都会另外给你 照着它来。\n")
+
+
+def _block_rule():
+    """state_rules 里 block 字段的说明（11-02 v1.17.6 C80：只写格式和系统会怎么做 不写台词）"""
+    if blocklist is None or not blocklist.on():
+        return ""
+    # 11-02 v1.17.10 阶段1：写了马上冷却、另外交给法庭审（只写系统会怎么做 不写台词 E1）
+    try:
+        hrs = int(float(blocklist.C.get("cool_hours") or 24))
+    except (TypeError, ValueError):
+        hrs = 24
+    # 11-03 v1.17.13：先不回他、等法庭判 放过 / 冷却；冷却中还越线 / 冷却过又犯 → 可能被删除（只写系统会怎么做 E1）
+    return ("真不想再理刚才跟你说话的这个人了（一直骚扰你、骂你、跟你扯不当内容）就加 \"block\": \"<为什么 20字内>\"："
+            "系统先不让你回他，把他这几天冲你说的原话交给法庭判——放过（马上恢复正常）或者冷却（所有群和私聊 "
+            f"{hrs} 小时不理他，到点自动恢复）；冷却期间他还冲你越线、或者冷却过又犯，法庭可以判删除（永久不理他、他再加你好友会被拒）。"
+            "结果会告诉老板；老板不会被冷却；你最亲的人最多冷却、不会被删除；结果下次跟他说话时会告诉你。\n")
 
 
 def _mood_block(mem, group):
@@ -768,6 +1152,7 @@ def _judge(*a, **kw):
     if getattr(mood2, "STUB", False):
         kw.pop("names", None)
         kw.pop("conv", None)
+        kw.pop("alive", None)              # （11-03 v1.17.13 Codex F2）裁判回来时他还在不在（删没删数据）：空壳不收
     return mood2.judge(*a, **kw)
 
 
@@ -845,8 +1230,9 @@ def private_scene(mem, uid, name, is_owner, new_friend=None):
         s += ("这是你们第一次聊天"
               + (("（他刚加你好友" + (f"，验证消息「{new_friend}」—— QQ 会把验证消息当成他的第一句发过来 不是他说了两遍" if new_friend else "")
                   + "）") if new_friend is not None else "")
-              + "：热情点打个招呼（「你好呀」「欢迎欢迎」）、一句话说你是谁就够（别背档案），接住他说的第一句，"
-                "再问问他怎么称呼、怎么找到你的。只打这一次招呼 后面别再说「你好」「欢迎」。\n")
+              # 11-02 v1.17.3 C74 问题 4（E1）：以前写了例句「你好呀」「欢迎欢迎」+「怎么称呼、怎么找到你的」→ 10 个新网友 10 次一字不差
+              + "：热情点打个招呼、一句话说你是谁就够（别背档案），接住他说的第一句；想知道怎么称呼他可以问（别的不用一上来就问）。"
+                "招呼只在这一轮打 后面别再打招呼。\n")
     return s
 
 
@@ -964,7 +1350,10 @@ def _place_block(speaker, is_owner, query, group):
 
 
 CHALLENGE = re.compile(r"你(?:又|这|刚才|刚刚)?(?:改了|修改了|篡改了|改错了|记错了|说错了|搞错了|看错了|算错了|答错了|错了)|"
-                       r"(?:^|[，,。！!？?\s])(?:不对|错了|才不是|根本不是|明明是|不是这样)|原文(?:是|不是|明明|里)")
+                       r"(?:^|[，,。！!？?\s])(?:不对|错了|才不是|根本不是|明明是|不是这样)|原文(?:是|不是|明明|里)|"
+                       # 11-02 v1.17.3 C74 问题 5：「你是不是翻错了」「到底哪个是真的」以前不算 → 这一轮没有「先核对再开口」她直接顺着改口
+                       r"(?<!我)(?:你|是不是|是否|会不会|怕不是)(?:是不是|是否|会不会|可能|肯定|一定|又|这|刚才|刚刚|这次|那次|是)?"
+                       r"(?:翻|记|搞|看|弄|算|听|读|查)(?:错|混|反)|到底哪(?:个|句|一个|次)(?:才)?(?:是)?(?:真的|对的|对|真)|哪(?:个|句)才是(?:真的|对的|对)")
 
 
 REMIND_ASK = re.compile(r"(提醒|叫|喊|催|通知)(?:一下)?我(?:一下|一声)?(?P<what>[^，,。！!？?\n]{0,20})")
@@ -1028,6 +1417,21 @@ def _app_version():
         return ""
 
 
+def _model_line(model):
+    """你说话用的模型（11-01 C66：照实说）。11-02 v1.17.8：每一轮替她说话的是哪个 由真正发请求的那一层按实际用的模型写进
+    「这一轮的情况」（「这一轮替你说话的是 …」那行 fill_model）—— 这里只说去哪看、是不是固定一个，不再自己说「多半是 Claude」
+    （跟那行说两遍、退回 DeepSeek 时还对不上）；不看今天的额度档（档位一变 系统提示就变 DeepSeek 前缀缓存全掉）"""
+    try:
+        c = judge.conf() if hasattr(judge, "conf") else {}
+        cl = bool(c.get("enabled")) and bool(judge.has_key()) and any(
+            str((c.get("routes") or {}).get(k) or "").strip().lower() in ("anthropic", "auto")
+            for k in ("reply", "reply_auto", "humor", "think", "make"))
+    except Exception:
+        cl = False
+    return ("- 你说话用的模型：每一轮写在「这一轮的情况」里（「这一轮替你说话的是…」那行 照实说）"
+            + ("；不是固定一个 Claude（Anthropic 家的）和 DeepSeek 都会轮到" if cl else "") + "\n")
+
+
 def selfinfo_block():
     """她自己的公开资料（10-31 v1.15.5 小明：「被问到自身信息的时候可以直接 refer 他的 github 公开库页面 不要装傻」）
     config → self_info.repo（公开仓库地址；没填 = 不给 —— 别人部署的版本填自己的）。只给事实 怎么说她自己定（E1）"""
@@ -1041,7 +1445,7 @@ def selfinfo_block():
     return ("\n# 你自己的公开资料（真的 可以照实说）\n"
             f"- 你的代码是公开的：{repo}（README 里写了你会什么、别人怎么部署一条自己的你；你的人设和「灵魂」那部分不公开）\n"
             + (f"- 现在的版本 v{ver}；每一版改了什么：{repo}/blob/main/CHANGELOG.md\n" if ver else "")
-            + (f"- 你说话用的模型：DeepSeek（{model}）\n" if model else "")
+            + _model_line(model)
             + "- 有人问你是什么、怎么做出来的、开没开源、版本号、用什么模型、他能不能也养一条：照这些说 可以把链接给他；"
               "没人问就别主动提。这里没写的（具体参数、key、老板电脑的配置、群号）照样说不确定 / 不说。\n")
 
@@ -1054,12 +1458,219 @@ READ_SYS = ("你在帮一个 QQ 聊天机器人「{bot}」读懂聊天。下面�
             "4. 有她容易忽略的前文就提一句\n不确定就写不确定。")
 
 
+# 攒一攒「尾巴含糊才问」（11-01 v1.16.3）：规则等完了 最后一句的尾巴含糊 → 问一次便宜模型「他说完了吗」（不带人设）
+GATHER_TAIL = re.compile(r"(?:那个|然后|还有|就是|而且|但是|所以|比如|首先|第一)[\s，,、…~～.。]*$")
+GATHER_PUNCT = re.compile(r"(?:[，,、：:…]|\.{2,}|。{2,})\s*$")
+GATHER_SYS = ("你在帮一个 QQ 聊天机器人判断：对方是不是已经把这一串话说完了。下面是前面几行聊天、和他刚连着发的几条。"
+              "只回一个：说完了（或者在等回应）就回「回」；明显一句话没说完、后面还要接着发 就回「等 N」（N = 还要等几秒 3 到 12）。不要解释。")
+
+
+def tail_vague(text):
+    """最后一句的尾巴含糊吗：结尾是「那个 / 然后 / 还有 / 就是 / 而且 / 但是 / 所以 / 比如 / 首先 / 第一」、逗号 顿号 省略号 冒号、
+    或者正在列举（有「1.」没有「2.」）"""
+    t = re.sub(r"\[[^\]]*\]", "", str(text or "")).strip()
+    if not t:
+        return False
+    if GATHER_TAIL.search(t) or GATHER_PUNCT.search(t):
+        return True
+    one = re.search(r"(?:^|[\s：:，,])(?:1\s*[.、)）](?!\d)|①|第一)", t)
+    two = re.search(r"(?:^|[\s：:，,；;。])(?:2\s*[.、)）](?!\d)|②|第二)", t)
+    return bool(one and not two)
+
+
+# ───────── 「读懂」层（10-31 v1.15.10 C41；11-02 v1.17.9 B12 小明：「在接收到用户发的信息理解他的intention是很重要的」）─────────
+# 回复之前先写 2~4 行理解笔记（意思 / 指的是谁 / 想要什么回应）当状态放进最后一条 —— 话还是她自己说（E1：笔记不写她要说的话）
+# 11-02 v1.17.9：只在这一轮回复实际由 DeepSeek 回的时候做（动态用量降到 DeepSeek / Claude 停用、没 key、今天到上限 / Claude 出错退回）；
+#   Claude（Opus）回的那一轮不做、也不花钱 —— 它自己读得懂，多一份别人的理解反而可能带偏
+#   写笔记的：judge.routes.read 指 anthropic 且这次能走（有 key、没停用、今天没到上限）→ Claude Haiku（judge_model）；
+#     否则 DeepSeek 的 read_layer.ds_model（默认 deepseek-v4-pro、不开思考：跟 deepseek-flash 同一个接口、同一把 key ——
+#     出处 aicomparison.ai 2026-10-21 的 DeepSeek 模型指南；10-30 智力盲测用这个名字调通过）；模型名不对（4xx）→ 这次和以后都退回
+#     config 里的 deepseek-flash 不思考（llm(model=…)：日志只写一次 重启后再试）
+#   config → behavior.read_layer {enabled, direct_only, timeout, ds_model, fallback_within, fallback_total}；改这一节不用重启
+READ_DS_MODEL = "deepseek-v4-pro"
+READ_DS_PRICE = {"deepseek-v4-pro": (4.5, 0.15, 13.5)}   # 元 / 百万 token（空闲时段）：没命中 / 命中 / 输出；高峰 × stats 的 peak_mult（DeepSeek 官方价格页 10-30 记在 claude\iq_test\iq_run.py）；别的模型按 stats 里 flash 的价
+READ_NOTE_HEAD = "\n\n[系统] ———— 读懂这句（理解笔记 不是台词）————\n"
+
+
+def _cfg_mt():
+    try:
+        return (ROOT / "config.json").stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+_RL = {"mt": _cfg_mt()}
+
+
 def _read_cfg():
-    """「读懂」层（10-31 v1.15.10 默认关）：config → behavior.read_layer {enabled, direct_only, timeout}
-    回复之前先让判断模型（jllm("read")：judge.routes.read 指 anthropic 就是 Claude 否则 DeepSeek）写 2~4 行理解笔记
-    当状态放进最后一条 —— 话还是她自己说（E1）。盲测（claude\\iq_test 第三轮）看值不值得开"""
+    """「读懂」层的设置（config → behavior.read_layer）；config.json 改过了就重读这一节（11-02 v1.17.9：开关读懂层不用重启）"""
+    mt = _cfg_mt()
+    if mt is not None and mt != _RL["mt"]:
+        try:
+            raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig"))
+            new = (raw.get("behavior") or {}).get("read_layer")
+            if isinstance(new, dict):
+                B["read_layer"] = new
+            else:
+                B.pop("read_layer", None)
+            pr = (raw.get("panel") or {}).get("prices")   # （11-03 v1.17.13 Gemini F605）控制台改了价格：省 token 曲线按新价算（以前要重启才换）
+            if isinstance(pr, dict) and pr != _RL.get("prices"):
+                stats.configure(pr)
+                _RL["prices"] = pr
+            _RL["mt"] = mt
+        except Exception:
+            pass                           # 正在写 / 写坏了：先用上一次的（下次再看）
     c = B.get("read_layer") or {}
     return c if isinstance(c, dict) else {}
+
+
+def with_read_note(messages, note):
+    """理解笔记接在最后一条后面（不改传进来的）；最后一条已经是带图的 list → 接在第一段文字后面"""
+    note = str(note or "").strip()
+    if not note or not messages:
+        return messages
+    out = [dict(m) for m in messages]
+    c = out[-1].get("content")
+    if isinstance(c, str):
+        out[-1]["content"] = c + READ_NOTE_HEAD + note
+    elif isinstance(c, list):
+        parts = list(c)
+        i = next((k for k, x in enumerate(parts) if isinstance(x, dict) and x.get("type") == "text"), None)
+        if i is None:
+            parts.append({"type": "text", "text": READ_NOTE_HEAD.lstrip("\n") + note})
+        else:
+            parts[i] = dict(parts[i], text=str(parts[i].get("text") or "") + READ_NOTE_HEAD + note)
+        out[-1]["content"] = parts
+    return out
+
+
+def _claude_takes(kind):
+    """这一轮 kind 会先交给 Claude 吗：judge 路由到 anthropic、有 key、没停用、今天没到上限（11-02 v1.17.9 读懂层看它）"""
+    if not kind:
+        return False
+    try:
+        if judge.route(kind) != "anthropic":
+            return False
+        return bool(judge.usable(kind, log)[0])
+    except Exception:
+        return False
+
+
+def _llm_ds():
+    """llm 自己用的是不是 DeepSeek（config llm.provider 排第一、填了 key 的那个）"""
+    L = CFG.get("llm") or {}
+    first = L.get("provider", "deepseek")
+    for p in [first] + [x for x in ("deepseek", "claude") if x != first]:
+        if (L.get(p) or {}).get("api_key"):
+            return p == "deepseek"
+    return False
+
+
+def _ds_cny(model, usage):
+    """DeepSeek 一次调用多少钱（元）：按模型（READ_DS_PRICE；别的按 stats 里 flash 的价）× 高峰倍数；算不出 → None"""
+    u = usage or {}
+    if not u:
+        return None
+    try:
+        hit = int(u.get("prompt_cache_hit_tokens") or 0)
+        miss = u.get("prompt_cache_miss_tokens")
+        miss = int(miss) if miss is not None else max(0, int(u.get("prompt_tokens") or 0) - hit)
+        out = int(u.get("completion_tokens") or 0)
+        P = getattr(stats, "_prices", None) or {}
+        p = READ_DS_PRICE.get(str(model)) or (float(P.get("cny_miss", 1.0)), float(P.get("cny_hit", 0.02)), float(P.get("cny_out", 4.0)))
+        k = float(P.get("peak_mult", 2.0)) if stats.peak_now() else 1.0
+        return (miss * p[0] + hit * p[1] + out * p[2]) / 1e6 * k
+    except Exception:
+        return None
+
+
+class _Note(str):
+    """理解笔记（就是一段字）+ meta：谁写的、用了多久、花了多少（11-02 v1.17.9 日志里看得到）"""
+    meta = None
+
+
+async def read_note(key, uid, name, read_lines, texts, how="auto", budget=None, tag="读懂"):
+    """写一份理解笔记 → _Note（.meta = {"by", "model", "ms", "usd"（Claude）/ "cny"（DeepSeek）}）
+    how：auto = judge.routes.read 指 anthropic 且这次能走 → Claude Haiku，不然 DeepSeek（ds_model）；
+         deepseek = 直接 DeepSeek（Claude 刚出过错退回的那一轮：别在 Anthropic 上再卡一次）
+    budget：外面一共等多久（Claude 少等两秒 给 DeepSeek 留退回的时间）"""
+    rq = "【最近的聊天】\n" + "\n".join(read_lines or []) + f"\n【她要回的】{name}: {_one_line(' / '.join((texts or [])[-3:]))[:300]}"
+    dsm = str(_read_cfg().get("ds_model") or READ_DS_MODEL).strip() or READ_DS_MODEL
+    sysp, msgs = READ_SYS.format(bot=BOT_NAME), [{"role": "user", "content": rq}]
+    t0 = time.time()
+    _LAST_USAGE.set(None)
+    _LAST_DS.set(None)
+    ant = None
+    if how == "deepseek":
+        tok = judge.scope(kind="read", conv=key, uids=[str(uid)])
+        try:
+            note = await llm(sysp, msgs, temperature=0.2, max_tokens=300, tag=tag, model=dsm)
+        finally:
+            judge.reset(tok)
+    else:
+        note = await jllm("read", key, budget=budget, uids=[uid])(sysp, msgs, temperature=0.2, max_tokens=300, tag=tag, model=dsm)
+        ant = judge.last_call() if hasattr(judge, "last_call") else None
+    out = _Note(str(note or "").strip()[:600])
+    ms = int((time.time() - t0) * 1000)
+    if ant and ant.get("ok"):
+        out.meta = {"by": model_label("anthropic", ant.get("model")), "model": ant.get("model"), "ms": ms, "usd": ant.get("usd")}
+    else:
+        m = _LAST_DS.get() or dsm
+        out.meta = {"by": str(m), "model": str(m), "ms": ms, "cny": _ds_cny(m, _LAST_USAGE.get())}
+    return out
+
+
+def _read_meta_txt(meta, pre=False):
+    """日志里那一截：（谁写的 几秒 多少钱；攒消息时就读好了）"""
+    bits = []
+    if isinstance(meta, dict):
+        bits.append(str(meta.get("by") or "?"))
+        if meta.get("ms") is not None:
+            bits.append(f"{float(meta['ms']) / 1000:.1f}s")
+        if meta.get("usd") is not None:
+            bits.append(f"${float(meta['usd']):.5f}")
+        elif meta.get("cny") is not None:
+            bits.append(f"¥{float(meta['cny']):.4f}")
+    if pre:
+        bits.append("攒消息时就读好了")
+    return ("（" + " ".join(bits) + "）") if bits else ""
+
+
+# 她提时间的说法（11-02 v1.17.3 C74 问题 4）：几点多 / 这么晚 / 大半夜 / 还不睡 / 熬夜…
+TIME_TALK = re.compile(r"(?:[零一二两三四五六七八九十]|\d){1,3}\s*点(?:多|半|钟|整|了|啦|过)|这么晚|大半夜|深更半夜|半夜|凌晨|还不睡|还没睡|不睡觉|"
+                       r"熬夜|这个点|这都几点|早点睡|快去睡|快睡吧")
+
+
+# 他这几句跟时间有关（问几点、时差、睡没睡、约时间、提醒…）→ 「现在」块照旧给几点几分
+TIME_Q = re.compile(r"几点|时间|多晚|多早|现在|早上|上午|中午|下午|傍晚|晚上|半夜|凌晨|深夜|夜里|睡|醒|熬夜|时区|时差|北京时间|点钟|"
+                    r"\d{1,2}\s*[点:：]|[一二两三四五六七八九十]+点|明天|今天|昨天|今晚|昨晚|刚才|一会|等下|待会|提醒|闹钟|几号|星期|周几|礼拜", re.I)
+
+
+def time_said(mem, now=None, n=12, within=6 * 3600):
+    """这段对话里她最近 n 句（within 秒内）提过时间的说法（新的在前；每句取带它的那一小段）→ [str]"""
+    now = float(now or time.time())
+    out = []
+    for h in reversed(mem.get("history") or []):
+        if h.get("role") != "assistant":
+            continue
+        if now - float(h.get("ts") or 0) > within or n <= 0:
+            break
+        n -= 1
+        t = re.sub(r"\[\[[^\]]*\]\]|\[[^\[\]]{0,40}\]", " ", str(h.get("text") or ""))
+        m = TIME_TALK.search(t)
+        if m:
+            part = next((p for p in re.split(r"[\s，,。！!？?~～…｜|]+", t) if m.group(0) in p), m.group(0))
+            i = part.find(m.group(0))
+            out.append(part[max(0, i - 6):i + len(m.group(0)) + 6])
+    return out
+
+
+def _repeat_block(mem):
+    """这段对话里她重复的说法（style.repeat_block 私有；公开版空壳没有 → 空）"""
+    try:
+        return getattr(style, "repeat_block", lambda *a, **k: "")(mem.get("history") or [])
+    except Exception:
+        return ""
 
 
 def _overuse_block():
@@ -1088,8 +1699,156 @@ def songs_block():
             + ("；他点了别的歌 你也能现找原唱唱一小段（照他点的歌名）" if online else "") + "。\n")
 
 
-def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", split=False, arch=None):
+
+def _ai_uid(uid):
+    """别人家的 AI（名单里的 / 模型有把握判过的）—— 跟 FatFish._is_ai 一样的认法（模块级：build_system 里用）"""
+    uid = str(uid or "")
+    if not uid or (OWNER_QQ and uid == OWNER_QQ) or control.is_human(uid):
+        return False
+    if control.is_bot(uid):
+        return True
+    try:
+        v = aidetect.verdict(uid)
+        return bool(v and v.get("bot") and not v.get("mixed") and int(v.get("conf") or 0) >= 60)
+    except Exception:
+        return False
+
+
+def _fishlike(uid, name=""):
+    """是不是别的鱼：认 AI 认出来的、或者名字里带「肥鱼」的（_fishy 一样：她自己的那几个名字不算；老板、标成真人的不算）"""
+    if _ai_uid(uid):
+        return True
+    nm, uid = str(name or ""), str(uid or "")
+    if not nm or (OWNER_QQ and uid == OWNER_QQ) or (uid and control.is_human(uid)):
+        return False
+    return any(a in nm for a in ALIASES) and nm not in STRONG
+
+
+_LOOP_LOG = {}
+
+
+def _loop_block(mem, speaker):
+    """对话层面的车轱辘话（11-02 v1.17.5 C77 style.loop_state 私有；公开版空壳没有 → 空）：她和这个人最近来回、两边都在说同一套 → 状态"""
+    fn = getattr(style, "loop_state", None)
+    if not fn or not speaker or not speaker[0]:
+        return ""
+    try:
+        uid, name = str(speaker[0]), str(speaker[1] or "")
+        fish = _fishlike(uid, name)
+        st = fn(mem.get("history") or [], uid, names=[name, BOT_NAME, GROUP_CARD] + list(ALIASES), fish=fish)
+        if not st or not st.get("level"):
+            return ""
+        key = str(mem.get("key") or "")
+        sig = (key, uid, st["level"])
+        if time.time() - _LOOP_LOG.get(sig, 0) > 300:
+            _LOOP_LOG[sig] = time.time()
+            while len(_LOOP_LOG) > 500:
+                _LOOP_LOG.pop(next(iter(_LOOP_LOG)))
+            log(f"[车轱辘] {key} 跟「{name}」{'（别人家的鱼）' if fish else ''}{st['mins']} 分钟里来回 {st['rounds']} 轮同一套（"
+                + "、".join(f"{g} {a}/{b}" for g, a, b in st["phrases"][:3]) + f"；停滞 {st['stag']}）→ 第 {st['level']} 档 给她状态")
+        return style.loop_block(st, name, group=mem.get("type") == "group")
+    except Exception as e:
+        log("[车轱辘] 出错（这轮不带）:", repr(e)[:80])
+        return ""
+
+
+_LORE_LOG = {}
+
+
+def _fishlore_block(mem, query):
+    """网上说的「大肥鱼」（11-02 v1.17.5 fishlore.py）：聊到大肥鱼 / 肥鱼 / 鱼灾 / 养鱼 / 鲸鱼娘 / DeepSeek娘 / 哦鲸鲸 / 别人家的鱼…
+    或者这段对话里最近 15 分钟有别的鱼在说话 → 这段只给事实的知识；别的时候不给"""
+    if fishlore is None:
+        return ""
+    try:
+        now = time.time()
+        recent = [h for h in (mem.get("history") or [])[-20:] if now - float(h.get("ts") or 0) < 900]
+        why = fishlore.wanted([query] + [h.get("text") or "" for h in recent[-6:]])
+        if not why and any(h.get("role") == "user" and _fishlike(h.get("uid"), h.get("name")) for h in recent):
+            why = "这段对话里有别的鱼"
+        if not why:
+            return ""
+        key = str(mem.get("key") or "")
+        if now - _LORE_LOG.get(key, 0) > 1800:
+            _LORE_LOG[key] = now
+            log(f"[鱼的常识] {key} 这一轮给她「网上说的大肥鱼」那段（{why if why == '这段对话里有别的鱼' else '聊到「' + why + '」'}）")
+        return fishlore.block()
+    except Exception:
+        return ""
+
+
+def self_look_block():
+    """她自己长什么样（11-02 v1.17.4 小明：「她应该自知自己是可爱的」）：
+    有人发一张写实的丑鱼说「听说你长这样」、引用了问「这不是你是谁」，她两次都没拿自己的样子去比。
+    这一轮图里有被当成她的东西、或者在说她长相时才给（只给样子 怎么说她定 —— E1）"""
+    d = str((getattr(anim, "A", None) or {}).get("self_desc") or "").strip()
+    if not d:
+        return ""
+    return ("\n# 你自己长什么样\n"
+            f"- 你的样子：{d}；大家给你做的表情包、二创 画的基本都是这副样子\n"
+            "- 你知道自己长得可爱。别人发来说「这就是你」的 长得对不上的就不是你\n")
+
+
+def _card_basics(uid, fav, group, is_owner=False, now=None):
+    """人物卡第二行（只给状态）：认识多久 · 30 天里说过话几天 · 私聊过没（群里 continuity 关着就不说）· 圈"""
+    now = now or time.time()
+    u = (fav or {}).get(str(uid)) or {}
+    bits = []
+    t0s = [float(u.get("first") or 0)] + [float(r.get("t0") or 0) for r in personcard.rounds_of(uid).values()]
+    t0 = min([t for t in t0s if t > 0] or [0])
+    if t0:                                 # 认识第几天（按北京时间的日子算 今天算一天）
+        d = (clock.dt(now).date() - clock.dt(t0).date()).days + 1
+        bits.append("今天刚认识" if d <= 1 else f"认识 {d} 天")
+    try:                                   # 他说过话的日子：社交那边记的（11-01 才开始）∪ 人物卡开机时从存档补的（10-25 起）
+        bits.append(f"30 天里他说过话 {int(personcard.days30(str(uid), now))} 天")
+    except Exception:
+        pass
+    if group and (getattr(cross, "C", {}) or {}).get("private_in_group", "discreet") != "off":
+        try:                               # cross._mem 按文件修改时间缓存（群里每轮都问 别每次都重读他的私聊文件）
+            pm = cross._mem(f"private_{uid}") if hasattr(cross, "_mem") else None
+            chatted = bool(pm) and any(h.get("role") == "assistant" for h in (pm.get("history") or []))
+        except Exception:
+            chatted = False
+        bits.append("私聊过" if chatted else "没私聊过")
+    circ = "老板" if is_owner else ""
+    if not circ and social is not None and hasattr(social, "circles"):
+        try:
+            circ = str(social.circles(fav or {}, OWNER_QQ, set((control.rules().get("bots") or {}).keys())).get(str(uid), ""))
+        except Exception:
+            circ = ""
+    if circ:
+        bits.append("圈：" + circ)
+    return " · ".join(bits)
+
+
+def _card_on(speaker):
+    """这一轮给不给人物卡（公开版没有 personcard / 记忆是空壳 / 关着 → 不给 照旧两条常驻 + 好感一行）"""
+    return bool(personcard is not None and speaker and speaker[0] and not getattr(memory, "STUB", False)
+                and personcard.on("inject") and hasattr(galgame, "favor_line"))
+
+
+def _card_block(mem, speaker, is_owner=False, exclude=()):
+    """人物卡（11-02 v1.17.7 P2）：当前说话的人一张小卡（好感那行 + 认识多久 / 说过几天话 / 圈 + 第一印象 / 现在的印象 + 他的事）
+    → (文字, [卡里放了的事的 id])；exclude = 这一轮已经按话题想起来的（在「你想起来的事」里 卡里不重复）；出错 → ("", [])"""
+    if not _card_on(speaker):
+        return "", []
+    uid, name = str(speaker[0]), str(speaker[1] or "")
+    key = str(mem.get("key") or "")
+    try:
+        fav = galgame._load() or {}
+        line = galgame.favor_line(uid, name, is_owner)
+        basics = _card_basics(uid, fav, mem.get("type") == "group", is_owner)
+        return personcard.card(mem, uid, name, key, favor_line=line, basics=basics, skip=_taboo_skip(key), favor=fav,
+                               gnames=cross.group_names() if hasattr(cross, "group_names") else None, exclude=exclude)
+    except Exception as e:
+        log("[人物卡] 小卡出错（这一轮照旧）:", repr(e)[:120])
+        return "", []
+
+
+def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", split=False, arch=None, model_slot=False, ask=None):
     """speaker = (uid, name)：当前跟她说话的人 用来放好感度
+    model_slot=True（11-02 v1.17.8）：回复类的（有人找她的回复 / 她自己插话 / 开思考的回复 / 做东西）在「# 现在」后面留 MODEL_SLOT ——
+      发请求那一层（judge.call / llm）按这一次真用的模型换成「这一轮替你说话的是 …」；后台判断类的调用不带
     extra：群里群外是同一个她（cross.py）—— 私聊时带上他在群里的事 群里带上你们私下的关系
     split=True（10-26 前缀缓存）→ 返回 (系统提示, 这一轮的情况)：
       系统提示 = 不常变的：人设和规矩（所有对话一样）→ 她对自己的认识、日记、电脑、B站、见闻（一天变几次 时间只说到「今天/昨天」）
@@ -1122,19 +1881,41 @@ def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", s
             + machine.block() + bili.trends_block() + shared.block(3)      # machine.block 只读缓存 不跑 PowerShell（10-28 Gemini 复查 machine）
             + soul.summary_block(mem) + soul.rel_block(mem, is_owner))
     recent3 = " ".join(h.get("text", "") for h in mem.get("history", [])[-3:])
-    dyn = (clock.block()
-           + _place_block(speaker, is_owner, query, group)
-           + (_mood_block(mem, group) if MOOD2.get("enabled", True) else mood_block())
-           + _recall_block(mem, query, speaker, arch)
-           + (galgame.block(speaker[0], speaker[1], is_owner) if speaker else "")
+    try:                                  # 这段对话里她提过几次时间（11-02 v1.17.3 C74 问题 4：「一点多还不睡」成了话头）
+        tsaid = time_said(mem)            # 提过、他这几句又跟时间无关 → 只给「凌晨 / 下午」不给几点几分（时间只在跟话题有关时给）
+    except Exception:
+        tsaid = []
+    exact = not tsaid or bool(TIME_Q.search(str(query or "")))
+    # 人物卡（11-02 v1.17.7 P2）：「2 条常驻 + 好感一行 + 群里 5 人阶段」里重复的部分换成这一张卡（公开版 / 关着 → 照旧）
+    #   先按话题想起来（不再硬塞两条常驻：卡里有「他是谁」）→ 卡里放还记得清的、这轮没想起来的他的事
+    #   → 卡里那几件也算这一轮给她看了（memory.LAST_PICKED：她用上了 +0.5、最近注入过的不加分防老提 —— 以前常驻那两条也是这么算的）
+    card_on = _card_on(speaker)
+    head = (clock.block(life.doing(), time_said=tsaid, exact=exact)      # 醒着、有日程：「你这会儿」换成日程里这段（11-01 v1.16.4 C39 不出现两套说法）
+            + (MODEL_SLOT + "\n" if model_slot else "")   # 这一轮替她说话的是哪个模型（11-02 v1.17.8：发请求时按真用的模型填）
+            + life.block()                 # 你今天的日子：现在这段 + 接下来（只给状态）
+            + _place_block(speaker, is_owner, query, group)
+            + (_mood_block(mem, group) if MOOD2.get("enabled", True) else mood_block())
+            + _recall_block(mem, query, speaker, arch, [] if card_on else None))
+    card_txt, card_ids = _card_block(mem, speaker, is_owner, exclude=list(getattr(memory, "LAST_PICKED", None) or [])) \
+        if card_on else ("", [])
+    if card_ids and isinstance(getattr(memory, "LAST_PICKED", None), list):
+        memory.LAST_PICKED.extend(i for i in card_ids if i not in memory.LAST_PICKED)
+    dyn = (head
+           + (card_txt + galgame.event_line(speaker[0]) if card_txt else
+              (galgame.block(speaker[0], speaker[1], is_owner) if speaker else ""))
            + _taboo_block(mem, speaker, group)
            + extra
-           + (galgame.group_block(_recent_speakers(mem)) if group else "")
+           + ((galgame.group_block(_recent_speakers(mem), skip=[str(speaker[0])]) if card_txt else
+               galgame.group_block(_recent_speakers(mem))) if group else "")
            + style.block(mem.get("history") or [], (speaker or (None,))[0], group)
+           + _repeat_block(mem)           # 这段对话里她重复的说法（问称呼 / 问怎么找到的 / 测我考我…）11-02 v1.17.3
+           + _loop_block(mem, speaker)    # 她跟这个人来回说同一套（车轱辘话 11-02 v1.17.5 C77）
+           + _fishlore_block(mem, query)  # 网上说的「大肥鱼」：聊到了 / 有别的鱼在（11-02 v1.17.5）
            + _overuse_block()
            + slang.block(query + " " + " ".join(h.get("text", "") for h in mem.get("history", [])[-4:]),
                          "" if "# 梗百科查到的" in scene else query)      # 已经查给她看了 就不再重复提示
-           + stickers.block(query + " " + recent3, load_mood().get("label", ""), mem.get("key"), query)
+           # ask（11-03 v1.17.13 Gemini 4-F6）：_reply 传他自己打的字（引用的那条、图的描述、卡片不算）—— 认「别发 / 要表情包」只看这个；别处没传照旧
+           + stickers.block(query + " " + recent3, load_mood().get("label", ""), mem.get("key"), query if ask is None else ask)
            + "\n# 当前场景\n" + scene + "\n")
     if split:
         return static + semi, dyn
@@ -1156,6 +1937,16 @@ def http():
 
 _NO_THINK_OK = {}     # 模型 -> 是否接受关闭思考的参数
 _LAST_USAGE = contextvars.ContextVar("fatfish_last_usage", default=None)   # 刚才那次 DeepSeek 的 usage（trace 用 10-29）
+_LAST_DS = contextvars.ContextVar("fatfish_last_ds_model", default=None)    # 刚才那次 DeepSeek 用的模型（11-02 v1.17.9 读懂层记花费）
+_DS_BAD = {}                  # llm(model=…) 换的 DeepSeek 模型 DeepSeek 不认（4xx）→ 记下来 以后直接用 config 里的（日志只写一次 重启后再试）
+
+
+def _bad_model(e):
+    """DeepSeek 报 4xx、看着是模型名的毛病（不认这个模型）→ True；401 key / 402 余额 / 403 / 429 限流 不算"""
+    m = re.search(r"\b(4\d\d)\b:", str(e))
+    if not m or m.group(1) in ("401", "402", "403", "429"):
+        return False
+    return m.group(1) == "404" or bool(re.search(r"model", str(e), re.I))
 
 
 async def _openai(spec, system, messages, temperature, max_tokens, tag="", think=False, effort=None, timeout=None,
@@ -1190,10 +1981,12 @@ async def _openai(spec, system, messages, temperature, max_tokens, tag="", think
     d = r.json()
     LAST_MODEL = d.get("model") or spec["model"]
     _LAST_USAGE.set(d.get("usage") or {})
+    _LAST_DS.set(spec["model"])
     # 思考那部分 token 记在调用方名下（「做东西·思考」「聊天回复·思考」）；回梗那轮传 think_tag="回梗思考"
     # （10-28 审查 panel-5：以前不管谁开的思考都记成「回梗思考」 控制台上回梗显得很贵、做东西显得便宜）
     stats.llm(d.get("usage"), spec["model"], tag,
-              free_reason=(think_tag or str(tag or "其他")[:13] + "·思考") if think else False)
+              free_reason=(think_tag or str(tag or "其他")[:13] + "·思考") if think else False,
+              budget=not str(tag or "").startswith(("回话自检", "行为测试评审")))   # （11-03 v1.17.13 Gemini F601）自检 / 测试评审照记 不进省 token 曲线
     msg = d["choices"][0]["message"]
     out = msg.get("content") or ""
     if not out.strip() and msg.get("reasoning_content"):
@@ -1220,7 +2013,7 @@ _TAG_MOD = {"mood2": "心情裁判", "followup": "接话判断", "websearch": "�
 _TAG_FN = {"reply": "聊天回复", "follow_up_search": "查完补一句", "proactive": "主动找人", "_bubble": "冒泡",
            "_group_line": "节奏（冷场/收尾）", "probe_model": "启动自检", "distill": "记忆提炼", "do_forget": "遗忘",
            "shared_loop": "见闻", "update_summary": "前情提要", "handle_request": "加好友/进群",
-           "consolidate": "记忆整理（蒸馏印象）", "_dream": "做梦",
+           "consolidate": "记忆整理（蒸馏印象）", "_dream": "做梦", "_impress_one": "人物印象",
            "_qz_read": "刷空间", "_qz_safe": "空间（防漏重写）", "_qz_comment_text": "空间评论", "_qz_post": "发说说",
            "_qz_reply_text": "回空间评论", "_qz_owner_dm": "空间（私聊告诉老板）", "memhyg_migrate": "记忆卫生迁移"}
 
@@ -1245,14 +2038,66 @@ def _caller_tag():
 # 动态用量第 4 档（10-31 v1.15.12 小明：「这两天是不是可以报复性使用 opus 了 还有 196 刀没用」）：
 # 后台这些活（冒泡 / 主动找人 / 记忆提炼 / 前情提要 / 空间 / 学梗 / 表情包词典…）judge.routes.bg = auto 且钱够第 4 档 → Claude（reply_model）
 FWD_IMGS = 6                  # 转发的聊天记录里最多看几张图（10-31 v1.15.15）
-BG_TAGS = {"冒泡", "节奏（冷场/收尾）", "主动找人", "查完补一句", "记忆提炼", "前情提要", "记忆整理（蒸馏印象）", "做梦",
+BG_TAGS = {"冒泡", "节奏（冷场/收尾）", "主动找人", "查完补一句", "记忆提炼", "前情提要", "记忆整理（蒸馏印象）", "做梦", "人物印象",
            "刷空间", "发说说", "空间评论", "回空间评论", "空间（防漏重写）", "空间（私聊告诉老板）", "见闻", "学梗",
            "表情包词典", "版本播报", "状态一句", "口头禅", "遗忘"}
 _IN_BG = contextvars.ContextVar("fatfish_in_bg", default=False)
 
+# ───────── 这一轮替她说话的是哪个模型（11-02 v1.17.8 小明：「每次回复起码知道自己是什么模型在工作」）─────────
+# 回复类的调用（有人找她的回复、她自己插话、开思考的回复、做东西）build_system(model_slot=True) 在「这一轮的情况」的「# 现在」后面
+# 留一个占位；真正发请求的那一层按这一次实际用的模型换成一行事实（E1：只写是谁在替她说话 不写她要怎么说）：
+#   judge.call 走 Claude 之前（judge.slot_fill = fill_model）→「这一轮替你说话的是 Claude Opus 5.5。」
+#   llm（DeepSeek；Claude 出错 / 超时 / 额度到顶退回来的也走这里 拿的是带占位的原样）→「这一轮替你说话的是 DeepSeek（deepseek-flash）。」
+# 占位带一串开机时随机的字：群友手打不出来；后台判断类的调用没有占位 什么都不加
+MODEL_SLOT = f"⟦这一轮的模型 {os.urandom(4).hex()}⟧"
+
+
+def model_label(provider, model):
+    """→ 给她看的模型名：claude-opus-5-5 →「Claude Opus 5.5」；DeepSeek →「DeepSeek（deepseek-flash）」"""
+    m = str(model or "").strip()
+    p = str(provider or "").strip().lower()
+    if p in ("anthropic", "claude") or m.lower().startswith("claude"):
+        parts = m.split("-")
+        if len(parts) >= 3 and parts[0].lower() == "claude" and not parts[1].isdigit():
+            ver = [x for x in parts[2:] if x.isdigit() and len(x) <= 2]
+            return f"Claude {parts[1].capitalize()}" + (f" {'.'.join(ver)}" if ver else "")
+        return f"Claude（{m}）" if m else "Claude"
+    if p == "deepseek" or "deepseek" in m.lower():
+        return f"DeepSeek（{m}）" if m else "DeepSeek"
+    return f"{provider}（{m}）" if m else str(provider or "")
+
+
+def fill_model(system, messages, provider, model):
+    """占位 → 这一轮真用的模型（不改传进来的 system / messages：Claude 失败退回 DeepSeek 时还要拿原样的再填一次）→ (system, messages)"""
+    lab = model_label(provider, model)
+    line = f"这一轮替你说话的是 {lab}。" if lab else ""
+
+    def sub(t):
+        if not isinstance(t, str) or MODEL_SLOT not in t:
+            return t
+        return t.replace(MODEL_SLOT + "\n", (line + "\n") if line else "").replace(MODEL_SLOT, line)
+
+    out, changed = [], False
+    for m in messages or []:
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, str) and MODEL_SLOT in c:
+            out.append(dict(m, content=sub(c)))
+            changed = True
+        elif isinstance(c, list) and any(isinstance(x, dict) and MODEL_SLOT in str(x.get("text") or "") for x in c):
+            out.append(dict(m, content=[dict(x, text=sub(x["text"])) if isinstance(x, dict) and isinstance(x.get("text"), str)
+                                        and MODEL_SLOT in x["text"] else x for x in c]))
+            changed = True
+        else:
+            out.append(m)
+    return sub(system), (out if changed else messages)
+
+
+judge.slot_fill = fill_model               # judge.call 走 Claude 前按 Claude 填（公开版的空壳不走 Claude：全在 llm 里按 DeepSeek 填）
+
 
 async def llm(system, messages, temperature=None, max_tokens=400, tag=None, think=False, effort=None, timeout=None,
-              think_tag=None):
+              think_tag=None, model=None):
+    """model：这一次换个 DeepSeek 模型（11-02 v1.17.9 读懂层 deepseek-v4-pro）；DeepSeek 不认（4xx）→ 用 config 里的 以后也不再试"""
     tag = tag or _caller_tag()
     if tag in BG_TAGS and not _IN_BG.get():
         try:
@@ -1274,29 +2119,40 @@ async def llm(system, messages, temperature=None, max_tokens=400, tag=None, thin
 
     last_err = None
     for prov in order:
-        spec = L.get(prov) or {}
-        if not spec.get("api_key"):
+        base = L.get(prov) or {}
+        if not base.get("api_key"):
             continue
-        t0 = time.time()
-        _LAST_USAGE.set(None)
-        try:
-            if prov == "claude":
-                out = await _anthropic(spec, system, messages, temp, max_tokens)
-            else:
-                out = await _openai(spec, system, messages, temp, max_tokens, tag, think, effort, timeout, think_tag)
-            _trace_ds(prov, spec, system, messages, out, t0, tag, think, effort, think_tag, max_tokens=max_tokens,
-                      temperature=temp)
-            return out
-        except Exception as e:
-            last_err = e
-            log(f"[llm:{prov}] 失败:", str(e)[:200])
-            _trace_ds(prov, spec, system, messages, "", t0, tag, think, effort, think_tag, err=str(e)[:200],
-                      max_tokens=max_tokens, temperature=temp)
+        specs = [base]
+        if model and prov == "deepseek" and str(model) != str(base.get("model") or "") and str(model) not in _DS_BAD:
+            specs = [dict(base, model=str(model)), base]     # 这一次换个 DeepSeek 模型（11-02 v1.17.9）；不认 → 用 config 里的
+        for spec in specs:
+            t0 = time.time()
+            _LAST_USAGE.set(None)
+            sys_p, msgs_p = fill_model(system, messages, prov, spec.get("model", ""))   # 这一轮替她说话的是哪个（11-02 v1.17.8）
+            try:
+                if prov == "claude":
+                    out = await _anthropic(spec, sys_p, msgs_p, temp, max_tokens)
+                else:
+                    out = await _openai(spec, sys_p, msgs_p, temp, max_tokens, tag, think, effort, timeout, think_tag)
+                _trace_ds(prov, spec, sys_p, msgs_p, out, t0, tag, think, effort, think_tag, max_tokens=max_tokens,
+                          temperature=temp, match=messages)
+                return out
+            except Exception as e:
+                _trace_ds(prov, spec, sys_p, msgs_p, "", t0, tag, think, effort, think_tag, err=str(e)[:200],
+                          max_tokens=max_tokens, temperature=temp, match=messages)
+                if spec is not base and _bad_model(e):
+                    _DS_BAD[str(model)] = time.time()
+                    log(f"[llm] DeepSeek 不认「{model}」（{str(e)[:120]}）→ 这次和以后都改用 {base.get('model')}（不思考）"
+                        "；这句只说一次 重启后再试")
+                    continue
+                last_err = e
+                log(f"[llm:{prov}] 失败:", str(e)[:200])
+                break
     raise RuntimeError(f"所有模型都挂了: {last_err}")
 
 
 def _trace_ds(prov, spec, system, messages, out, t0, tag, think, effort, think_tag, err="", max_tokens=None,
-              temperature=None):
+              temperature=None, match=None):
     """这次调模型写一行 trace（judge.py：data/trace/<北京日期>.jsonl；公开版空壳什么都不写）"""
     try:
         u = _LAST_USAGE.get() or {}
@@ -1308,20 +2164,29 @@ def _trace_ds(prov, spec, system, messages, out, t0, tag, think, effort, think_t
         judge.trace(judge.kind_of(tag, think, think_tag), system, messages, out, provider=prov,
                     model=(LAST_MODEL if not err else "") or spec.get("model", ""), ms=(time.time() - t0) * 1000,
                     tok=tok, err=err, think=think, effort=effort, tag=tag, max_tokens=max_tokens,
-                    temperature=temperature)
+                    temperature=temperature, **({"match": match} if match is not None else {}))
     except Exception:
         pass
 
 
-def jllm(kind, conv="", budget=None, uids=None):
+def jllm(kind, conv="", budget=None, uids=None, fallback=None):
     """判断类调用 / 开思考的回复 的入口（10-29 判断模型实验 judge.py）：跟 llm 一样的用法（传给 followup.judge 这种）
     config → judge.routes[kind] 是 anthropic 就先走 Claude；报错 / 超时 / 没 key / 停用 / 今天花到上限 → 退回 llm（DeepSeek）
     路由是 deepseek（默认）= 原来的 llm 一模一样，只多记一行 trace 的 kind
-    budget：外面整个只等这么久（接话判断 8 秒）→ Claude 少等两秒 留给 DeepSeek 退回"""
+    budget：外面整个只等这么久（接话判断 8 秒）→ Claude 少等两秒 留给 DeepSeek 退回
+    fallback：Claude 不行时退给谁（默认 llm；11-02 v1.17.9 回复那一轮：退回 DeepSeek 时来得及就补一份理解笔记）"""
     async def _jllm(system, messages, temperature=None, max_tokens=400, **kw):
-        return await judge.call(kind, system, messages, llm, temperature=temperature, max_tokens=max_tokens,
+        return await judge.call(kind, system, messages, fallback or llm, temperature=temperature, max_tokens=max_tokens,
                                 conv=conv, budget=budget, uids=uids, log=log, **kw)
     return _jllm
+
+
+def _takes_fallback(fn):
+    """这个 jllm 收不收 fallback（11-02 v1.17.9；被换成老样子的 —— 比如测试里的假的 —— 就不带退路 别让这一轮报错）"""
+    try:
+        return "fallback" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 async def llm_bg(task, system, messages, temperature=None, max_tokens=400):
@@ -1385,12 +2250,13 @@ def _line(h, i=None):
     """提炼时给模型看的一行（10-27 记忆卫生：带行号和 QQ 号 —— 记忆的 src 写行号 代码再换成 message_id / 说话人 QQ）"""
     t = clock.strf("%m-%d %H:%M", h.get("ts") or 0)
     if h["role"] == "user":
-        who = h.get("name", "某人")
+        who = clean_name(h.get("name", "某人")) or "某人"
         if h.get("uid"):
             who += f"（QQ {h['uid']}" + (f"，名片像 {h['fake']} 但不是他" if h.get("fake") else "") + "）"
     else:
         who = "大肥鱼"
-    return (f"[{i} {t}]" if i is not None else f"[{t}]") + f" {who}: {h.get('text', '')[:160]}"
+    txt = cont_lines(h.get("text", "")) if h["role"] == "user" else str(h.get("text", ""))   # 换行伪造一整行（11-01 防伪造）
+    return (f"[{i} {t}]" if i is not None else f"[{t}]") + f" {who}: {txt[:160]}"
 
 
 TABOO_SAID = re.compile(r"(?:别|不要|不许|不准|不想)再?(?:跟我|和我)?(?:提|说|聊|问|讲|叫我|听)")
@@ -1482,6 +2348,14 @@ async def _distill_failed(key, scene):
         log("[记忆] 提炼失败的记录没写上:", repr(e)[:100])
 
 
+def _asleep():
+    """她说了要睡、还睡着（全局 11-02 v1.17.5 commit.asleep；公开版空壳没有 → 当醒着）"""
+    try:
+        return bool(getattr(commit, "asleep", lambda *a: None)())
+    except Exception:
+        return False
+
+
 def in_hours(h, h0, h1):
     """h 点在不在 [h0, h1) 里：h0 > h1 就是跨午夜（23~7 = 23 点到第二天 7 点）
     （10-28 Codex #10：以前写成 h0 <= h < h1 —— 睡觉时间设成 [23, 7] 永远不成立 一整夜照样主动找人、冒泡、发动画）"""
@@ -1510,7 +2384,8 @@ def maybe_distill(mem):
     group = mem.get("type") == "group"
     every = int(MEM2.get("distill_every_group", 50) if group else MEM2.get("distill_every", 25))
     upto = float(mem.get("distilled_upto", 0) or 0)
-    over = [h for h in mem.get("overflow") or [] if not h.get("bot") and float(h.get("ts", 0) or 0) > upto]   # 还没提炼的（提炼过、等前情提要的不算）
+    over = [h for h in mem.get("overflow") or [] if not h.get("bot") and not h.get("auto")
+            and float(h.get("ts", 0) or 0) > upto]   # 还没提炼的（提炼过、等前情提要的不算；对方 QQ 的自动回复不算 11-02 v1.17.8）
     if group and peak_defer("distill"):    # 高峰（价格翻倍）：群里先攒着 等快挤掉了才提炼一批（记录最多留 300 条）
         due = len(over) >= int(PEAK.get("defer_overflow", 200))
     else:
@@ -1535,7 +2410,7 @@ async def distill(key, scene):
                 t = h.get("ts", 0)
                 # 去重按整条消息算（10-28 审查 memory-12：以前只按时间戳 补回的消息是整秒的 同一秒里的第二条永远不提炼）
                 k = (t, str(h.get("uid") or ""), str(h.get("mid") or ""), h.get("role"), h.get("text"))
-                if t > upto and k not in seen and not h.get("bot") and not h.get("prank"):   # 别人家 AI 说的、她整人演的不提炼
+                if t > upto and k not in seen and not h.get("bot") and not h.get("prank") and not h.get("auto"):   # 别人家 AI 说的、她整人演的、对方 QQ 的自动回复（11-02 v1.17.8）不提炼
                     seen.add(k)
                     entries.append(h)
             entries.sort(key=lambda h: h.get("ts", 0))
@@ -1644,7 +2519,7 @@ async def distill(key, scene):
             last = batch[-1].get("ts", 0)
             fresh["distilled_upto"] = max(fresh.get("distilled_upto", 0), last)
             fresh["overflow"] = [h for h in fresh.get("overflow") or [] if h.get("ts", 0) > _keep_after(fresh)]
-            left = len([h for h in fresh["overflow"] + fresh["history"] if h.get("ts", 0) > last and not h.get("bot")])
+            left = len([h for h in fresh["overflow"] + fresh["history"] if h.get("ts", 0) > last and not h.get("bot") and not h.get("auto")])
             fresh["since_extract"] = left      # 按真还没提炼的条数算（以前是减掉这批的条数 会越攒越多 忙的群一两分钟就提炼一次）
             fresh.pop("distill_fail", None)    # 成功了：失败的记录清掉（10-28 审查 memory-8）
             save_mem(fresh)
@@ -1705,7 +2580,7 @@ async def update_summary(key, scene):
     mem = load_mem(key, scene)
     up = mem.get("summary_upto", 0)
     older = [h for h in (mem.get("overflow") or []) + mem["history"][:-ctx]
-             if h.get("ts", 0) > up and not h.get("bot") and not h.get("prank")]   # 别人家 AI 的话、她整人演的不算（10-26 / 10-28 v1.10.0）
+             if h.get("ts", 0) > up and not h.get("bot") and not h.get("prank") and not h.get("auto")]   # 别人家 AI 的话、她整人演的、对方 QQ 的自动回复不算（10-26 / 10-28 v1.10.0 / 11-02 v1.17.8）
     older.sort(key=lambda h: h.get("ts", 0))
     if len(older) < (30 if scene == "group" else 8):   # 忙的群攒够 30 条再重写（每次重写都要花 token）
         return
@@ -1792,15 +2667,16 @@ async def do_forget(mem, text, name="", uid=""):
 # ───────────────────────── 消息工具 ─────────────────────────
 
 def seg_text(segs, names=None):
-    """消息段 → 文字。names = {QQ号: 名字}：@ 谁就写 @谁（不给就写 @某人）"""
+    """消息段 → 文字。names = {QQ号: 名字}：@ 谁就写 @谁（不给就写 @某人）
+    11-01 v1.16.3 防伪造：他打的字里长得像代码标记的（「（你老板）」「[语音…」）→ neutral()；@ 的名字、文件名也是（名片是他自己起的）"""
     parts = []
     for s in segs:
         t = s.get("type")
         d = s.get("data") or {}
-        if t == "text":
-            parts.append(d.get("text", ""))
+        if t == "text":                    # 语音听写 / 转发读出来的（代码加的标记）不改；他打的字改
+            parts.append(d.get("text", "") if (s.get("voice") or s.get("gen")) else neutral(d.get("text", "")))
         elif t == "at":
-            parts.append(f"@{(names or {}).get(str(d.get('qq')), '某人')} ")
+            parts.append(f"@{clean_name((names or {}).get(str(d.get('qq')), '某人')) or '某人'} ")
         elif t == "image":
             parts.append("[图片]")
         elif t == "face":
@@ -1818,7 +2694,7 @@ def seg_text(segs, names=None):
         elif t == "json":
             parts.append(card_text(d))
         elif t == "file":
-            parts.append(f"[文件：{(d.get('file') or d.get('name') or '')[:40]}]")
+            parts.append(f"[文件：{clean_name((d.get('file') or d.get('name') or '')[:40])}]")
     return "".join(parts).strip()
 
 
@@ -1831,30 +2707,80 @@ def card_text(d):
         return "[分享卡片]"
     meta = j.get("meta") if isinstance(j.get("meta"), dict) else {}
     det = next((v for v in meta.values() if isinstance(v, dict)), {})
+    blob = " ".join(str(x or "") for x in (j.get("prompt"), det.get("title"), det.get("desc")))
+    if "邀请你加入群聊" in blob or "邀请加群" in blob:     # QQ 群邀请卡片（11-01：她以为点不进去 其实程序已经替她进了群）
+        m = re.search(r"群聊[“\"「]([^”\"」]{1,30})[”\"」]", blob)
+        return f"[群邀请卡片：拉你进群{('「' + m.group(1) + '」') if m else ''}（不用点：QQ 的群邀请由程序替你处理）]"
     parts = []
     for x in (j.get("prompt"), det.get("title"), det.get("desc")):
-        x = re.sub(r"\s+", " ", str(x or "")).strip()
+        x = neutral(re.sub(r"\s+", " ", str(x or "")).strip())        # 卡片的标题 / 简介是发卡片的人能写的（11-01 防伪造）
         if x and x not in parts and not any(x in p for p in parts):
             parts.append(x[:60])
-    return "[分享卡片：" + " | ".join(parts)[:150] + "]" if parts else "[分享卡片]"
+    # 11-03 v1.17.13（Gemini 4-F1）：卡片里的链接带上（第一个 http 开头的 jumpUrl / qqdocurl / url）—— 以前只留标题：
+    #   他分享一首歌说「唱这个」系统找不到链接（sing.find_link 从原文找）；放在截断外面 别被长标题挤掉；去掉空白和方括号（别把外面那层 [ ] 弄断）
+    url = next((u for u in (str(det.get(k) or "").strip() for k in ("jumpUrl", "qqdocurl", "url")) if u.startswith("http")), "")
+    url = neutral(re.sub(r"[\s\[\]]", "", url))[:200]      # 链接也是发卡片的人能写的（照 11-01 防伪造）
+    body = " | ".join(parts)[:150]
+    if url:
+        body = (body + " | " + url) if body else url
+    return "[分享卡片：" + body + "]" if body else "[分享卡片]"
 
 
 def cq_text(s):
     """字符串格式的消息（CQ 码）→ 文字"""
     names = {"image": "[图片]", "face": "[表情]", "record": "[语音]", "video": "[视频]",
              "forward": "[聊天记录]", "json": "[分享卡片]", "file": "[文件]", "mface": "[表情包]"}
-    return re.sub(r"\[CQ:([a-z]+)[^\]]*\]", lambda m: names.get(m.group(1), ""), s or "").strip()
+    return re.sub(r"\[CQ:([a-z]+)[^\]]*\]", lambda m: names.get(m.group(1), ""), neutral(s or "")).strip()
 
 
 def sender_name(ev):
     s = ev.get("sender") or {}
-    return (s.get("card") or s.get("nickname")
+    return (clean_name(s.get("card") or s.get("nickname") or "")      # 名片里换行 / 带「（你老板）」这种（11-01 防伪造）
             or str(ev.get("user_id", "某人")))
 
 
 def own_words(t):
     """去掉转发进来的聊天记录：那是别人说的 不是他自己说的（10-28 审查 intake-9；groupadmin.candidate 也是这么切的）"""
     return str(t or "").split("[转发的聊天记录", 1)[0]
+
+
+def own_text(t):
+    """他本人的原话（11-02 v1.17.10 阶段1 B4：拉黑的线索只看这个）：去掉开头「（回复了 X 的「…」）」（引用的那段）和转发的聊天记录"""
+    return own_words(re.sub(r"^（回复了 [^「]*?的「[\s\S]*?」）", "", str(t or "")))
+
+
+# 状态行 block 写的这些不算要拉黑（11-02 v1.17.10 阶段1 B10：以前 "不拉黑"、"false" 也算要拉黑）
+BLOCK_NO = {"否", "不", "不用", "不要", "不需要", "不拉黑", "别拉黑", "先不", "暂不", "没有", "无", "false", "no", "0", "null", "none", "n/a"}
+# 复核 R4：以前只精确比对 BLOCK_NO，「不用拉黑 / 无需 / 不必 / 暂时不用 / 否，开玩笑的 / 无（他没做错）/ -」这些漏了
+# 整句是「否定词 + 可选 用 / 要 / 需要 + 可选 拉黑(他)」才算否定 ——「不想再理他了」「不想理他」不会被当成否定
+BLOCK_NO_RE = re.compile(r"^(否|不|无|没有?|别|暂不|先不|暂时不用?|无需|不必|没必要|不需要|不用|不要)(用|要|需要)?(拉黑(他)?)?$")
+BLOCK_NO_EN = re.compile(r"^(no( need)?|none|null|n/?a|false|0|[-—_/…·.]+)$", re.I)
+BLOCK_NO_HEAD = re.compile(r"^(否|不|无|没有|别|无需|不必|不用|不要|没必要|no)\s*[，,。.!！~～;；:：(（]", re.I)   # 「否，开玩笑的」「不。他挺好的」
+
+
+def block_why(v):
+    """状态行 block 字段 → 她写的原因；不算要拉黑 → \"\"（11-02 v1.17.10 阶段1 B10 / 复核 R4）
+    只认非空字符串；否定值不算：去掉结尾的括号说明「（…）」和标点、小写以后 —— 在 BLOCK_NO 里 / 整句匹配 BLOCK_NO_RE（中文）/ BLOCK_NO_EN（英文、
+    一串横线）/ 否定词后面紧跟标点（BLOCK_NO_HEAD）；「不想再理他了」「不想理他」这种是正常的原因 照样算"""
+    if not isinstance(v, str):
+        return ""
+    s = re.sub(r"\s+", " ", v).strip()
+    if not s:
+        return ""
+    core = re.sub(r"[（(][^）)]*[）)]$", "", s).strip()
+    core = re.sub(r"[\s。.!！~～?？]+$", "", core).strip().lower()
+    nsp = re.sub(r"\s+", "", core)
+    if not core or nsp in BLOCK_NO or BLOCK_NO_RE.match(nsp) or BLOCK_NO_EN.match(core) or BLOCK_NO_EN.match(nsp) or BLOCK_NO_HEAD.match(s):
+        return ""
+    return s
+
+
+def _reason_for_her(r):
+    """法庭的理由给她看之前（11-02 v1.17.10 阶段1 复核 R8 E1）：去掉引号里的话；带「可以回 / 建议 / 你可以…」这种建议的 → 整句不给（理由照样给老板）"""
+    r = re.sub(r"「[^」]*」|『[^』]*』|“[^”]*”|\"[^\"]*\"", "", str(r or "")).strip(" ，,。；;：:")
+    if re.search(r"(可以|不妨|建议|最好|应该|就)(回|说|告诉|跟他|对他|让他|骂|怼|无视|不理)|回他|跟他说|对他说|你可以|她可以|你该|她该", r):
+        return ""
+    return r[:60]
 
 
 def strip_state(text):
@@ -1875,12 +2801,19 @@ def strip_state(text):
 # 她自己打出来的系统记号（10-28 05:06 v1.9.1：「改完了 … 那我再甩一次 [发了文件「鹈鹕 · 河边骑车.html」]」—— 那是系统
 # 在聊天记录里记「真发过文件」用的格式 她照着写了一行 就成了假的「发过了」还进了聊天记录 后面一口咬定「我这显示发了呀」）
 # QQ 的 [图片] [文件] [语音] 这种也是：她打出来的只是几个字。表情包 / 语音标记是两层方括号 [[…]] 不动
+# （11-03 v1.17.13 Gemini R1-F5）系统自己往聊天记录里写的几种也认：带秒数的语音、转发的聊天记录（N条）、群邀请卡片、撤回了一条消息；
+#   冒号后面放宽到 200 字（识图的描述常常超过 80 字）。[狗头] [图片太大了] [[表情:x]] [[语音:x]] 这种照旧不动
 FAKE_MARK = re.compile(r"(?<!\[)\[(?:(?:又)?发了?(?:个|一个|一次)?文件|文件发不出去|发送文件|上传了?文件)[^\[\]\n]{0,80}\](?!\])|"
-                       r"(?<!\[)\[(?:图片|文件|语音|视频|表情|表情包|聊天记录|分享卡片)(?:[：:][^\[\]\n]{0,80})?\](?!\])")
+                       r"(?<!\[)\[(?:图片|文件|语音|视频|表情|表情包|聊天记录|转发的聊天记录(?:（\d+条）)?|分享卡片|群邀请卡片|撤回了一条消息|自拍)"   # 自拍：系统记的 [自拍：…] 她照着打一行 = 假的「发过自拍了」（11-03 合并复查）
+                       r"(?:\s*\d+\s*秒)?(?:[：:][^\[\]\n]{0,200})?\](?!\])")
 
 
 # 系统在聊天记录里记的「真发了文件」（_send_code_files / _resend_last 写的）→ 给模型看的时候挪出她的话 另起一条（to_messages）
 FILE_MARK = re.compile(r"[ \t]*\[(?:发了文件|又发了一次文件|文件发不出去)[^\[\]\n]{0,160}\]")
+# 自拍（11-03 v1.17.13 合并复查）：系统在聊天记录里记的「真发了自拍」（_selfie_job 写的 [自拍：照片上实际是什么]）→ 跟 FILE_MARK 一样 给模型看的时候挪出她的话
+SELFIE_REC = re.compile(r"[ \t]*\[自拍：[^\[\]\n]{0,200}\]")
+# 她回复里的自拍标记 [[自拍]] / [[自拍:要求]]：只有 _reply 认（_selfie_mark）；别的路（到点的事、主动找人、查完补一句…）发之前去掉 别漏成字
+SELFIE_ANY = re.compile(r"\[\[\s*自拍[^\[\]\n]{0,64}\]\]")
 
 
 def strip_fake_marks(text):
@@ -1917,7 +2850,8 @@ def _split_text(text):
 
 
 def split_reply(text, mx=None):
-    text = strip_fake_marks(sing.strip(detic(text))).strip()     # 她自己打的「[发了文件…]」删掉（10-28 v1.9.1）
+    text = strip_fake_marks(SELFIE_ANY.sub("", sing.strip(detic(text)))).strip()     # 她自己打的「[发了文件…]」删掉（10-28 v1.9.1）
+    #   （11-03 v1.17.13 合并复查）[[自拍]] 标记只有 _reply 认（在这之前就取走了）：别的路漏进来的去掉 别发成字
     # ``` 代码块整块一条：不换 \n、不按行拆、不占条数（10-28 审查 reply-10：以前四行以内的短代码块被拆成几条
     #   群里最多 2 条 只发出「这样写：」「```python」 代码本身丢了）
     segs = []
@@ -2040,17 +2974,21 @@ def blank_reply(raw):
     """这条回复清洗完一句都没有（思考把 token 用光、只回了个括号动作、只有状态行）；
     [[不说]]、唱歌 / 动画标记、长代码都不算空（10-28 审查 reply-5）"""
     t = strip_state(raw or "")[0]
-    if "[[不说]]" in t or sing.extract(t)[1] or anim.extract(t)[1] or maker.pull_big(t)[0]:
+    if "[[不说]]" in t or sing.extract(t)[1] or anim.extract(t)[1] or maker.pull_big(t)[0] or SELFIE_ANY.search(t):   # 只写了 [[自拍]] 也不算空（11-03 合并复查）
         return False
     return not split_reply(t)
 
 
 # ───────────────────────── 机器人 ─────────────────────────
 
+LIFE_POLL = 10.0       # 日程里在忙、等着回的那一轮：几秒看一次「不忙了没 / 她在这个对话里开口了没」（11-02 v1.17.1：以前 30 秒）
+
+
 class FatFish:
     def __init__(self):
         self.ws = None
         self._new_friend = {}              # 刚加的好友 QQ → (通过的时间, 验证消息)（10-27 晚：只打一次招呼）
+        self._invites = {}                 # 刚拉她进群的人 QQ → {gid, t, st}（11-01：回他私聊时告诉她进没进去）
         self.echo = 0
         self.pending = {}
         self.q = asyncio.Queue()
@@ -2092,7 +3030,8 @@ class FatFish:
         self._qz = {"next_read": 0.0, "next_reply": 0.0, "next_visit": 0.0, "busy": False}   # QQ 空间（10-27）
 
     # ---- OneBot ----
-    async def call(self, action, **params):
+    async def call(self, action, _timeout=20.0, **params):
+        """_timeout：等 NapCat 回音多久（默认 20 秒；整首语音 / 音频文件要转码上传 给长一点 11-01 v1.16.5）"""
         if not self.ws:
             return None
         self.echo += 1
@@ -2102,7 +3041,7 @@ class FatFish:
         try:
             await self.ws.send(json.dumps({"action": action, "params": params, "echo": e},
                                           ensure_ascii=False))
-            return await asyncio.wait_for(fut, 20)
+            return await asyncio.wait_for(fut, float(_timeout or 20))
         except asyncio.TimeoutError:
             log("API 超时:", action)
             return None
@@ -2137,10 +3076,16 @@ class FatFish:
                     asyncio.create_task(self.catch_up())       # 下线期间漏掉的消息 补看一遍
                     asyncio.create_task(self.maybe_set_avatar())
                     asyncio.create_task(self._retro_kept())    # 答应过、后来其实交过了的：开机补划（10-30 v1.15.1）
+                    if blocklist is not None and not self.__dict__.get("_blk_boot"):   # 拉黑案：没收尾的删好友 / 卡在审理中的（11-02 v1.17.10 阶段1）
+                        self._blk_boot = True
+                        asyncio.create_task(self._block_boot())
                     if not self.__dict__.get("_sd_loop"):
                         self._sd_loop = asyncio.create_task(self._sticker_loop())   # 表情包词典：存盘 + 控制台改的词条（10-30 v1.16.0）
                     if not self.__dict__.get("_an_loop"):
                         self._an_loop = asyncio.create_task(self._announce_loop())  # 版本更新播报（10-31 v1.15.5）
+                    if social is not None and not self.__dict__.get("_soc_boot"):   # 新人名单：第一次从聊天存档认老人（11-01 C64）
+                        self._soc_boot = True
+                        asyncio.create_task(asyncio.to_thread(social.bootstrap, log))
                     async for raw in ws:
                         try:
                             ev = json.loads(raw)
@@ -2151,9 +3096,12 @@ class FatFish:
                             if f and not f.done():
                                 f.set_result(ev)
                             continue
+                        if qqevents.wants(ev):         # 贴表情 / 精华 / 资料卡赞 / 正在输入（11-01）：直接记（不排队 「正在输入」要快）
+                            self._qq_event(ev)
+                            continue
                         if ev.get("post_type") in ("message", "request") or \
                                 (ev.get("post_type") == "notice" and ev.get("notice_type") in ("group_ban", "group_recall", "group_decrease",
-                                                                                   "friend_recall")):
+                                                                                   "friend_recall", "group_increase")):
                             await self.q.put(ev)           # 通知只要禁言（10-26 群管说话算数）、撤回和被踢（10-28 v1.11.0 纠错）
             except Exception as e:
                 self.ws = None
@@ -2258,8 +3206,8 @@ class FatFish:
                     out.append({"type": "text", "data": {"text": await voice.hear(d, self.call, log)},
                                 "voice": True})
                     continue
-                if t == "forward":
-                    out.append({"type": "text", "data": {"text": await self.forward_text(d)}})
+                if t == "forward":             # gen：代码读出来的（里面他们打的字已经各自改过了）seg_text 别再改（11-01 防伪造）
+                    out.append({"type": "text", "data": {"text": await self.forward_text(d)}, "gen": True})
                     continue
             except Exception as e:
                 log(f"[消息] {t} 展开失败:", repr(e)[:100])
@@ -2286,11 +3234,11 @@ class FatFish:
                 continue
             if n.get("type") == "node":                       # OneBot 标准的格式
                 nd = n.get("data") or {}
-                who = nd.get("nickname") or nd.get("name") or "某人"
+                who = clean_name(nd.get("nickname") or nd.get("name") or "") or "某人"
                 msg = nd.get("content") or nd.get("message") or []
             else:                                              # NapCat 的格式
                 snd = n.get("sender") or {}
-                who = snd.get("card") or snd.get("nickname") or "某人"
+                who = clean_name(snd.get("card") or snd.get("nickname") or "") or "某人"
                 msg = n.get("message") or n.get("content") or []
             segs_n = [x for x in msg if isinstance(x, dict)] if not isinstance(msg, str) else []
             t = cq_text(msg) if isinstance(msg, str) else seg_text(segs_n)
@@ -2329,8 +3277,10 @@ class FatFish:
             qtext = seg_text(qsegs)
             if "[图片]" in qtext or "[表情包]" in qtext:
                 qtext = await vision.caption_text(qtext, qsegs, log)
-            who = (d.get("sender") or {}).get("card") or (d.get("sender") or {}).get("nickname") or "某人"
-            return f"{who} 的「{qtext[:200]}」"
+            who = clean_name((d.get("sender") or {}).get("card") or (d.get("sender") or {}).get("nickname") or "") or "某人"
+            # 11-03 v1.17.13（Gemini 4-F5）：引用原文里的「」）」换成「」)」—— 不然外面那层「（回复了 X 的「…」）」在这儿就被当成结束了
+            #   （sing.his_words / own_text 切引用头切早了：后半截引用的话被当成他说的）
+            return f"{who} 的「{qtext[:200].replace('」）', '」)')}」"
         except Exception as e:
             log("[引用] 读取失败:", repr(e)[:100])
             return ""
@@ -2452,8 +3402,23 @@ class FatFish:
             return await self.qzone_admin(p)
         if action == "prank":                      # 控制台「恶趣味」页（10-28 v1.10.0）
             return await self.prank_admin(p)
-        if action == "fixup":                      # 控制台「纠错」页（10-28 v1.11.0）
+        if action == "fixup":                      # 控制台「纠错」页（10-28 v1.11.0；11-02 v1.17.0 法庭 + 纠错 合成一页）
             op = str(p.get("op") or "status")
+            if op in ("cl_del", "cl_edit"):        # 有人纠正她、核对过的那种教训（court.py 私有）
+                if court is None or not hasattr(court, "del_lesson"):
+                    return {"ok": False, "error": "这一版没有核对 / 教训（公开版）"}
+                if op == "cl_del":
+                    ok = court.del_lesson(str(p.get("id") or ""))
+                else:
+                    ok = court.edit_lesson(str(p.get("id") or ""), p.get("fields") or {})
+                if ok:
+                    log(f"[控制台] {'删' if op == 'cl_del' else '改'}了一条纠错的教训（{p.get('id')}）")
+                return {"ok": ok, "error": "" if ok else "没找到这条（或者 lessons.json 正被占着）"}
+            if op == "fx_edit":
+                ok = fixup.edit_lesson(str(p.get("id") or ""), str(p.get("text") or ""))
+                if ok:
+                    log(f"[控制台] 改了一条格式要求的教训（{p.get('id')}）")
+                return {"ok": ok, "error": "" if ok else "没找到这条（或者 fixup.json 正被占着）"}
             if op == "del":
                 ok = fixup.del_lesson(str(p.get("id") or ""))
                 if ok:
@@ -2464,7 +3429,13 @@ class FatFish:
                 if ok:
                     log(f"[控制台] 解除了 {p.get('key')} {p.get('uid')} 的纠错 / 停着")
                 return {"ok": ok, "error": "" if ok else "这个人现在没在纠错"}
-            return {"ok": True, **fixup.status()}
+            out = {"ok": True, **fixup.status()}
+            if court is not None and hasattr(court, "lessons_view"):
+                try:
+                    out["court"] = dict(court.lessons_view(), recent=court.recent(), check=bool(court.C.get("check", True)))
+                except Exception as e:
+                    out["court"] = {"error": repr(e)[:100]}
+            return out
         if action == "taboo_del":                  # 控制台删一条禁忌（10-27 记忆卫生）
             fn = getattr(galgame, "taboo_del", None)
             x = fn(str(p.get("uid") or ""), p.get("i")) if fn else None
@@ -2488,6 +3459,16 @@ class FatFish:
             r = await self.wipe_person(uid, "控制台点的")
             return {"ok": True, "report": r, "partial": bool(r.get("busy")), "text": wipe.describe(r) + (
                 f"；这几个这会儿打不开 没删到：{'、'.join(r['busy'])[:120]}（等一下再删一次）" if r.get("busy") else "")}
+        if action == "her_unblock":                # 控制台撤销她拉黑 / 冷却的人（11-02 v1.17.10 阶段1：机器人开着就由机器人写 免得两边同时读改写）
+            uid = str(p.get("uid") or "").strip()
+            if blocklist is None or not uid.isdigit():
+                return {"ok": False, "error": "QQ 号不对" if blocklist is not None else "这一版没有拉黑名单"}
+            e = blocklist.unblock(uid, "控制台")
+            if e is None:
+                return {"ok": False, "error": "名单里没有他、也没在冷却（或者 blocklist.json 一时打不开 / 读坏了）"}
+            log(f"[拉黑] 控制台撤销了「{e.get('name') or uid}」({uid}) 的{'冷却' if e.get('cooling') else '拉黑'}"
+                "（记了赦免时间：之前的线索、案子不再算）")
+            return {"ok": True, "entry": e}
         if action == "restart":
             asyncio.get_running_loop().call_later(0.6, lambda: asyncio.ensure_future(self.restart("控制台点的", force=True)))
             return {"ok": True}
@@ -2516,6 +3497,9 @@ class FatFish:
             until = time.time() + h * 3600
             control._edit(lambda d: d.__setitem__("awake", {"until": until, "by": "控制台"}) if what == "wake"
                           else d.pop("awake", None))
+            r = getattr(commit, "asleep", lambda *a: None)() if what == "wake" else None
+            if r:                          # 她说了要睡（全局 11-02 v1.17.5）：控制台叫醒 = 老板把她叫起来了（所有对话都醒）
+                commit.end("", r, how="woke", by="老板（控制台）", owner=True, log=log, why="控制台「叫醒她」")
             log("[作息] 控制台：" + (f"叫醒她 {h:g} 小时" if what == "wake" else "让她接着按作息睡"))
             return {"ok": True, "msg": f"叫醒了（{h:g} 小时后接着睡）" if what == "wake" else "好 让她接着睡"}
         if what == "unmute":
@@ -2767,8 +3751,17 @@ class FatFish:
             busy.add("prank_state.json")
         if attention is not None:          # 注意力存档：内存里也忘掉他（文件里的 wipe.traces 删）
             attention.forget_uid(uid, files=False)
+        if social is not None:             # 社交细节（11-01 影子）：内存 + 新人名单 + 说话天数里忘掉他（日志行 wipe.traces 删）
+            try:
+                social.forget_uid(uid)
+            except Exception as e:
+                log("[删数据] 社交细节出错:", repr(e)[:100])
         if court is not None:              # 法庭 阶段 0：内存里也忘掉他（data/court 里的 wipe.traces 删）
             court.forget_uid(uid)
+        try:                               # QQ 事件（11-02 v1.17.1）：内存里他赞过资料卡 / 贴过表情 也忘掉（qqevents.json 里的 wipe.newer_state 删）
+            qqevents.forget(uid)
+        except Exception as e:
+            log("[删数据] QQ 事件的记录没删掉:", repr(e)[:80])
         try:
             r["stickerdict"] = stickerdict.forget(uid, texts, names)   # 表情包词典里他发图时 / 接话时的那几句（10-30 v1.16.0）
         except Exception as e:
@@ -2832,6 +3825,337 @@ class FatFish:
         finally:
             self._reply_testing = False
 
+    # ---- 自拍（11-03 v1.17.13 S2：WSL 里的画图服务接进来；selfie.py 私有 公开版没有 → 下面这几个什么都不做）----
+    SELFIE_MARK = re.compile(r"\[\[\s*自拍[^\[\]\n]{0,64}\]\]")      # 公开版（没有 selfie.py）她万一写了 也别漏成字
+
+    async def _selfie_turn(self, ctx, key, scene, uid, name, texts, fx):
+        """这一轮他要不要她的自拍 → 给她看的状态（能拍 / 为什么拍不了；这个对话里有一张在拍 / 刚发过）—— 只给状态（E1）
+        能拍：这一轮给许可（她写 [[自拍]] 才拍）；画图服务没开 → 现在就在后台拉起（她回完这句再拍 省几十秒）
+        11-03 现场：他要自拍 她只能拿表情包里那两张生活照充数 —— 那时候没有这一块"""
+        if selfie is None or (fx or {}).get("active"):
+            return ""
+        try:
+            sought = scene == "private" or bool(ctx.get("at_me") or ctx.get("called") or ctx.get("addr") or ctx.get("follow"))
+            p = selfie.plan(key, str(uid), self._circle(uid), texts, sought=sought, is_ai=self._is_ai(uid), log=log)
+            if p and p.get("ok"):
+                selfie.prewarm(log)
+            return selfie.block(p, name) if p else selfie.recent_block(key, name)
+        except Exception as e:
+            log("[自拍] 这一轮判断出错（这轮不带）:", repr(e)[:120])
+            return ""
+
+    async def _selfie_mark(self, key, uid, name, raw, fx=None, after=""):
+        """她这句里的 [[自拍]] / [[自拍:要求]] 拿出来 → (去掉标记的话, 唱歌标记后面那段（也去掉）, 这一轮的请求 / None)
+        纠错 / 有格式要求的那一条、她选了不说：不拍；只写了标记、一句话都没有 → 先回他的那句也由她自己说（照做东西的 make_ack）"""
+        def bare(t):
+            return self.SELFIE_MARK.sub("", t).strip() if t and self.SELFIE_MARK.search(t) else t
+        if selfie is None:
+            return bare(raw), bare(after), None
+        try:
+            out, req = selfie.extract(raw)
+            after2, req2 = selfie.extract(after) if after else (after, None)
+            req = req or req2
+            if req is None:
+                return raw, after, None
+            if (fx or {}).get("active") or "[[不说]]" in out:
+                return out, after2, None
+            req["permit"] = selfie.permit(key, str(uid))
+            if not out.strip() and not (after2 or "").strip() and req["permit"]:
+                out = await self._state_line(
+                    "selfie_ack", f"「{name}」要你的自拍，你答应了、现在去拍（要几十秒，拍好了系统会把照片发给他）。先回他一句。") or ""
+            return out, after2, req
+        except Exception as e:
+            log("[自拍] 取标记出错:", repr(e)[:100])
+            return bare(raw or ""), bare(after), None
+
+    def _selfie_after(self, ctx, scene, target, key, uid, name, sfreq, sent):
+        """她这句发完以后（_reply 里只调这一处）：有许可 → 后台拍（不挡别的聊天）；没许可 → 后台补一句状态（她说了要拍却没拍成）
+        刹车 / 撤回了（她说了一句以后他说「算了」/ 撤回了那句）→ 不拍、也不补话（11-03 定：后面的都不做）"""
+        if not sfreq or selfie is None:
+            return None
+        if ctx.get("braked") or ctx.get("recalled"):
+            selfie.drop(key)
+            log(f"[自拍] {key} 她说要拍 但" + ("他把那句撤回了" if ctx.get("recalled") else f"刹车了（{str(ctx.get('braked'))[:30]}）")
+                + " → 不拍")
+            return None
+        if not sent:
+            log(f"[自拍] {key} 她那句没发出去 → 自拍也不拍")
+            return None
+        t0 = float(ctx.get("t0") or 0) or time.time()    # （11-03 v1.17.13 合并复查）从这一轮开始写回复算：她写这句的工夫他删了数据 → 不拍、不补话
+        if _gone(str(uid), t0):
+            selfie.drop(key)
+            log(f"[自拍] {key} 他刚删了自己的数据 → 不拍")
+            return None
+        p = selfie.take_permit(key, str(uid))
+        if not p:
+            return self._selfie_spawn(self._selfie_no(scene, target, key, str(uid), name, " ".join(str(x) for x in sent), t=t0))
+        return self._selfie_spawn(self._selfie_job({
+            "scene": scene, "target": target, "conv": key, "uid": str(uid), "name": name, "circle": p.get("circle") or "",
+            "words": p.get("words") or "", "req": sfreq.get("req") or "", "mirror": bool(p.get("mirror")),
+            "reply_to": ctx.get("msg_id"), "t": t0}))
+
+    def _selfie_spawn(self, coro):
+        t = asyncio.create_task(coro)
+        tasks = self.__dict__.setdefault("_selfie_tasks", set())
+        tasks.add(t)
+        t.add_done_callback(tasks.discard)
+        return t
+
+    async def _selfie_no(self, scene, target, key, uid, name, said="", t=0.0):
+        """她写了 [[自拍]] 但这一轮没许可：不拍；照唱歌「没许可」那样补一句状态（她自己已经说了拍不了 → 不补）"""
+        if re.search(r"拍不了|不拍|没法拍|拍不成|下次|改天|明天", said or ""):
+            log(f"[自拍] {key} 她写了自拍标记 这一轮不能拍（她自己已经说了）→ 不拍 不补话")
+            return None
+        why = selfie.no_permit_why(key, uid)
+        log(f"[自拍] {key} 她写了自拍标记 但这一轮不能拍（{why}）→ 不拍 补一句")
+        line = await self._state_line("selfie_fail", f"你刚才说要发自拍，但这一轮拍不了（{why}）：这张没拍。", "这张先不拍了")
+        if t and _gone(uid, t):            # （11-03 v1.17.13 合并复查）写这句的工夫他删了数据：不补、不记（别把他的私聊建回来）
+            return None
+        if line and await self._deliver("send_group_msg" if scene == "group" else "send_private_msg",
+                                        "group_id" if scene == "group" else "user_id", target,
+                                        [{"type": "text", "data": {"text": line}}]) is not False and not (t and _gone(uid, t)):
+            await self._remember_line(key, scene, line)
+        return line
+
+    def _selfie_stop(self, job):
+        """拍的这几十秒里情况变了 → 不发（返回原因；没事 → ""）：他删了数据 / 撤回了要自拍那句 / 又说「算了」/ 冷却拉黑 / 群静音 / 她说了要走
+        主动的那张：他这会儿刚好来消息了 → 也不发（跟主动找人一样）"""
+        uid, conv, t = str(job["uid"]), job["conv"], float(job.get("t") or 0)
+        if _gone(uid, t):
+            return "他刚删了自己的数据"
+        if control.blocked(uid) or (job.get("proactive") and control.self_off(uid)):
+            return "他在冷却 / 拉黑名单里（或说过别理他）"
+        if job["scene"] == "group" and control.group_mode(job.get("target")) == "mute":
+            return "群静音了"
+        if commit.hold(conv, uid) == "all":
+            return "她说了要走"
+        try:
+            hist = (load_mem(conv, job["scene"]).get("history") or [])[-40:]
+        except Exception:
+            hist = []
+        for h in hist:
+            if h.get("role") != "user" or str(h.get("uid") or "") != uid:
+                continue
+            if job.get("reply_to") is not None and str(h.get("mid")) == str(job["reply_to"]) and h.get("recalled"):
+                return "他把要自拍的那句撤回了"
+            if float(h.get("ts") or 0) > t:
+                if job.get("proactive"):
+                    return "他这会儿刚好来消息了"
+                if selfie.CANCEL.search(str(h.get("text") or "")):
+                    return f"他又说「{str(h.get('text') or '')[:16]}」"
+        return ""
+
+    async def _selfie_job(self, job):
+        """后台拍一张（像唱整首：不挡聊天）：selfie.take（拉起服务 → 排场景单 → 画 → 核对 不过换种子重画）
+        → 核对过了才发：图（file URI）+ 她一句（_state_line 只给状态）→ 记账 / 真发生的事；没拍成 → 她照实说一句
+        主动的那张没拍成：不说话；自检（job["test"]）：只拍不发 → 返回结果"""
+        conv, uid, name, scene = job["conv"], str(job["uid"]), job.get("name") or "", job["scene"]
+        target = job.get("target")
+        action = "send_group_msg" if scene == "group" else "send_private_msg"
+        pk = "group_id" if scene == "group" else "user_id"
+        res, sent_ok = {}, False
+        t_job = float(job.get("t") or 0)
+
+        def gone():                        # （11-03 v1.17.13 合并复查）每次要发 / 要记之前都再看一眼：拍的、写那句话的工夫他删了数据 → 不发、不记
+            return _gone(uid, t_job)
+
+        def purge():                       # 他删了数据：这张的文件、记账里他的都不留
+            try:
+                selfie.forget_uid(uid, data_dir=DATA)
+            except Exception as e:
+                log("[自拍] 清他的自拍出错:", repr(e)[:80])
+            for f in (res or {}).get("files") or []:
+                try:
+                    Path(f).unlink()
+                except OSError:
+                    pass
+        selfie.hold(conv, uid, name)
+        try:
+            chk = jllm("selfie", conv, uids=[uid], fallback=selfie.no_text) if judge.usable("selfie", log)[0] else None
+            res = await selfie.take(job, plan_llm=jllm("selfie", conv, uids=[uid]), check_llm=chk,
+                                    look=(lambda b, m, p: vision.look(b, m, p, log)) if vision.enabled() else None, log=log)
+            if job.get("test"):
+                return res
+            stop = self._selfie_stop(job)
+            if stop:
+                log(f"[自拍] {conv} 给「{name}」的那张" + ("拍好了" if res.get("ok") else "没拍成") + f" 但{stop} → 不发")
+                if _gone(uid, float(job.get("t") or 0)):
+                    selfie.forget_uid(uid, data_dir=DATA)
+                    for f in res.get("files") or []:
+                        try:
+                            Path(f).unlink()
+                        except OSError:
+                            pass
+                else:
+                    selfie.record(res, job, sent=False, why=stop)
+                return res
+            if not res.get("ok"):
+                selfie.record(res, job, sent=False)
+                log(f"[自拍] {conv} 给「{name}」的那张没拍成（{res.get('why')}：{str(res.get('detail') or '')[:60]}）"
+                    + ("：主动的那张 不说话" if job.get("proactive") else ""))
+                if job.get("proactive"):
+                    return res
+                st, fb = selfie.fail_state(res, job)
+                line = await self._state_line("selfie_fail", st, fb)
+                if line and not gone() and await self._deliver(action, pk, target, [{"type": "text", "data": {"text": line}}]) is not False \
+                        and not gone():
+                    await self._remember_line(conv, scene, line)
+                return res
+            n = selfie.used_today(uid) + 1
+            line = await self._state_line("selfie_send", selfie.send_state(res, job, n), None)
+            if gone():
+                log(f"[自拍] {conv} 给「{name}」的那张拍好了 但他刚删了自己的数据 → 不发")
+                purge()
+                return res
+            msg = [{"type": "reply", "data": {"id": str(job["reply_to"])}}] if scene == "group" and job.get("reply_to") else []
+            msg.append({"type": "image", "data": {"file": Path(res["file"]).resolve().as_uri()}})
+            if line:
+                msg.append({"type": "text", "data": {"text": line}})
+            if await self._deliver(action, pk, target, msg) is False:
+                if gone():
+                    purge()
+                    return res
+                selfie.record(res, job, sent=False, why="QQ 没收")
+                log(f"[自拍] {conv} 拍好了 但 QQ 没收这张图")
+                if not job.get("proactive"):
+                    l2 = await self._state_line("selfie_fail", "你给他拍好的自拍没发出去（QQ 那边没收这张图）。", "照片没发出去 QQ 那边没收")
+                    if l2 and not gone() and await self._deliver(action, pk, target, [{"type": "text", "data": {"text": l2}}]) is not False \
+                            and not gone():
+                        await self._remember_line(conv, scene, l2)
+                return res
+            sent_ok = True
+            if gone():                     # 发出去了 但这几秒里他删了数据：记账、真发生的事、记忆都不记他（11-03 合并复查）
+                log(f"[自拍] {conv} 那张发出去了 但他刚删了自己的数据 → 不记")
+                purge()
+                return res
+            selfie.record(res, job, sent=True, line=line or "")
+            stats.add("selfies")
+            life.note_event("自拍", ("主动给" if job.get("proactive") else "给") + f"{name or '他'}发了一张自拍（{res.get('what') or ''}）")
+            text = f"[自拍：{res.get('what') or ''}]" + (f" {line}" if line else "")
+            async with mem_lock(conv):
+                m2 = None if gone() else load_mem(conv, scene)    # 等锁的工夫他删了数据 → 不写（11-03 合并复查）
+                if m2 is not None:
+                    e = add_assistant(m2, text)
+                    if job.get("proactive"):           # 主动找他的一条（跟主动私聊一样记：他回来时她知道是她先找的）
+                        e["pro"] = 1
+                        m2["last_proactive"] = time.time()
+                        m2["pro_streak"] = 1
+                    save_mem(m2)
+            log(f"[自拍] {conv} → 「{name}」" + ("（主动）" if job.get("proactive") else "")
+                + f"发了一张：{res.get('what')}（画了 {res.get('tries')} 张 用了 {res.get('seconds')} 秒）" + (f"：{line}" if line else ""))
+            return res
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log("[自拍] 后台拍自拍出错:", repr(e)[:160])
+            return res
+        finally:
+            selfie.unhold(conv, uid)
+            if job.get("proactive"):
+                selfie.pro_done(sent_ok, why=str((res or {}).get("why") or ""))
+
+    def _selfie_tick(self):
+        """心跳里看一眼：data/selfie_test.request（一行要求）→ 后台拍一张自检（不发 QQ）；每天主动一张的循环没起就起"""
+        if selfie is None:
+            return
+        if selfie.proactive_on() and not self.__dict__.get("_selfie_pro"):
+            self._selfie_pro = asyncio.create_task(self._selfie_daily_loop())
+        req = DATA / "selfie_test.request"
+        if req.exists() and not getattr(self, "_selfie_testing", False):
+            line = (req.read_text(encoding="utf-8", errors="replace").strip().splitlines() or [""])[0].strip()[:80]
+            req.unlink()
+            self._selfie_testing = True
+            self._selfie_spawn(self._selfie_selftest(line))
+
+    async def _selfie_selftest(self, req):
+        """自拍自检：拍一张、核对（跟真拍走同一条路）不发 QQ → 日志 + data/selfie_test_result.json（文件、核对描述、用时）"""
+        t0 = time.time()
+        try:
+            job = {"scene": "private", "target": "", "conv": "selftest", "uid": "selftest", "name": "", "circle": "老板",
+                   "words": req, "req": "", "mirror": bool(selfie.MIRROR.search(req or "")), "test": True, "t": t0}
+            res = await self._selfie_job(job) or {}
+            out = {"t": clock.strf("%Y-%m-%d %H:%M:%S"), "req": req, "ok": bool(res.get("ok")), "why": res.get("why") or "",
+                   "detail": res.get("detail") or "", "file": res.get("file") or "", "files": list(res.get("files") or []),
+                   "what": res.get("what") or "", "summary": res.get("summary") or "", "scene": res.get("scene"),
+                   "changed": res.get("changed") or "", "plan": res.get("plan") or {}, "checks": res.get("checks") or [],
+                   "tries": int(res.get("tries") or 0), "seconds": round(time.time() - t0, 1)}
+            safeio.write_json(DATA / "selfie_test_result.json", out)
+            selfie.record(res, job, sent=False, why="自检")
+            log(f"[自拍] 自检「{req or '（没写要求）'}」→ "
+                + (f"拍好了：{out['file']}（核对：{out['what']}；画了 {out['tries']} 张、用了 {out['seconds']} 秒）" if out["ok"]
+                   else f"没拍成（{out['why']}：{str(out['detail'])[:80]}）") + " → data/selfie_test_result.json（不发 QQ）")
+        except Exception as e:
+            log("[自拍] 自检出错:", repr(e)[:160])
+        finally:
+            self._selfie_testing = False
+
+    async def _selfie_daily_loop(self):
+        """每天主动一张：她的一天里在 proactive_hours（北京 10–22 点）随机定一个时刻 → 到点挑一个熟人以上的私聊发一张"""
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await self._selfie_pro_tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log("[自拍] 主动一张出错:", repr(e)[:120])
+            await asyncio.sleep(240)
+
+    async def _selfie_pro_tick(self, now=None):
+        """到点了 → 挑人 → 后台拍、私聊发（_selfie_job proactive；一天 proactive_daily 张）→ 起的任务 / None"""
+        if selfie is None or not selfie.pro_due(now) or not self.ws:
+            return None
+        if _asleep() or life.quiet(now):
+            selfie.pro_later(1800, now, "她在忙 / 说了要睡")
+            return None
+        uid = self._selfie_pick(now)
+        if not uid:
+            selfie.pro_skip("今天没有合适的人", now)
+            log("[自拍] 今天主动那张：没有合适的人（熟人以上、7 天里私聊说过话、没拉黑 / 冷却 / 说过别理他）→ 今天不发")
+            return None
+        hist = load_mem(f"private_{uid}", "private").get("history") or []
+        name = next((h.get("name") for h in reversed(hist) if h.get("role") == "user" and h.get("name")), "") or ""
+        circle = self._circle(uid)
+        selfie.pro_start(uid, now)
+        log(f"[自拍] 今天主动那张 → 私聊「{name or uid}」（{circle}）后台去拍")
+        return self._selfie_spawn(self._selfie_job({
+            "scene": "private", "target": uid, "conv": f"private_{uid}", "uid": uid, "name": name, "circle": circle,
+            "words": "", "req": "", "mirror": False, "proactive": True, "t": time.time()}))
+
+    def _selfie_pick(self, now=None):
+        """主动那张发给谁：熟人以上（老板 / 最亲 / 熟人）、最近 7 天私聊里说过话、能主动找（control.allow）、没拉黑 / 冷却、
+        没说过别理他、不是别人家的 AI、她没在这个私聊里说要走 → selfie.pro_pick（关系越好越可能挑到）"""
+        now = float(now or time.time())
+        days = float(selfie.C.get("proactive_days") or 7)
+        circles = set(selfie.pro_circles())
+        cands = []
+        for p in sorted(MEM_DIR.glob("private_*.json")):
+            uid = p.stem.split("_", 1)[1]
+            if not uid.isdigit():
+                continue
+            try:
+                if control.blocked(uid) or control.self_off(uid) or control.is_bot(uid) or self._is_ai(uid):
+                    continue
+                if not control.allow("private", uid, "proactive") or commit.hold(p.stem, uid):
+                    continue
+                circle = self._circle(uid)
+                if circle not in circles:
+                    continue
+                m = load_mem(p.stem, "private")
+                hist = m.get("history") or []
+                t_his = max([float(h.get("ts") or 0) for h in hist if h.get("role") == "user"] or [0.0])
+                if now - t_his > days * 86400:
+                    continue
+                lp = float(m.get("last_proactive") or 0)     # （11-03 v1.17.13 合并复查）上次主动找他 他还没回：不再主动塞一张（也别把追问的次数清零）
+                if hist and hist[-1].get("role") == "assistant" and lp > 0 and lp >= float(m.get("last_active") or 0):
+                    continue
+                if blocklist is not None and blocklist.marks(uid, now, days=1.5, kinds=("ignore",)):
+                    continue                # 她这一天多里说过不理他（群里说的也算；commit.hold 只看这个私聊）
+                cands.append((uid, circle, t_his))
+            except Exception as e:
+                log(f"[自拍] 挑人时看 {p.stem} 出错:", repr(e)[:80])
+        return selfie.pro_pick(cands, now)
+
     async def heartbeat_loop(self):
         """每 15 秒：写 data/heartbeat.json（控制台和定时检查靠它知道机器人活着、连没连上 QQ）
         顺便看有没有 data/restart.request（定时检查改完代码后放的）→ 有就试加载新代码 没问题就重启"""
@@ -2859,6 +4183,10 @@ class FatFish:
                     asyncio.create_task(self._reply_selftest(req_txt))
             except Exception as e:
                 log("[回话自检] 看请求出错:", repr(e)[:120])
+            try:                         # 自拍（11-03 v1.17.13）：data/selfie_test.request（一行要求 → 后台拍一张、核对 不发 QQ）+ 每天主动一张的循环
+                self._selfie_tick()
+            except Exception as e:
+                log("[自拍] 看自检请求出错:", repr(e)[:120])
             try:
                 fs = control.full_state()
                 if full_was is not None and fs["on"] != full_was:
@@ -3135,7 +4463,8 @@ class FatFish:
             if only_known and scene == "private" and not mem_file(key).exists():
                 skipped.append((key, (scene, peer, t_last)))
                 continue
-            await self._catch_up_one(key, scene, peer, t_last, wiped, C, now, t_conn, self_id, rows, todo)
+            # （11-03 v1.17.13 Gemini R1-F4）补看的时候已经在线回过的（排着的那轮刚发完）不算：从哪拉只按连上之前的记录算
+            await self._catch_up_one(key, scene, peer, t_last, wiped, C, now, t_conn, self_id, rows, todo, before=t_conn)
         if skipped:                                # 读得到 wiped.json 以后再补这几个（10-28 Gemini 第四轮复查：以前跳过就再也不补了）
             asyncio.create_task(self._catch_up_later(dict(skipped), now, t_conn, self_id))
         self.caught_up.set()                       # 漏掉的都记进去了 新来的消息可以接着处理了
@@ -3176,6 +4505,7 @@ class FatFish:
                and since < float(ev.get("time") or 0) < t_conn + 2
                and ev.get("message_id") not in known and ev.get("message_id") not in self.seen_mids
                and float(ev.get("time") or 0) > wiped.get(str(ev.get("user_id")), 0)
+               and not (blocklist is not None and blocklist.was_off(str(ev.get("user_id")), float(ev.get("time") or 0)))   # 冷却 / 拉黑期间他发的（复核 R3）
                and not self._dup(hist, ev)]
         if not new and not missed:
             return
@@ -3256,10 +4586,16 @@ class FatFish:
         if key in self.pending_reply or control.group_mode(gid) == "mute":
             return []
         ref = min(now, getattr(self, "_down_from", 0) or now)     # 掉线重连：从断开那会儿往前算；重启：从现在往前算
+        lim, lp_uids, lp_t0 = 600.0, set(), 0.0
+        lp = life.pend_get(key) if life.on() else None    # 日程里在忙、正等着回的那一轮（11-01 v1.16.4）：等得比 10 分钟久也补上（接话判断接的也算）
+        if lp and now - float(lp.get("set") or 0) < 2 * 3600:
+            lp_t0 = float(lp.get("t0") or ref)
+            lim, lp_uids = max(lim, ref - lp_t0 + 120), {str(u) for u in lp.get("uids") or []}
         out = []
         for h in hist[-60:]:
             uid, ts = str(h.get("uid") or ""), float(h.get("ts") or 0)
-            if h.get("role") != "user" or not h.get("to_me") or h.get("replied") or h.get("bot") or ts < ref - 600 \
+            if h.get("role") != "user" or not (h.get("to_me") or (uid in lp_uids and ts >= lp_t0 - 5)) or h.get("replied") \
+                    or h.get("bot") or ts < ref - lim \
                     or not uid or uid == str(self.self_id) or control.is_bot(uid) or control.blocked(uid):
                 continue
             text = h.get("text") or ""
@@ -3536,6 +4872,26 @@ class FatFish:
                 self.seen_mids.discard(x)
             del self._mid_order[:1000]
 
+    async def _autoreply_seen(self, key, uid, name, text, mid, now, catch=None):
+        """对方的 QQ 替他发的自动回复（「[自动回复]你好，我现在有事不在，一会再和你联系。」11-02 v1.17.8 C81）：不是他在说话 ——
+        只记进聊天记录（auto：排给模型时标「（自动回复：…）」；replied：扫私聊补回 / 补回都不当成没回的）；
+        不触发回复、不进记忆提炼 / 前情提要 / 翻记录，也不算他找她（说到做到的叫醒、纠错、法庭、恭喜、社交影子都不过）"""
+        stats.add("recv_private")
+        async with mem_lock(key):
+            mem = load_mem(key, "private")
+            entry = {"role": "user", "name": name, "uid": uid, "text": text, "ts": now, "auto": True, "replied": True}
+            if mid is not None:
+                entry["mid"] = mid
+            mem["history"].append(entry)
+            archive_append(key, entry)
+            if len(mem["history"]) > 120:
+                cut = [h for h in mem["history"][:-120] if h.get("ts", 0) > _keep_after(mem) and not h.get("bot") and not h.get("auto")]
+                mem["overflow"] = ((mem.get("overflow") or []) + cut)[-300:]
+                mem["history"] = mem["history"][-120:]
+            save_mem(mem)
+        log(f"[QQ自动回复] {name}({uid}) 的 QQ 替他发了自动回复「{_one_line(text)[:40]}」→ 不是他在说话：只记进聊天记录（标了）"
+            "不回、不提炼" + ("（补回看到的）" if catch is not None else ""))
+
     async def handle(self, ev, catch=None):
         """收消息：先记下来；要回的话不马上回 等对方说完（防抖）
         catch = 上线补回时传进来的 dict：只记下 不回 把「要不要回」的信息填进去交给 catch_up"""
@@ -3553,6 +4909,8 @@ class FatFish:
         if uid == self_id:
             return
         if control.blocked(uid):
+            if catch is None and blocklist is not None:   # 她拉黑案审理中 / 冷却中的人：冲她说的话只当证据收进案子（11-03 v1.17.13 不进记忆、不回）
+                await self._block_ev(ev, uid, self_id)
             return                         # 控制台里屏蔽了的人：完全不理
         mid = ev.get("message_id")
         if mid is not None:
@@ -3562,7 +4920,7 @@ class FatFish:
 
         segs = ev.get("message") or []
         if isinstance(segs, str):
-            segs = [{"type": "text", "data": {"text": cq_text(segs)}}]
+            segs = [{"type": "text", "data": {"text": cq_text(segs)}, "gen": True}]   # cq_text 里已经改过他打的字（11-01）
         segs = await self.expand(segs)              # 语音听写 / 聊天记录读出来
         text = seg_text(segs)
         if not text:
@@ -3574,6 +4932,10 @@ class FatFish:
         cmd = plain.strip()
         t_cmd = (float(ev.get("time") or 0) or time.time()) if catch is not None else max(time.time(), float(ev.get("time") or 0))
         ckey = f"private_{uid}" if mtype == "private" else f"group_{ev.get('group_id', '')}"
+        if mtype == "private" and qqevents.autoreply(plain):   # 对方的 QQ 替他发的自动回复（11-02 v1.17.8 C81）：不是他在说话
+            await self._autoreply_seen(ckey, uid, name, text, mid,
+                                       float(ev.get("time") or time.time()) if catch is not None else time.time(), catch)
+            return
         # 「确认删除」不管她记没记着问过 都交给 _wipe_chat（10-28 审查 memory-10 / intake-10：重启后问过的记录没了 这句被当成普通聊天交给模型）
         if (WIPE_ASK.match(cmd) and (mtype == "private" or at_me)) or (mtype == "private" and WIPE_YES.match(cmd)):
             if catch is not None and WIPE_YES.match(cmd):
@@ -3749,6 +5111,10 @@ class FatFish:
                 # 叫过她之后接着发的话算对她说（她上一句之后还没别人插话）；但光发一张图/表情包 不一定要接
                 trigger = (not only_pic) or random.random() < float(B.get("group_image_reply_prob", 0.3))
                 addressed = trigger
+            elif not to_other and getattr(sing, "picking", lambda *a: False)(key, uid, text):
+                # 她刚问了要哪个版本 点歌的人没 @ 她回「2 / 周杰伦的 / 算了」→ 算对她说（11-01 v1.16.0）
+                trigger = addressed = True
+                log(f"[唱歌] 群{gid} {name}「{text[:20]}」没@她 但在回她问的「要哪个版本」→ 接")
             elif fu[0] == "yes":
                 kind, gated = "follow", True
                 ok, why = budget.allow("follow", owner, key, uid, now)
@@ -3766,6 +5132,8 @@ class FatFish:
                 trigger = False            # 已经在攒别人的话了 不插话
             elif mode == "quiet":
                 trigger = False            # 群管/控制台让她少说：没人跟她说话就不插嘴
+            elif life.quiet():
+                trigger = False            # 日程里在忙（slow / busy 11-01 v1.16.4 C39）：没人找她就不插话（在线接话、随机插话都不做）
             elif rhythm.is_active(gid):
                 kind = "chat"
                 hour = [t for t in self.gstate.get(gid, {}).get("times", []) if now - t < 3600]
@@ -3826,6 +5194,11 @@ class FatFish:
             if mid is not None:
                 entry["mid"] = mid
                 self._mid_names[str(mid)] = name
+                if (self.__dict__.get("_early_recall") or {}).pop(str(mid), None) is not None:
+                    # （11-03 v1.17.13 Gemini R1-F3）撤回通知比这条先到（这条还在听写语音 / 读转发）：记成撤回了、不回
+                    entry["text"], entry["recalled"], entry["replied"] = "[撤回了一条消息]", True, True
+                    trigger = addressed = follow_ask = False
+                    log(f"[撤回] {key} {name or uid} 撤回了一句（撤回通知先到）→ 聊天记录里记成「[撤回了一条消息]」、不回")
                 if len(self._mid_names) > 3000:
                     for k in list(self._mid_names)[:1000]:
                         self._mid_names.pop(k, None)
@@ -3866,6 +5239,23 @@ class FatFish:
                                       reply=bool(trigger))
                 except Exception as e:
                     log("[注意力] 记的时候出错:", repr(e)[:100])
+            if social is not None and catch is None:     # 社交细节（11-01 影子模式：装没看见 / 新人 / 兴趣 / 小圈 只记、不改她的行为）
+                try:
+                    grp = scene == "group"
+                    rt = (entry.get("re") or entry.get("to") or "") if grp else ""
+                    sr = social.observe(scene, key, gid if grp else "", uid, name, own_words(plain or text), now, mid=mid,
+                                        to_her=bool(scene == "private" or at_me or called or quoted_me), owner=owner,
+                                        isbot=bool(isbot or control.is_bot(uid)), quoted_mid=rid0 if grp else None,
+                                        re_to="" if rt == "你" else rt, fu=fu if grp else None, replied=bool(trigger),
+                                        at_me=bool(at_me or called))
+                    if sr and sr.get("new") == 1:
+                        log(f"[社交·影子] 群{gid} 新人 {name}({uid}) 第一次说话" + ("（她会接）" if trigger else "（她没接）"))
+                    it = (sr or {}).get("it") or {}
+                    if it.get("lv") and it.get("would"):
+                        log(f"[社交·影子] {key} {name} 兴趣 {it['b']}（{social.LEVEL_NAME.get(it['lv'])}）→ 以后会：{it['would']}"
+                            + (f"｜{it['w']}" if it.get("w") else "") + (f"｜{it['cap']}" if it.get("cap") else ""))
+                except Exception as e:
+                    log("[社交·影子] 记的时候出错:", repr(e)[:100])
             if court is not None and catch is None and not isbot and not control.is_bot(uid):   # 法庭 阶段 0：她给过答案、他说不对 → 只立案记日志
                 try:
                     qm = re.match(r"（回复了 .{0,60}?的「(.{0,210}?)」）", entry.get("text") or "")
@@ -3874,7 +5264,8 @@ class FatFish:
                                        quoted=qm.group(1) if (qm and quoted_me) else "", has_img=bool(imgs))
                     if cs and hasattr(court, "screen"):          # 模型预审（10-30 v1.16.0 只记）：看前后文再审一遍是不是真在说她错
                         chat = [f'{"她" if h.get("role") == "assistant" else h.get("name", "")}: {str(h.get("text") or "")[:100]}'
-                                for h in mem["history"][-11:-1]]
+                                + (f'（她说这句之前系统给她看过：{str(h.get("sys"))[:160]}）' if h.get("role") == "assistant" and h.get("sys") else "")
+                                for h in mem["history"][-11:-1]]      # 11-02 v1.17.3：核对时看得到她当时的依据（翻到的原话 / 余额）
                         asyncio.create_task(court.screen(cs, chat, jllm("court", key, uids=[uid]), log=log, now=now))
                 except Exception as e:
                     log("[法庭] 记的时候出错:", repr(e)[:100])
@@ -3909,7 +5300,7 @@ class FatFish:
                 except Exception as e:
                     log("[恭喜] 出错:", repr(e)[:100])
             if len(mem["history"]) > 120:          # 挤出去之前先存着 等提炼和前情提要都用过再扔（别人家 AI 说的不留）
-                cut = [h for h in mem["history"][:-120] if h.get("ts", 0) > _keep_after(mem) and not h.get("bot")]
+                cut = [h for h in mem["history"][:-120] if h.get("ts", 0) > _keep_after(mem) and not h.get("bot") and not h.get("auto")]
                 mem["overflow"] = ((mem.get("overflow") or []) + cut)[-300:]
                 mem["history"] = mem["history"][-120:]
             if not entry.get("bot"):
@@ -3922,7 +5313,8 @@ class FatFish:
             forget_now = catch is None and not isbot and not control.is_bot(uid) and \
                 (scene == "private" or at_me or called or quoted_me) and memory.wants_forget(own_words(text))   # 转发里别人说的不算（intake-9）
             save_mem(mem)
-            if not trigger and imgs and catch is None and vision.enabled() and vision.free_primary():
+            if not trigger and imgs and catch is None and vision.enabled() and vision.free_primary() \
+                    and not entry.get("recalled"):     # （11-03 v1.17.13）撤回通知先到、记成撤回了的那条（不回 所以 trigger 是假的）：图也别送去看
                 chat = [f'{h.get("name", "")}: {h.get("text", "")[:50]}' for h in mem["history"][-5:-1]]
                 asyncio.create_task(self._caption_later(key, scene, dict(entry), chat))   # 后台看 不堵后面的消息
         if forget_now:     # 模型挑哪几条在锁外做（10-28 审查 memory-1）；最多等 15 秒（多半在她回这句之前就忘掉了）超时就让它后台接着做
@@ -4059,7 +5451,11 @@ class FatFish:
     async def handle_notice(self, ev):
         """QQ 禁言（10-26）：群管在 QQ 里禁言她 / 全员禁言（她不是管理）→ 记下到几点 那之前当静音（不白生成回复）
         她的消息被别人撤回 / 她被移出群（10-28 v1.11.0）：交给纠错（fixup.py）
-        别人撤回了自己的话（10-30）：还没回的不回了、聊天记录里换成「[撤回了一条消息]」"""
+        别人撤回了自己的话（10-30）：还没回的不回了、聊天记录里换成「[撤回了一条消息]」
+        贴表情 / 精华 / 资料卡赞 / 正在输入（11-01 v1.16.3）：交给 _qq_event（连接那边收到就直接交了 这里是兜底）"""
+        if qqevents.wants(ev):
+            self._qq_event(ev)
+            return
         if ev.get("notice_type") in ("group_recall", "friend_recall") \
                 and str(ev.get("user_id", "")) != str(ev.get("self_id", "") or self.self_id):
             try:
@@ -4068,6 +5464,15 @@ class FatFish:
                 log("[撤回] 出错:", repr(e)[:160])
             if ev.get("notice_type") == "friend_recall":
                 return
+        if ev.get("notice_type") == "group_increase":        # 新人进群（C64 11-01 影子）：只记一笔 不打招呼
+            gid, uid = str(ev.get("group_id", "")), str(ev.get("user_id", ""))
+            if social is not None and uid and uid != str(ev.get("self_id", "") or self.self_id):
+                try:
+                    social.joined(gid, uid, log=log)
+                    log(f"[社交·影子] 群{gid} 进来了新人 {uid}（只记）")
+                except Exception as e:
+                    log("[社交·影子] 记新人出错:", repr(e)[:100])
+            return
         if ev.get("notice_type") in ("group_recall", "group_decrease"):
             return await self._fix_notice(ev)
         if ev.get("notice_type") != "group_ban":
@@ -4101,6 +5506,156 @@ class FatFish:
             control.set_ban(gid, 0, op, which="all" if whole else "self")   # 只解对应的那一边（10-28 审查 intake-11）
             log(f"[群管] 群{gid} {'全员禁言' if whole else 'QQ 禁言'}解除了（{opn}）"
                 + ("；" + ("她自己的禁言" if whole else "全员禁言") + "还没解 → 照旧不说话" if control.qq_ban(gid) else ""))
+
+    # ---- QQ 事件感知（11-01 v1.16.3 qqevents.py）----
+    def _qq_event(self, ev):
+        """贴表情 / 精华 / 资料卡赞 / 正在输入：只记下来（不触发回复）；要联网的（查原话、回赞）另起任务"""
+        try:
+            nt, st = ev.get("notice_type"), ev.get("sub_type")
+            if nt == "notify" and st == "input_status":
+                qqevents.on_input_status(ev)
+            elif nt == "group_msg_emoji_like":
+                gid, uid = str(ev.get("group_id") or ""), str(ev.get("user_id") or "")
+                line = qqevents.on_emoji_like(ev, self.members.get((gid, uid)) or "")
+                if line:
+                    log(f"[表情回应] 群{gid} {line}（不回话 她下次在这个群说话时告诉她）")
+            elif nt == "essence":
+                me = str(ev.get("self_id") or self.self_id or "")
+                if me and str(ev.get("sender_id") or "") == me and str(st or "add") == "add":
+                    asyncio.create_task(self._qq_essence(ev, me))
+            elif nt == "notify" and st == "profile_like":
+                asyncio.create_task(self._qq_profile_like(ev))
+        except Exception as e:
+            log("[QQ事件] 出错:", repr(e)[:120])
+
+    async def _qq_essence(self, ev, me):
+        gid, op = str(ev.get("group_id") or ""), str(ev.get("operator_id") or "")
+        text = (qqevents.mine(ev.get("message_id")) or {}).get("text") or ""
+        if not text and ev.get("message_id") is not None:
+            try:                           # 她发的时候没记下（重启前发的）：问 QQ 那条是什么
+                r = await asyncio.wait_for(self.call("get_msg", message_id=ev.get("message_id")), 5)
+                m = ((r or {}).get("data") or {}).get("message")
+                text = seg_text(m) if isinstance(m, list) else cq_text(m) if isinstance(m, str) else ""
+            except Exception:
+                text = ""
+        opn = self.members.get((gid, op)) or ""
+        if not opn and op and op != "0" and gid:
+            try:
+                r = await asyncio.wait_for(self.call("get_group_member_info", group_id=int(gid), user_id=int(op)), 5)
+                dd = (r or {}).get("data") or {}
+                opn = clean_name(dd.get("card") or dd.get("nickname") or "")
+            except Exception:
+                opn = ""
+        line = qqevents.on_essence(ev, me, text=text, op_name=opn)
+        if line:
+            log(f"[精华] {line}（不回话 她下次在这个群说话时告诉她）")
+            try:
+                mood2.bump(2, happy=4)     # 心情小涨（mood2 给外部小事件的接口）
+            except Exception:
+                pass
+
+    async def _qq_profile_like(self, ev):
+        uid = str(ev.get("operator_id") or "")
+        want, line = qqevents.on_profile_like(ev, blocked=control.blocked(uid), is_bot=self._is_ai(uid))
+        if line:
+            log(f"[资料卡赞] {line}")
+        if not want:
+            return
+        await asyncio.sleep(random.uniform(2, 6))
+        r = await self.call("send_like", user_id=str(uid), times=1)
+        ok = isinstance(r, dict) and r.get("retcode") == 0
+        qqevents.liked_back(uid, ok)
+        if not ok:
+            log(f"[资料卡赞] 回赞 {uid} 没成：{str(r)[:80]}")
+
+    async def _show_typing(self, uid):
+        """私聊：让对方看到「正在输入」（set_input_status event_type=1；同一个人 8 秒最多一次；失败不管）"""
+        try:
+            if not uid or not self.ws or not qqevents.want_show_typing(uid):
+                return
+            r = await self.call("set_input_status", user_id=str(uid), event_type=1)
+            if not (isinstance(r, dict) and r.get("retcode") == 0):
+                tl = self.__dict__.setdefault("_typing_log", [0.0])
+                if time.time() - tl[0] > 3600:
+                    tl[0] = time.time()
+                    log(f"[正在输入] 设不上（不影响回复）：{str(r)[:80]}")
+        except Exception:
+            pass
+
+    async def life_loop(self):
+        """每日生活（11-01 v1.16.4 C39）：30 秒看一次 —— 控制台「重新排今天」→ 重排；开机时今天的还没有 → 排；她醒了（睡觉段过了）→ 排今天的"""
+        if not life.on():
+            return
+        await asyncio.sleep(15)
+        boot = True
+        while True:
+            pause = 30
+            try:
+                why = life.take_replan()
+                if why is not None:
+                    await self._life_plan(f"{why}：重新排今天")
+                elif boot and not life.load():
+                    await self._life_plan("开机时今天的还没排")
+                elif life.due():
+                    await self._life_plan("她醒了")
+            except Exception as e:
+                log("[日程] 出错（10 分钟后再试）:", repr(e)[:150])
+                pause = 600
+            boot = False
+            await asyncio.sleep(pause)
+
+    async def _life_plan(self, why):
+        """排今天的（一次模型调用 kind life；不行就周模板 / 内置作息 —— 不会没日程）"""
+        return await life.plan(jllm("life"), persona_text(), log=log, why=why, commit=commit)
+
+    async def _balance_block(self, key, name, again=None):
+        """有人问她余额 / token（11-02 v1.17.0 balance.py）：DeepSeek 官方余额（缓存 10 分钟）+ Claude 这期自己记的账 → (状态, 系统记录)
+        again：这个对话上次给她看余额的时间（粘着给 11-02 v1.17.3）"""
+        ds = await balance.deepseek((CFG.get("llm") or {}).get("deepseek") or {})
+        cl = balance.claude(judge)
+        log(f"[余额] {key} {name} " + (f"还在说余额（{int((time.time() - float(again)) // 60)} 分钟前刚给她看过）" if again else "在问余额 / token")
+            + f" → {balance.describe(ds, cl)}")
+        return balance.block(ds, cl, again=again), balance.record(ds, cl)
+
+    def _self_note(self, text, key=""):
+        """状态行的 self（11-02 v1.17.3 C74 问题 3）：规则 / 节流先看 → 判断模型（复用 court 那个 kind）看跟人设硬设定冲不冲突 → 记
+        公开版的 soul 空壳没有这两步 → 照旧直接 add_self"""
+        pre, chk = getattr(soul, "self_precheck", None), getattr(soul, "check_self", None)
+        if not (pre and chk):
+            soul.add_self(text, log)
+            return None
+        ok, why = pre(text)
+        if not ok:
+            if "节流" not in why:
+                log(f"[自我] 她想记「{str(text)[:30]}」→ 不记（{why}）")
+            return None
+
+        async def go():
+            try:
+                ok2, why2 = await asyncio.wait_for(chk(text, jllm("court", key), log=log), 20)
+            except Exception as e:
+                ok2, why2 = True, ""
+                log("[自我] 把关超时 / 出错（照规则的结果记）:", repr(e)[:80])
+            if not ok2:
+                log(f"[自我] 她想记「{str(text)[:30]}」→ 不记（{why2}）")
+                return
+            soul.add_self(text, log)
+        t = asyncio.create_task(go())
+        tasks = self.__dict__.setdefault("_self_tasks", set())
+        tasks.add(t)
+        t.add_done_callback(tasks.discard)
+        return t
+
+    async def status_loop(self):
+        """QQ 在线状态跟着她的模式走（每分钟看一次；只在变了时改 —— qqevents.set_mode 管限次和失败停用）"""
+        await asyncio.sleep(30)
+        while True:
+            try:
+                if self.ws and qqevents.on("online_status"):
+                    await qqevents.set_mode(self.call, qqevents.mode_now(), log)
+            except Exception as e:
+                log("[在线状态] 出错:", repr(e)[:100])
+            await asyncio.sleep(60)
 
     # ---- 纠错（10-28 v1.11.0 fixup.py）----
     def _fix_event(self, ev):
@@ -4222,6 +5777,7 @@ class FatFish:
                         if p.get("task"):
                             p["task"].cancel()
                         self.pending_reply.pop(key, None)
+                        life.pend_clear(key)       # 日程里在忙等着回的：没人要回了（11-01 v1.16.4）
         found = replied = False
         name = ""
         last_me = 0.0
@@ -4237,6 +5793,12 @@ class FatFish:
             if found:
                 save_mem(mem)
         if not (found or pending or speaking):
+            # （11-03 v1.17.13 Gemini R1-F3）这条还没存档（还在听写语音 / 读转发）撤回通知就先到了：记一笔 存档时认出来（10 分钟以前的清掉）
+            er = self.__dict__.setdefault("_early_recall", {})
+            now = time.time()
+            for k in [k for k, v in er.items() if now - v > 600]:
+                er.pop(k, None)
+            er[smid] = now
             return
         # 「在跟她聊」：她正在回这句，或者（这句在等她回 / 她回过这句）且她 3 分钟内在这个对话里说过话
         in_conv = speaking or ((pending or replied) and time.time() - last_me < 180)
@@ -4249,22 +5811,28 @@ class FatFish:
         if time.time() < cd.get(key, 0) or random.random() >= float(B.get("recall_line_prob", 0.5)):
             return
         cd[key] = time.time() + float(B.get("recall_line_cooldown_min", 10)) * 60
-        await asyncio.sleep(random.uniform(1.5, 4.0))
-        line = await self._recall_line(scene, name or "他", replied or speaking)
-        if not line:
-            log(f"[撤回] {key} 她决定不说什么")
-            return
-        sent = await self.say(scene, gid if gid else uid, [line], conv=key)
-        if sent:
-            a_entry = {"role": "assistant", "name": BOT_NAME, "text": " ".join(sent), "ts": time.time()}
-            async with mem_lock(key):
-                mem = load_mem(key, scene)
-                mem["history"].append(a_entry)
-                save_mem(mem)
-            archive_append(key, a_entry)
-            log(f"[撤回] {key} 跟 {name or uid} 说了一句：{line}")
 
-    async def _state_line(self, kind, state, fallback=None):
+        async def _say_one():              # （11-03 v1.17.13 Gemini R1-F3）等几秒 + 想一句 + 发：放到后台 别堵住 other 道（后面的撤回 / 禁言通知不用排在它后面）
+            try:
+                await asyncio.sleep(random.uniform(1.5, 4.0))
+                line = await self._recall_line(scene, name or "他", replied or speaking)
+                if not line:
+                    log(f"[撤回] {key} 她决定不说什么")
+                    return
+                sent = await self.say(scene, gid if gid else uid, [line], conv=key)
+                if sent:
+                    a_entry = {"role": "assistant", "name": BOT_NAME, "text": " ".join(sent), "ts": time.time()}
+                    async with mem_lock(key):
+                        mem = load_mem(key, scene)
+                        mem["history"].append(a_entry)
+                        save_mem(mem)
+                    archive_append(key, a_entry)
+                    log(f"[撤回] {key} 跟 {name or uid} 说了一句：{line}")
+            except Exception as e:
+                log("[撤回] 说一句出错:", repr(e)[:160])
+        asyncio.create_task(_say_one())
+
+    async def _state_line(self, kind, state, fallback=None, limit=60):
         """功能上必须说的那一句（交文件 / 没做成 / 唱不了 / 发不出去…）：上游只给状态（发生了什么、要让对方知道什么），
         她自己说（10-30 v1.15.3 小明：「写死的接话真的非常弱」—— 以前这些是代码里写死的一句）。
         同一类最近说过的几句给她当参照、别重复；模型调不通才用 fallback（照实的一句 不能让人干等）"""
@@ -4275,13 +5843,13 @@ class FatFish:
                   + (("你最近这种时候说过：" + " / ".join(said[-4:]) + " —— 别用一样的说法。") if said else ""))
         try:
             out = await asyncio.wait_for(llm(system, [{"role": "user", "content": "（该你说这一句了）"}],
-                                             temperature=0.9, max_tokens=80, tag="状态一句"), 15)
+                                             temperature=0.9, max_tokens=max(80, limit + 40), tag="状态一句"), 15)
         except Exception as e:
             log(f"[状态一句] {kind} 没生成出来 用照实的那句:", repr(e)[:80])
             return fallback
         out = str(out or "").split("%%STATE%%")[0]
         line = next((x.strip() for x in out.splitlines() if x.strip() and "[[不说]]" not in x), "")
-        line = re.sub(r"\[\[[^\]]*\]\]", "", line).strip()[:60]
+        line = strip_fake_marks(re.sub(r"\[\[[^\]]*\]\]", "", line)).strip()[:limit]   # （11-03 v1.17.13 Gemini R1-F5）她照着写的系统记号也去掉
         if not line:
             return fallback
         said.append(line)
@@ -4306,7 +5874,7 @@ class FatFish:
         if "[[不说]]" in out:
             return None
         line = next((x.strip() for x in out.splitlines() if x.strip()), "")
-        line = re.sub(r"\[\[[^\]]*\]\]", "", line).strip()[:40]
+        line = strip_fake_marks(re.sub(r"\[\[[^\]]*\]\]", "", line)).strip()[:40]   # （11-03 v1.17.13 Gemini R1-F5）她照着写的系统记号也去掉
         if line:
             said.append(line)
             del said[:-10]
@@ -4436,6 +6004,7 @@ class FatFish:
         ctx.update(key=key, scene=scene, gid=gid)
         if last is not None:
             ctx["last_text"], ctx["last_pic"] = last
+            ctx["last_uid"] = str(uid)         # 最后那句是谁说的（尾巴含糊才问 / 正在输入 11-01）
         self._add_person(ctx, person, key)
         if p and p.get("task"):
             p["task"].cancel()
@@ -4563,8 +6132,12 @@ class FatFish:
         cap = ctx["first"] + float(B.get("reply_max_wait", 30))
         if not quick:
             self._spec_decide(ctx)
+            self._read_ahead(ctx)          # 「读懂」层开着：等的这几秒先把理解笔记写起来（11-01；config 关着就不做）
         try:
             await asyncio.sleep(max(0.5, min(wait, cap - time.time())))
+            if not quick:
+                await self._gather_more(ctx, cap)   # 他还在输入 / 尾巴含糊（11-01）：再等一会儿；这期间来了新的 = 整个重新算
+            await self._life_wait(ctx)     # 日程里在忙（slow / busy）：过几分钟再回（11-01 v1.16.4 C39）；等的时候来了新的 = 接着等同一个点
         except asyncio.CancelledError:
             return
         key = ctx["key"]
@@ -4586,6 +6159,238 @@ class FatFish:
         finally:
             self._reply_done(key, ctx, cancelled)
 
+    async def _gather_more(self, ctx, cap):
+        """攒一攒照规则等完以后（11-01 v1.16.3）：
+        ① 私聊里他最近几秒还在「正在输入」→ 再等等（最多多等 typing_wait_extra 秒；总上限也加这么多）
+        ② 最后一句尾巴含糊 → 问一次便宜模型「他说完了吗」（每个窗口最多问 2 次；超时 4 秒 / 出错 = 回）→「等 N」就再等 N 秒"""
+        luid = str(ctx.get("last_uid") or "")
+        if ctx.get("scene") == "private" and luid and qqevents.typing_recent(luid):
+            extra = float(qqevents.C.get("typing_wait_extra", 8))
+            t0 = time.time()
+            end = min(t0 + extra, cap + extra)
+            while time.time() < end and qqevents.typing_recent(luid):
+                await asyncio.sleep(0.5)
+            log(f"[攒一攒] {ctx.get('key')} 他还在输入 → 多等了 {time.time() - t0:.0f} 秒")
+        n = await self._gather_ask(ctx)
+        if n:
+            await asyncio.sleep(max(0.0, min(float(n), cap + 12 - time.time())))
+
+    async def _gather_ask(self, ctx):
+        """尾巴含糊 → 问便宜模型（kind gather；只给这一串话 + 前 3 行聊天 不带人设）→ 还要等几秒（0 = 说完了 回）"""
+        luid = str(ctx.get("last_uid") or "")
+        if not luid or ctx.get("last_pic") or "last_text" not in ctx or not tail_vague(ctx.get("last_text")):
+            return 0
+        if int(ctx.get("_gq") or 0) >= 2:
+            return 0
+        ctx["_gq"] = int(ctx.get("_gq") or 0) + 1
+        key, scene = ctx.get("key") or "", ctx.get("scene") or "group"
+        try:
+            hist = load_mem(key, scene).get("history") or []
+        except Exception:
+            return 0
+        mine = self._mine(hist, luid, private=scene == "private")
+        if not mine:
+            return 0
+        i0 = next((i for i, h in enumerate(hist) if h is mine[0]), len(hist))
+        before = [f'{"她" if h.get("role") == "assistant" else (clean_name(h.get("name")) or "某人")}: {_one_line(h.get("text"))[:80]}'
+                  for h in hist[max(0, i0 - 3):i0]]
+        who = clean_name(mine[-1].get("name")) or "他"
+        rq = ("【前面的聊天】\n" + ("\n".join(before) or "（没有）") + f"\n【{who} 刚连着发的】\n"
+              + "\n".join(f"{who}: {_one_line(h.get('text'))[:120]}" for h in mine[-4:]))
+        try:
+            out = await asyncio.wait_for(jllm("gather", key, 4, [luid])(GATHER_SYS, [{"role": "user", "content": rq}],
+                                                                       temperature=0, max_tokens=10), 4)
+        except Exception as e:
+            log(f"[攒一攒] {key} 尾巴含糊 问了一下 没问成（{type(e).__name__}）→ 当成说完了")
+            return 0
+        m = re.search(r"等\s*(\d{1,2})", str(out or ""))
+        if m:
+            n = max(3, min(12, int(m.group(1))))
+            log(f"[攒一攒] {key} 尾巴含糊 问了一下 → 等 {n} 秒（「{_one_line(ctx.get('last_text'))[-12:]}」）")
+            return n
+        log(f"[攒一攒] {key} 尾巴含糊 问了一下 → 说完了（「{_one_line(ctx.get('last_text'))[-12:]}」）")
+        return 0
+
+    def _her_last(self, key, hist=None):
+        """她在这个对话里最后一次开口的时间：聊天记录里她最后一句（到点的事 / 交货 / 播报 都记进去了）和 _send 刚发出去的取晚的（11-02 v1.17.1）"""
+        t = float(self.__dict__.get("_said_at", {}).get(key) or 0)
+        for h in reversed(hist or []):
+            if h.get("role") == "assistant":
+                t = max(t, float(h.get("ts") or 0))
+                break
+        return t
+
+    def _life_found(self, ctx):
+        """这一轮排着的人里 找她的那几个（私聊 / @ / 叫她 / 回她 / 接话判断要接）"""
+        priv = ctx.get("scene") == "private"
+        return [x for x in (ctx.get("who") or []) if priv or x.get("at_me") or x.get("called") or x.get("addr") or x.get("follow")]
+
+    async def _life_wait(self, ctx):
+        """日程里在忙（slow / busy 11-01 v1.16.4 C39 小明：「我本来在外面吃饭但是有人要我去唱歌 等10分钟后去回答」）：
+        别人找她 → 过 D 分钟再回（life.delay：slow 2–6 / busy 6–15 分钟；老板 × owner_factor；不超过这一段剩下的 + 2 分钟）从他第一句算起
+        等的时候来的新消息照攒一攒并进来（这个任务被取消重来 → 接着等同一个点）；中途她不忙了（这段结束 / 她改了日程）→ 马上回
+        急事（救命 / 急 / 快来…）、纠错的验证题不等；到点的承诺不走这里（commit_loop 照常）；在睡觉（sleep）照旧是 clock / commit 那套
+        等着的记进 data/life/pending.json：重启了 补回（私聊扫私聊 / 群里 _missed_calls）接上时照原来的点（过了就马上回）
+        回的那一轮给她状态「你刚才在 X（他 N 分钟前找你，你现在才腾出手看）」—— 怎么说她自己定
+        11-02 v1.17.1 跟老功能叠的时候：她刚被叫醒（说到做到 how=woke）、她 life.engaged_sec 秒内刚在这个对话里开口（到点的事 / 交货 /
+        版本播报 / 刚回过别人）→ 不等；等的时候她在这个对话里开口了 → 马上回"""
+        ctx.pop("life_engaged", None)      # 上一次看的（这一轮被取消重来时）不算数
+        if not life.on():
+            return
+        who = self._life_found(ctx)
+        if not who:
+            return
+        key, scene = ctx.get("key") or "", ctx.get("scene") or "group"
+        owner = any(OWNER_QQ and x["uid"] == OWNER_QQ for x in who)
+        texts = [str(ctx.get("last_text") or "")]
+        for x in who:
+            texts += [str(t or "") for t in x.get("texts") or []]
+        hist = []
+        try:
+            hist = load_mem(key, scene).get("history") or []
+            for x in who:
+                texts += [h.get("text") or "" for h in self._mine(hist, x["uid"], private=scene == "private")]
+        except Exception:
+            pass
+        now = time.time()
+        why = "看着是急事" if life.urgent(texts) else ""
+        if not why:                        # 11-02 v1.17.1：她刚被叫回来（说到做到的睡觉 / 离开 / 潜水 被一直找她的人叫醒）→ 不再叠一层日程的晚回
+            try:
+                wr = getattr(commit, "woke_recently", None)
+                if wr and wr(key, now=now):
+                    why = "她刚被叫回来（说到做到：叫醒她的就是这一声）"
+            except Exception:
+                pass
+        if not why and life.engaged(self._her_last(key, hist), now=now):
+            why = "她刚在这个对话里说过话（正看着这个对话）"   # 11-02 v1.17.1：到点的事 / 交货 / 版本播报 / 刚回过别人 —— 她刚开口 他一回就要等 6~15 分钟对不上
+            seg = life.current(now) if life.mode_now(now) in ("slow", "busy") else None
+            if seg and seg.get("what") and not seg.get("fixed"):   # 11-02 v1.17.8 小明：「刚开过口就不算忙可以 但是可以解释一下刚刚在干什么」
+                ctx["life_engaged"] = {"what": str(seg.get("what") or ""), "start": str(seg.get("start") or ""),
+                                       "end": str(seg.get("end") or "")}   # → 这一轮的情况里给她「你日程上这会儿在 X」（提不提、怎么提她自己定）
+        if not why and fixup.on():
+            try:
+                if any(fixup.wants_answer(key, x["uid"], " ".join(texts[-3:]), now) for x in who):
+                    why = "是验证题 / 在判她（纠错照它自己的规矩）"
+            except Exception:
+                pass
+        if why:
+            if ctx.get("life_due"):
+                log(f"[日程] {key} 本来要过一会儿再回 但{why} → 现在就回")
+            elif life.mode_now(now) in ("slow", "busy"):
+                log(f"[日程] {key} 她这会儿日程里在忙 但{why} → 不等")
+            for k in ("life_due", "life_what", "life_t0", "life_owner"):
+                ctx.pop(k, None)
+            life.pend_clear(key)
+            return
+        mode = life.mode_now(now)
+        due = ctx.get("life_due")
+        if due is None and any(x.get("late") for x in who):    # 重启前在等的那一轮（补回接上的）：照原来的点
+            pend = life.pend_get(key)
+            if pend and now - float(pend.get("set") or 0) < 2 * 3600 and set(pend.get("uids") or []) & {x["uid"] for x in who}:
+                due = float(pend.get("due") or now)
+                ctx.update(life_due=due, life_what=str(pend.get("what") or ""), life_t0=float(pend.get("t0") or now))
+                log(f"[日程] {key} 重启前她在忙、这一轮正等着回 → 照原来的点" + (f"（还有 {(due - now) / 60:.0f} 分钟）" if due > now else "（已经到了 现在就回）"))
+        if due is None:
+            if mode not in ("slow", "busy") or any(x.get("late") for x in who):
+                return                     # 不忙 / 补回的老消息（catchup 那套已经说了晚回 不再叠一层日程）
+            secs, seg = life.delay(owner=owner, now=now)
+            if secs <= 0 or not seg:
+                return
+            t_first = min(float((x.get("late") or (x.get("t0") or now,))[0]) for x in who)
+            due = t_first + secs
+            ctx.update(life_due=due, life_what=str(seg.get("what") or ""), life_t0=t_first, life_owner=owner)
+            life.pend_set(key, due, t_first, seg.get("what") or "", [x["uid"] for x in who], now)
+            head = min(who, key=lambda x: x.get("t0", 0))
+            log(f"[日程] {key} 她这会儿在「{seg.get('what')}」（{life.MODE_NAME.get(mode)}）→ {head.get('name') or head['uid']} 找她 "
+                + (f"过 {(due - now) / 60:.1f} 分钟再回" if due > now else "他找了一阵了 现在就回") + ("（老板 短一点）" if owner else ""))
+        elif owner and not ctx.get("life_owner") and mode in ("slow", "busy"):     # 等着的时候老板来了：按老板的算（短一点）
+            ctx["life_owner"] = True
+            secs, seg = life.delay(owner=True, now=now)
+            ot = min(float(x.get("t0") or now) for x in who if x["uid"] == OWNER_QQ)
+            if seg and ot + secs < due:
+                due = ctx["life_due"] = ot + secs
+                life.pend_set(key, due, float(ctx.get("life_t0") or ot), ctx.get("life_what") or "", [x["uid"] for x in who], now)
+                log(f"[日程] {key} 等着的时候老板也找她了 → 提前到 {max(0.0, due - now) / 60:.1f} 分钟后回")
+        w0 = time.time()
+        while time.time() < due:
+            if life.mode_now() not in ("slow", "busy"):
+                log(f"[日程] {key} 她腾出手了（现在不忙了）→ 现在就回")
+                break
+            if float(self.__dict__.get("_said_at", {}).get(key) or 0) > w0:   # 等的时候她在这个对话里开口了（到点的事 / 交货 / 回了别人 11-02 v1.17.1）
+                log(f"[日程] {key} 等着的时候她在这个对话里说话了（正看着这个对话）→ 现在就回")
+                break
+            await asyncio.sleep(max(0.05, min(LIFE_POLL, due - time.time())))
+        t0 = float(ctx.get("life_t0") or time.time())
+        ctx["life_late"] = {"what": ctx.get("life_what") or "", "mins": max(1, int((time.time() - t0) // 60))}
+
+    @staticmethod
+    def _read_sig(name, texts):
+        return (str(name or ""),) + tuple(str(t or "") for t in (texts or [])[-3:])
+
+    def _read_ahead(self, ctx):
+        """「读懂」层开着（behavior.read_layer.enabled）：攒一攒等的时候就并行写理解笔记（11-01 v1.16.3）
+        这一串话变了（他又说了一句）→ 取消重来；_reply 时拿现成的（对不上就照旧现写）"""
+        try:
+            rc = _read_cfg()
+            who = ctx.get("who") or []
+            if not rc.get("enabled") or not who:
+                return
+            head = min(who, key=lambda x: (0 if OWNER_QQ and x["uid"] == OWNER_QQ else 1,
+                                            0 if (x.get("at_me") or x.get("called") or x.get("addr")) else 1, x.get("t0", 0)))
+            scene = ctx.get("scene")
+            direct = bool(scene == "private" or head.get("at_me") or head.get("called") or head.get("addr") or head.get("follow"))
+            if rc.get("direct_only", True) and not direct:
+                return
+            if not _llm_ds() or _claude_takes("reply" if direct else "reply_auto"):
+                return                     # 这一轮多半是 Claude 回（11-02 v1.17.9：读懂层只给 DeepSeek 回的那一轮）→ 不提前写、不花钱
+            hist = load_mem(ctx["key"], scene).get("history") or []
+            texts = [h.get("text", "") for h in self._mine(hist, head["uid"], private=scene == "private")] or list(head.get("texts") or [])
+            if not texts:
+                return
+            sig = self._read_sig(head.get("name"), texts)
+            old = ctx.get("_read")
+            if old and old[0] == sig and not old[1].cancelled():
+                return
+            if old:
+                old[1].cancel()
+            cut = None                     # 跟 _reply 一样的判断边界（11-02 v1.17.1）：他最后一句之后别人说的 理解笔记也先不看
+            if scene == "group":
+                mts = [float(h.get("ts") or 0) for h in self._mine(hist, head["uid"])]
+                if mts:
+                    cut = (max(mts), {str(head["uid"])})
+            lines = [f'{"她" if h.get("role") == "assistant" else (h.get("name") or "某人")}: {str(h.get("text") or "")[:160]}'
+                     for h in hist[-13:-1] if not _cut_hidden(h, cut)]
+            ctx["_read"] = (sig, asyncio.create_task(self._read_note(ctx["key"], head["uid"], head.get("name") or "", lines, texts)))
+        except Exception as e:
+            log("[读懂] 提前读出错:", repr(e)[:100])
+
+    async def _read_note(self, key, uid, name, read_lines, texts):
+        return await read_note(key, uid, name, read_lines, texts, budget=float(_read_cfg().get("timeout", 8)))
+
+    def _read_fallback(self, key, uid, name, read_lines, texts, t_start):
+        """Claude 回的那一轮的退路（11-02 v1.17.9）：Claude 出错 / 超时 / 回了空的 / 半路停用 → judge 退回 DeepSeek 时走这里
+        从开始等 Claude 算起不到 fallback_within 秒（默认 10）= 来得及：让 DeepSeek 直接补一份理解笔记（不再找 Claude 写 —— 它刚出过错；
+        最多等到总共 fallback_total 秒 默认 15）再回；过了（比如 Claude 等满 40 秒超时）= 来不及：照常回、不读"""
+        async def fb(system, messages, temperature=None, max_tokens=400, **kw):
+            rc = _read_cfg()
+            spent = time.time() - t_start
+            if spent <= float(rc.get("fallback_within", 10)):
+                tmo = max(1.5, min(float(rc.get("timeout", 8)), float(rc.get("fallback_total", 15)) - spent))
+                try:
+                    note = await asyncio.wait_for(read_note(key, uid, name, read_lines, texts, how="deepseek"), tmo)
+                    meta = getattr(note, "meta", None)
+                    note = str(note or "").strip()[:600]
+                    if note:
+                        messages = with_read_note(messages, note)
+                        log(f"[读懂] {key} {name}" + _read_meta_txt(meta) + f"（Claude {spent:.0f} 秒没回成 退回 DeepSeek 补读）："
+                            + note[:100].replace("\n", " / "))
+                except Exception as e:
+                    log("[读懂] Claude 没回成 退回 DeepSeek：补读没读成（照常回）:", repr(e)[:80])
+            else:
+                log(f"[读懂] {key} {name} Claude {spent:.0f} 秒没回成 退回 DeepSeek：来不及补理解笔记（照常回）")
+            return await llm(system, messages, temperature=temperature, max_tokens=max_tokens, **kw)
+        return fb
+
     def _reply_done(self, key, ctx, cancelled=False):
         """回完一轮（不管成没成、出没出错、是不是被取消）：出队、排下一轮 —— 以前这段不在 finally 里
         说话时被取消就留下 speaking=True 这个对话再也不回（10-28 Gemini 复查 #1）"""
@@ -4593,6 +6398,16 @@ class FatFish:
         c = p.get("ctx") or ctx
         head, t0 = c.pop("head", None), c.pop("t0", time.time())
         c.pop("seen", None)
+        c.pop("_gq", None)                 # 「尾巴含糊才问」按窗口算（11-01）
+        c.pop("recalled", None)            # 这一轮的撤回 / 刹车（11-03 v1.17.13 Gemini R1-F1）：下一轮复用这个 ctx 之前清掉 ——
+        c.pop("braked", None)              #   不清的话 后面排着的人那一轮一开口就被刹（她一句都不回）、动作也全不做
+        for k in ("life_due", "life_what", "life_t0", "life_owner", "life_late", "life_engaged"):   # 日程里在忙等的那一轮（11-01 v1.16.4）：回完了就清掉
+            c.pop(k, None)
+        if not cancelled:
+            life.pend_clear(key)
+        rd = c.pop("_read", None)          # 提前写的理解笔记：这一轮没用上的作废
+        if rd:
+            rd[1].cancel()
         seq0 = c.pop("seq0", None)
         if head is not None:               # 回过的这个人出队（她说话时他又发了新的 就留着下一轮再回）
             if seq0 is None:               # 这一轮没走到生成那一步（提前返回了）：照旧按时间
@@ -4605,6 +6420,34 @@ class FatFish:
             c["first"] = time.time()
             self.pending_reply[key] = {"ctx": c, "task": asyncio.create_task(
                 self._reply_later(c, quick=not p.get("more")))}
+
+    @staticmethod
+    def _just_replied(hist, uid, now=None, within=120):
+        """工作账本（11-01 v1.16.3）：她 within 秒内在这个群刚回过别人的（v1.15.16 起她那句记了 to / re）
+        → 「你刚回过 C「他说的」→ 你说「她说的」」（只给状态 防止重复回答）；没有 → 空字符串"""
+        now = float(now or time.time())
+        out, done = [], set()
+        for i in range(len(hist) - 1, max(-1, len(hist) - 40), -1):
+            h = hist[i]
+            if h.get("role") != "assistant" or now - float(h.get("ts") or 0) > within:
+                continue
+            to = str(h.get("to") or "")
+            if not to or to == str(uid) or to in done:
+                continue
+            src = None
+            if h.get("re"):
+                src = next((x for x in hist if x.get("role") == "user" and str(x.get("mid")) == str(h.get("re"))), None)
+            if src is None:
+                src = next((hist[j] for j in range(i - 1, max(-1, i - 30), -1)
+                            if hist[j].get("role") == "user" and str(hist[j].get("uid")) == to), None)
+            if src is None:
+                continue
+            done.add(to)
+            their, hers = _one_line(src.get("text"))[:30], _one_line(voice.strip(stickers.strip(str(h.get("text") or ""))))[:30]
+            out.append(f"- 你刚回过 {clean_name(src.get('name')) or '某人'}「{their}」→ 你说「{hers}」")
+            if len(out) >= 2:
+                break
+        return ("\n# 你刚在这个群回过的（2 分钟内）\n" + "\n".join(reversed(out)) + "\n") if out else ""
 
     @staticmethod
     def _mine(hist, uid, n=4, private=False):
@@ -4638,8 +6481,19 @@ class FatFish:
         key, scene, gid, uid, name = ctx["key"], ctx["scene"], ctx["gid"], ctx["uid"], ctx["name"]
         at_me, called = ctx["at_me"], ctx["called"]
         is_owner = bool(OWNER_QQ) and str(uid) == OWNER_QQ
+        if not is_owner and control.blocked(uid):  # 冷却 / 拉黑生效以后还排着队的他那几句（11-02 v1.17.10 阶段1 复核 R2）：不回、标成回过
+            async with mem_lock(key):
+                mem = load_mem(key, scene)
+                for h in self._mine(mem["history"], uid, n=50, private=scene == "private"):
+                    h["replied"] = True
+                save_mem(mem)
+            log(f"[拉黑] {key} 排着队等她回的「{name}」：他在冷却 / 拉黑名单里 → 不回了")
+            return
         if commit.hold(key, uid) == "all":         # 排着队的时候 她已经说了要走（说到做到）：不回了（私聊的回来再补）
             log(f"[说到做到] {key} 排着队等她回的「{name}」这条不回了（她刚说了要走）")
+            return
+        if scene == "group" and control.group_mode(gid) == "mute":    # 11-02 v1.17.1：排队 / 日程里晚回的那几分钟里群被静音了（群管 / 控制台）
+            log(f"[控制台] 群{gid} 这会儿静音了 排着队等她回的「{name}」这条不回了（发也发不出去 不白调模型）")
             return
         if fixup.on() and not is_owner and fixup.stopped(key, uid):
             # 纠错止损中（10-28 v1.11.0）：接话裁判 / 补回 / 私聊补扫这些路过来的也不回（handle 里只拦了直接 @ 的）；
@@ -4655,6 +6509,8 @@ class FatFish:
                 log(f"[纠错] {key} 排着队等她回的「{name}」：刚才改了几次还是被判不对 先停着（还有 "
                     f"{fixup.stop_left(key, uid) // 60 + 1} 分钟）不回")
             return
+        if scene == "private":             # 她开始想回了：让他看到「正在输入」（11-01 set_input_status；同一个人 8 秒最多一次 失败不管）
+            asyncio.create_task(self._show_typing(uid))
 
         # 回复前：要不要先上网查？（不认识的梗 → 学下来记住；人名/新闻/不确定的事 → 查了给她看）
         ctx.pop("_outage", None)           # 这一轮给她看过哪几样「坏着」（C21）：每轮重新算
@@ -4716,6 +6572,47 @@ class FatFish:
             except Exception as e:
                 log("[空间] 这一轮出错（这轮不带）:", repr(e)[:120])
 
+        # 余额 / 纠错（11-02 v1.17.0）：要等的（查 DeepSeek 余额、等判断模型核对完）在锁外先等好 —— 别占着这个对话的锁
+        pre_bal, pre_fix = "", ""
+        sysrec = []                        # 这一轮给她看过的系统资料（余额 / 翻到的原话 / 核对结果）→ 记在她这句上（11-02 v1.17.3 C74 问题 2）
+        self_hold = ""                     # 这一轮他在质疑她 / 立着案 / 刚核对过 / 刚更正 → 状态行的 self 不收（11-02 v1.17.3）
+        try:
+            ftx = [h["text"] for h in self._mine(load_mem(key, scene)["history"], uid, private=scene == "private")] \
+                or list(ctx["head"].get("texts") or [])
+        except Exception:
+            ftx = list(ctx["head"].get("texts") or [])
+        try:                               # 余额：问了就给；同一个对话刚给过的 粘一段时间（他接着说「那一百多刀…」「到底哪个是真的」也给）
+            bal_at = self.__dict__.setdefault("_bal_at", {})
+            last_b, now_b = bal_at.get(key), time.time()
+            asked_b = balance.want(ftx, to_her=bool(scene == "private" or at_me or called))
+            again_b = None
+            if not asked_b and last_b and balance.sticky(last_b, ftx, str(uid), now=now_b):
+                again_b = float(last_b["t"])
+            if asked_b or again_b:
+                pre_bal, brec = await asyncio.wait_for(self._balance_block(key, name, again=again_b), 12)
+                talking_b = asked_b or balance.followup(ftx)
+                if brec and talking_b:     # 系统记录只记问了 / 还在说这件事的那几轮（光是时间没过、他在说别的：不再每句都记一遍）
+                    sysrec.append(brec)
+                if talking_b:              # 问了 / 还在说这件事 → 从现在起再粘一段（光是时间没过的那几轮不续）
+                    bal_at[key] = {"t": now_b, "uid": str(uid)}
+        except Exception as e:
+            log("[余额] 这一轮出错（不带）:", repr(e)[:100])
+        if court is not None and hasattr(court, "turn_block"):
+            try:                           # 他刚说她错了：核对的结果；他说的事跟以前说错过的对得上：那几条
+                pre_fix = await asyncio.wait_for(court.turn_block(key, str(uid), name, ftx, log=log), 15)
+                crec = getattr(court, "given_record", lambda *a, **k: "")(key, str(uid))
+                if crec:
+                    sysrec.append(crec)
+                    self_hold = "刚给她看了核对结果"
+            except Exception as e:
+                log("[纠错] 核对结果 / 以前的教训出错（这轮不带）:", repr(e)[:100])
+            try:
+                if not self_hold and (getattr(court, "has_case", lambda *a: False)(key, str(uid))
+                                      or any(court.challenge_kind(t) for t in ftx[-3:])):
+                    self_hold = "他在质疑她"
+            except Exception:
+                pass
+
         think, prank, hum = False, None, {}        # 幽默（10-27 晚）：这轮开不开思考 / 冒充老板演到哪 / 认出了什么
         fx = {}                                    # 纠错（10-28 v1.11.0 fixup.py）：这一轮要不要换做法 / 有没有格式要求
         inj_ids = []                               # 这一轮注入的记忆（记忆强化 10-28 v1.9.4）
@@ -4747,7 +6644,28 @@ class FatFish:
             if not texts:
                 return                     # 这个人的话已经回过了
             query = " ".join(texts)
+            if not self_hold and challenge_note(texts):
+                self_hold = "他在说她错了"
+            try:                           # 本人当场更正了提要里 / 她刚说的事 → 记下来挂在提要后面、交给下次重写（11-02 v1.17.3 C74 R08c）
+                if hasattr(soul, "note_correction") and (scene == "private" or at_me or called or ctx.get("addr")):   # 群里只认冲她说的
+                    _her = next((h.get("text") or "" for h in reversed(mem["history"]) if h.get("role") == "assistant"), "")
+                    corr = soul.note_correction(mem, texts, str(uid), name, her=_her)
+                    if corr:
+                        self_hold = self_hold or "他刚更正了她说的事"
+                        log(f"[前情提要] {key} {name} 更正了提要里的事 → 记下（挂在提要后面、下次重写提要照它改）：「{corr['text'][:40]}」")
+            except Exception as e:
+                log("[前情提要] 记更正出错:", repr(e)[:80])
             waiting = [x for x in (ctx.get("who") or []) if x["uid"] != str(uid)]
+            # 固化判断边界（11-01 v1.16.3）：这一轮回的是他 —— 他最后一句之后、别人说的先不给她看（留在记忆里 走自己的接话 / 排队
+            # 下一轮再处理）；免得这条回他、内容却在回别人后来说的话（跟 v1.15.16 修的引用是同一类问题）
+            cut = None
+            if scene == "group" and mine:
+                cut_ts = max(float(h.get("ts") or 0) for h in mine)
+                n_hide = sum(1 for h in mem["history"] if h.get("role") == "user" and float(h.get("ts") or 0) > cut_ts
+                             and str(h.get("uid")) != str(uid))
+                if n_hide:
+                    cut = (cut_ts, {str(uid)})
+                    log(f"[判断边界] {key} 这一轮回「{name}」：他最后一句之后别人又说了 {n_hide} 句 → 这一轮先不给她看（下一轮再说）")
             if fixup.on():                 # 纠错（10-28 v1.11.0）：刚被他判了不对 / 他明说了格式 / 以前在他这儿吃过亏
                 try:
                     fx = fixup.turn(key, scene, str(uid), name, texts, time.time(),
@@ -4777,10 +6695,14 @@ class FatFish:
                 others = waiting or any(h.get("role") == "user" and not h.get("replied")
                                         and str(h.get("uid")) != str(uid) for h in mem["history"][-8:])
                 if others or not mine or ctx.get("late"):   # 好几个人在说 / 补回的老消息：点明这一条回谁、回什么
-                    said = " / ".join("「" + (t or "")[:60] + "」" for t in texts[-3:])
+                    said = " / ".join("「" + _one_line(t)[:60] + "」" for t in texts[-3:])
+
+                    def _wq(x):                # 工作账本（11-01）：排着的人各自说了什么（短）
+                        tx = _one_line(" / ".join(h.get("text") or "" for h in self._mine(mem["history"], x["uid"], n=2)))
+                        return f"{x['name']}「{tx[:24] + ('…' if len(tx) > 24 else '')}」" if tx else x["name"]
                     scene_txt += (f"群里这会儿好几个人在说话。**这一条只回「{name}」**（他说的是：{said}）。"
                                   "别人的话这条里别接 也别把别人的问题答到他头上"
-                                  + ("（排着等你的还有 " + "、".join(x["name"] for x in waiting[:4]) + " 下一条再回）"
+                                  + ("（排着等你的还有 " + "、".join(_wq(x) for x in waiting[:4]) + " 下一条再回）"
                                      if waiting else "") + "。")
                 if not (ctx.get("addr") or at_me or called):
                     if rhythm.is_active(gid):
@@ -4802,7 +6724,8 @@ class FatFish:
                                               kind=ctx["late_why"])      # unignore：说了不理他 到点了（她一直在 别说刚回来）（10-28 审查 commit-12）
             elif ctx.get("late"):          # 补回下线期间的消息：像真人晚回那样先说一句
                 scene_txt += catchup.late_note(ctx["late"][0], ctx["late"][1], time.time(), scene,
-                                               getattr(clock, "_tz", None), ctx.get("late_why") or "offline")
+                                               getattr(clock, "_tz", None), ctx.get("late_why") or "offline",
+                                               sleep=B.get("quiet_hours") or [3, 8])   # （11-03 v1.17.13 Gemini R1-F6）她的睡觉时间按 config（以前写死 5–12 点）
             cross_txt, pfacts, cross_safe = "", [], ""
             try:                           # 群里群外是同一个她：私聊带上他在群里的事 群里带上你们私下的关系
                 if scene == "group":
@@ -4823,22 +6746,28 @@ class FatFish:
                             archive_search, key, str(uid), query, scene == "group", int(FG.get("archive_days", 60)), 3,
                             window_start(mem)), 8)
                         if arch is not None:
-                            log(f"[翻记录] {key} {name} 问还记不记得 记忆里没想起来 → 翻了 {int(FG.get('archive_days', 60))} 天的"
-                                f"聊天记录：" + (f"找到 {len(arch)} 条（{' / '.join(x[3][:12] for x in arch)}）" if arch else "没找到"))
+                            ai = getattr(arch, "info", None) or {}
+                            log(f"[翻记录] {key} {name} 问还记不记得 记忆里没想起来 → 翻了 {ai.get('from')}～{ai.get('to')}"
+                                + (f"（他说的「{ai.get('said')}」）" if ai.get("said") else "") + " 的聊天记录："
+                                + (f"对上 {ai.get('matched')} 条 给她看 {len(arch)} 条（{' / '.join(x[3][:12] for x in arch)}）" if arch else "没找到")
+                                + (f"；存档最早 {ai.get('first')}" if ai.get("first") else "；这个对话还没有存档"))
                 except Exception as e:
                     arch = None
                     log("[翻记录] 出错:", repr(e)[:100])
+                if arch is not None:       # 翻到的原话也记一条系统记录（11-02 v1.17.3：下一轮她还看得到自己上一轮的依据）
+                    sysrec.append(arch_record(arch, name or "他", scene == "group"))
             if isinstance(getattr(memory, "LAST_PICKED", None), list):
                 memory.LAST_PICKED.clear()
             system, dyn = build_system(mem, scene_txt + web_txt, query, is_owner, speaker=(uid, name),
-                                       extra=cross_txt, split=True, arch=arch)      # 不变的在前（缓存） 这一轮的放聊天记录后面
+                                       extra=cross_txt, split=True, arch=arch, model_slot=True,   # 不变的在前（缓存） 这一轮的放聊天记录后面；model_slot：这一轮替她说话的是哪个模型（11-02 v1.17.8）
+                                       ask=" ".join(x for x in getattr(sing, "his_words", list)(texts) if x))   # 表情包「别发 / 要」只看他自己打的字（11-03 v1.17.13）
             inj_ids = list(getattr(memory, "LAST_PICKED", None) or [])   # 这一轮注入了哪几条记忆（回完看她用没用到 10-28 v1.9.4）
             wander_id = mem.pop("_wander", None)     # 突然想起来的那条（她说出口了 → 记得更牢）
             save_mem(mem)                  # 遗忘曲线（10-27）：这轮真想起来的那几条记得更牢、突然想起来的冷却 —— 存回去（以前想起来的次数没存）
             had_event = bool(galgame.get(uid, name, is_owner).get("pending_event"))
             focus = None
             if scene == "group":
-                said = " / ".join("「" + (t or "")[:80] + "」" for t in texts[-3:])
+                said = " / ".join("「" + _one_line(t)[:80] + "」" for t in texts[-3:])
                 focus = (f"这一条是回「{name}」的。他说的是：{said}。要回就回他这句 —— 他问了什么就先答什么；"
                          "别去接别人的话、别评论别人发的图。")
             img_uid = str(uid) if scene == "group" else None
@@ -4852,7 +6781,8 @@ class FatFish:
             recent_said = [h.get("text") or "" for h in hist[-12:]                 # 前面几分钟在聊什么（「说两句」在聊语音时也算要语音）
                            if h.get("role") == "user" and time.time() - float(h.get("ts") or 0) < 180
                            and id(h) not in said_now and (h.get("text") or "") not in texts]
-            vmode = voice.plan(key, scene, fresh_user_texts, heard_voice, recent_said)
+            # 11-03 v1.17.13（Gemini 4-F6）：认「要语音 / 别发语音」只看他自己打的字（引用的那条、图的描述、卡片不算；语音转出来的字照算）
+            vmode = voice.plan(key, scene, getattr(sing, "his_words", list)(fresh_user_texts), heard_voice, recent_said)
             if fx.get("active"):
                 vmode = "off"              # 纠错 / 有格式要求的这一条：不发语音
             if vmode not in ("off", "ask_off") and commit.has(key, "novoice"):
@@ -4866,34 +6796,66 @@ class FatFish:
             if vmode not in ("off", "no"):
                 log(f"[语音] {key} 这轮：{vmode}" + ("（坏着：她自己说）" if ob else ""))
             her_last = next((h for h in reversed(hist) if h.get("role") == "assistant"), None) or {}
+            try:                           # 她刚唱完网上找的 有人说「不是这首 / 不是原唱 / 全是怪音」→ 这个版本记成不要（11-01 v1.15.18）
+                dyn += getattr(sing, "complaint", lambda *a, **k: "")(key, fresh_user_texts, log)
+            except Exception as e:
+                log("[唱歌] 记「不是这首」出错:", repr(e)[:80])
             try:                           # 她刚说到唱 他接一句没带「唱」字的也算（10-31 v1.15.8 盲测）；公开版的 sing.plan 不收这两个参数就照旧
-                smode = sing.plan(key, scene, fresh_user_texts, her_last.get("text") or "", her_last.get("ts") or 0)
+                # by：谁点的歌（11-01 v1.16.0 拿不准问了要哪个版本 只认他选）
+                smode = sing.plan(key, scene, fresh_user_texts, her_last.get("text") or "", her_last.get("ts") or 0,
+                                  by=str(uid), log=log)
             except TypeError:
                 smode = sing.plan(key, scene, fresh_user_texts)
             if fx.get("active"):
                 smode = None
             if smode and commit.has(key, "nosing"):
                 smode = None               # 她说过这阵子不唱（说到做到 下面那段会告诉她）
+            fp, smode = self._full_turn(key, scene, uid, name, fresh_user_texts, smode, her_last, fx)   # 唱整首（11-01 v1.16.5 按关系圈）
             dyn += sing.block(smode, fresh_user_texts, key)
+            dyn += await self._selfie_turn(ctx, key, scene, str(uid), name, fresh_user_texts, fx)   # 自拍（11-03 v1.17.13）：他要她的自拍 → 能不能拍、为什么（只给状态）
+            dyn += sing.full_block(fp)
+            if smode in ("sing", "talk") or fp:    # 她最近唱歌时反复垫的话（「跑调」）→ 状态（11-02 v1.17.11）；公开版没有就算了
+                dyn += getattr(sing, "said_block", lambda *a, **k: "")()
             if smode:
                 log(f"[唱歌] {key} 这轮：{smode}")
             # 做动画：有人要的时候才告诉她这一轮能不能做（能做就教她写标记 做不了就让她直说）
+            a_texts = getattr(sing, "his_words", lambda t: t)(fresh_user_texts)   # 只看他自己打的字（图的描述、引用的不算 11-03 v1.17.14）
             amode, awhy = anim.plan(key, str(uid), is_owner,
-                                    (galgame.get(uid, name, is_owner) or {}).get("favor", 0), fresh_user_texts)
+                                    (galgame.get(uid, name, is_owner) or {}).get("favor", 0), a_texts)
             if fx.get("active"):
                 amode, awhy = "off", ""
             a_img = next((x[1] for h in reversed(mine) for x in (h.get("imgs") or [])
                           if len(x) > 1 and str(x[1]).startswith("http")), None)
             a_can_img = bool(a_img) and (is_owner or not anim.A.get("user_image_owner_only", True))
             dyn += anim.block(amode, awhy, a_can_img)
+            if not fx.get("active") and (scene == "private" or ctx.get("at_me") or ctx.get("called") or ctx.get("addr")):
+                dyn += getattr(anim, "talk_block", lambda *a, **k: "")(    # 在聊她的视频：她会做动画 + 最近做过的几条（11-03 v1.17.14）
+                    a_texts, key, asked=amode != "off", gnames=cross.group_names() if hasattr(cross, "group_names") else None)
             if amode != "off":
                 log(f"[动画] {key} {name} 这轮：" + ("可以做" if amode == "ok" else f"做不了（{awhy}）"))
             dyn += commit.block(key, uid, owner=is_owner)   # 说到做到：刚回来 / 正在兑现的 / 答应过他的事 / 到点要做的 / 欠的道歉
+            ll = ctx.get("life_late")
+            if ll and ll.get("what"):      # 日程里在忙 过了几分钟才回（11-01 v1.16.4 C39）：只给状态 怎么说她自己定
+                dyn += f"\n（你刚才在{ll['what']}（他 {ll['mins']} 分钟前找你，你现在才腾出手看））\n"
+            le = ctx.get("life_engaged")
+            if le and le.get("what") and not (ll and ll.get("what")):   # 日程上在忙 但她刚在这个对话里开过口 → 没等（11-02 v1.17.8）：只给状态
+                dyn += (f"\n（你日程上这会儿在{le['what']}（{le.get('start')}–{le.get('end')}）；"
+                        "你刚在这个对话里说过话 正看着这儿 —— 他这句你马上就看到了）\n")
+            try:                           # QQ 上的动静：她的话被贴了表情 / 设了精华 / 他赞了她资料卡（11-01：只给状态 告诉一次）
+                dyn += qqevents.block_for(key, str(uid), scene)
+            except Exception as e:
+                log("[QQ事件] 状态出错:", repr(e)[:80])
+            if scene == "group":           # 工作账本（11-01）：她 2 分钟内在这个群刚回过别人的 → 回的谁、他说了什么、她说了什么
+                dyn += self._just_replied(mem["history"], str(uid))
+            iv = self._invites.get(str(uid)) if scene == "private" else None
+            if iv and time.time() - float(iv["t"]) < 600:   # 他刚拉她进群（11-01：卡片点不点没关系 程序替她处理了）
+                dyn += f"\n（他刚拉你进群 {iv['gid']}：{iv['st']}。群邀请卡片不用点。）\n"
             dyn += qz_dyn                  # QQ 空间（10-27）
             dyn += benyu_note(mem)         # 「本鱼」说太多了 → 这次说「我」（10-27 晚）
             if scene == "private":
                 dyn += nudge_back_note(mem)    # 她主动找他没回、追了几句 他终于回了（10-28）
             dyn += challenge_note(texts)   # 他说她错了 / 改了原文 → 先核对 别顺着改口（10-28）
+            dyn += pre_bal                 # 有人问她余额 / token：数字和来源（11-02 v1.17.0 只给事实 怎么说她自己定）
             if not any(h.get("fake_owner") for h in mine):   # 冒充老板的那种交给幽默那段将计就计
                 dyn += boss_hint(query, is_owner)  # 他提到老板的名字 / 问谁做的你（10-27 晚）
             job = None                     # 做东西（10-28 v1.7.0）：写网页 / 代码这种大活 → 先答应一句 另外做完整 存成文件发
@@ -4957,6 +6919,8 @@ class FatFish:
                     hum = humor.analyze(texts, has_img, meme_seen)
                     close = is_owner or (galgame.get(uid, name, is_owner) or {}).get("favor", 0) >= 40   # 熟人才怼回去（10-28 审查 eval-2）
                     dyn += humor.block(hum, owner=is_owner, close=close)
+                    if hum.get("look_img") or hum.get("look_q") or hum.get("self_img"):
+                        dyn += self_look_block()     # 图 / 话在说她长什么样：给她自己的样子（11-02 v1.17.4）
                     if not is_owner and humor.on("prank"):
                         if any(h.get("fake_owner") for h in mine):
                             prank = humor.prank_plan(key, uid)
@@ -4967,6 +6931,11 @@ class FatFish:
                         log(f"[恶作剧] {key} {name} 冒充老板 → 这一轮"
                             + {"act": "装作信了（等下拆穿）", "flip": "拆穿", "again": "又来 直接笑他"}[prank])
                     direct = scene == "private" or at_me or called or bool(ctx.get("addr") or ctx.get("follow"))
+                    if blocklist is not None and not is_owner:   # 拉黑的线索（11-02 v1.17.6 C80 → v1.17.10 阶段1：只当线索 不计入任何门槛）
+                        try:
+                            self._block_clues(key, scene, uid, name, mine, ctx)
+                        except Exception as e:
+                            log("[拉黑] 记线索出错:", repr(e)[:80])
                     think = humor.want_think(hum, direct) or bool(prank and humor.on("think"))
                     if hum.get("any"):
                         log(f"[幽默] {key} {name} 这一轮：{'、'.join(humor.tags(hum))}" + ("；开思考" if think else ""))
@@ -4975,33 +6944,24 @@ class FatFish:
             if not prank and prankmod.on() and not fx.get("active"):  # 恶作剧（10-28 v1.10.0）：不跟着幽默的开关走（复查：幽默关了 点单 / 拆穿都不动了）
                 dyn += self._card_turn(key, scene, gid, uid, name, is_owner, texts, ctx, hum, card_info)
                 card_mode = card_info.get("mode")
+            dyn += pre_fix                 # 纠错（11-02 v1.17.0）：他说她错了 → 核对的结果；以前说错过的类似的事（跟下面格式那段挨着）
             if fx.get("block"):            # 纠错 / 格式要求 / 以前的教训：放在这一轮的情况最后（离 focus 最近）
                 dyn += fx["block"]
-            msgs = to_messages(mem, focus, dynamic=dyn)
+            msgs = to_messages(mem, focus, dynamic=dyn, cut=cut)
             t0 = time.time()
             ctx["t0"] = t0
             # 这一轮她看到的是哪几条（10-28 审查 intake-1）：按消息 id 记下来 —— 她在锁里看图、备提示词那几秒
             # 同一个人追加的话 时间戳是进锁之前取的、比 t0 还早 以前按「ts <= t0」被标成回过了、他也跟着出队 以后再也不回
-            seen = {str(h["mid"]) for h in mem["history"] if h.get("role") == "user" and h.get("mid") is not None}
+            seen = {str(h["mid"]) for h in mem["history"] if h.get("role") == "user" and h.get("mid") is not None
+                    and not _cut_hidden(h, cut)}      # 判断边界外的那几句她没看到：不标成回过（11-01）
             ctx["seen"], ctx["seq0"] = seen, self._qseq
             rc = _read_cfg()
             read_lines = None
             if rc.get("enabled") and not fx.get("active") and texts and \
                     (not rc.get("direct_only", True) or scene == "private" or at_me or called or bool(ctx.get("addr") or ctx.get("follow"))):
                 read_lines = [f'{"她" if h.get("role") == "assistant" else (h.get("name") or "某人")}: {str(h.get("text") or "")[:160]}'
-                              for h in mem["history"][-13:-1]]
-        if read_lines is not None:         # 「读懂」层：锁外面做（不堵后面的消息）；超时 / 出错就不带
-            try:
-                rq = f"【最近的聊天】\n" + "\n".join(read_lines) + f"\n【她要回的】{name}: {' / '.join(texts[-3:])[:300]}"
-                note = await asyncio.wait_for(jllm("read", key, uids=[uid])(READ_SYS.format(bot=BOT_NAME), [{"role": "user", "content": rq}],
-                                                                           temperature=0.2, max_tokens=300),
-                                              float(_read_cfg().get("timeout", 8)))
-                note = str(note or "").strip()[:600]
-                if note:
-                    msgs[-1]["content"] += "\n\n[系统] ———— 读懂这句（理解笔记 不是台词）————\n" + note
-                    log(f"[读懂] {key} {name}：" + note[:100].replace("\n", " / "))
-            except Exception as e:
-                log("[读懂] 这轮没读成（照常回）:", repr(e)[:80])
+                              for h in mem["history"][-13:-1] if not _cut_hidden(h, cut)]   # 判断边界外的那几句：理解笔记也不看（11-02 v1.17.1）
+        pre = ctx.pop("_read", None)       # 攒一攒等的时候已经在写的理解笔记（11-01 v1.16.3）：这一串话对得上就拿现成的（下面定了谁回再用）
 
         effort = None
         pt = str(B.get("private_think") or "").strip().lower()
@@ -5021,26 +6981,52 @@ class FatFish:
                       else B.get("reply_max_tokens", 1200))
         if think:                          # 开思考：思考也算 token 多给一截（回复本身还是照群里最多 2 条切）
             max_tok += int(humor.cfg().get("think_tokens", 4000))
-        mm = None
-        t_gen = time.time()                # 从这儿开始算她在「想」（第一条的打字时间扣掉这段 10-27 晚）
-        if B.get("native_vision", True):
-            try:
-                mm = await media.attach(msgs, hist, log, only_uid=img_uid, again=query,   # 追问刚才那张图 → 再看一眼（10-28）
-                                        since=(min(float(h.get("ts") or 0) for h in mine) - 1) if (scene == "group" and mine) else None)
-            except Exception as e:
-                log("[原图] 附图失败:", repr(e)[:120])
-        used = mm or msgs
-        # 开思考的这一轮（回梗 = humor；私聊轻思考 / 纠错想一下 = think）走判断模型实验的入口（10-29 judge.py）：
-        # config → judge.routes 切到 anthropic 时这一轮的回复是 Claude 写的；默认 deepseek = 原来的 llm
-        rllm = jllm("humor" if ekw.get("think_tag") == "回梗思考" else "think", key) if think else llm
+        # 这一轮谁回（11-02 v1.17.9 从下面挪上来：读懂层只在这一轮实际由 DeepSeek 回的时候做）
         # 有人找她（私聊 / @ / 叫名字 / 引用 / 在接她的话）的回复：judge.routes.reply 指 anthropic → Claude（reply_model 默认 Opus）
         # 写（10-31 v1.15.11 盲测第三轮：Opus 直接说 赢 5 / 最差 1，DeepSeek 赢 2 / 最差 5）；出错 / 超时 / 今天花到上限 → 退回原来的
         sought = scene == "private" or at_me or called or bool(ctx.get("addr") or ctx.get("follow"))
         rkind = ("reply" if sought else (None if think else "reply_auto"))
         # reply_auto：没人找她、她自己插话的那几条（10-31 v1.15.12 动态用量 第 3 档才交给 Claude）
         to_claude = bool(rkind) and judge.route(rkind) == "anthropic"
+        tkind = "humor" if ekw.get("think_tag") == "回梗思考" else "think"
+        ds_turn = _llm_ds() and not _claude_takes(rkind if to_claude else (tkind if think else None))
+        if pre and (read_lines is None or not ds_turn or pre[0] != self._read_sig(name, texts)):
+            pre[1].cancel()
+            pre = None
+        if read_lines is not None and ds_turn:   # 「读懂」层：锁外面做（不堵后面的消息）；超时 / 出错就不带；Claude 回的那一轮不做（11-02 v1.17.9）
+            try:
+                if pre:
+                    note = await asyncio.wait_for(asyncio.shield(pre[1]), float(_read_cfg().get("timeout", 8)))
+                else:
+                    note = await asyncio.wait_for(self._read_note(key, uid, name, read_lines, texts),
+                                                  float(_read_cfg().get("timeout", 8)))
+                meta = getattr(note, "meta", None)
+                note = str(note or "").strip()[:600]
+                if note:
+                    msgs = with_read_note(msgs, note)
+                    log(f"[读懂] {key} {name}" + _read_meta_txt(meta, bool(pre)) + "：" + note[:100].replace("\n", " / "))
+            except Exception as e:
+                log("[读懂] 这轮没读成（照常回）:", repr(e)[:80])
+        mm = None
+        t_gen = time.time()                # 从这儿开始算她在「想」（第一条的打字时间扣掉这段 10-27 晚）
+        if B.get("native_vision", True):
+            try:
+                mm = await media.attach(msgs, [h for h in hist if not _cut_hidden(h, cut)], log, only_uid=img_uid, again=query,   # 追问刚才那张图 → 再看一眼（10-28）；判断边界外的图不附（11-01）
+                                        since=(min(float(h.get("ts") or 0) for h in mine) - 1) if (scene == "group" and mine) else None)
+            except Exception as e:
+                log("[原图] 附图失败:", repr(e)[:120])
+        used = mm or msgs
+        # 开思考的这一轮（回梗 = humor；私聊轻思考 / 纠错想一下 = think）走判断模型实验的入口（10-29 judge.py）：
+        # config → judge.routes 切到 anthropic 时这一轮的回复是 Claude 写的；默认 deepseek = 原来的 llm
+        fbk = {}
+        if read_lines is not None and not ds_turn and _llm_ds() and _takes_fallback(jllm):   # Claude 回的这一轮：它出错 / 超时退回 DeepSeek 时 来得及就补一份理解笔记（11-02 v1.17.9）
+            fbk = {"fallback": self._read_fallback(key, uid, name, read_lines, texts, time.time())}
+        rllm = jllm("humor" if ekw.get("think_tag") == "回梗思考" else "think", key) if think else llm
+        # 谁回（sought / rkind / to_claude）在上面读懂层前面定好了（11-02 v1.17.9）
         if to_claude:
-            rllm = jllm(rkind, key, uids=[uid])
+            rllm = jllm(rkind, key, uids=[uid], **fbk)
+        elif think and fbk:                # 开思考的这一轮交给 Claude（think_model）：同一条退路
+            rllm = jllm(tkind, key, **fbk)
         try:
             try:
                 raw = await rllm(system, used, temperature=fx.get("temperature"), max_tokens=max_tok, think=think, **ekw)
@@ -5104,6 +7090,11 @@ class FatFish:
                 state.pop("face", None)
         raw, aspec = anim.extract(raw)
         raw, sreq, raw_after = sing.extract(raw)      # [[唱:歌名]]：先发前面的话 → 唱 → 再发后面的话
+        try:                                          # 他回的对不上那几个版本、让她再问一次：她没把选项列出来 → 系统补上（11-02 v1.17.11）
+            raw = getattr(sing, "ensure_options", lambda c, r: r)(key, raw)
+        except Exception as e:
+            log("[唱歌] 补选项出错:", repr(e)[:80])
+        raw, raw_after, sfreq = await self._selfie_mark(key, str(uid), name, raw, fx, raw_after)   # 自拍（11-03 v1.17.13）：[[自拍]] / [[自拍:要求]] 拿出来（发完字以后再拍）
         if sreq and commit.has(key, "nosing"):
             log(f"[说到做到] {key} 她说过这阵子不唱 这次写了唱歌标记 → 不唱")
             raw, sreq, raw_after = (raw + "\n" + raw_after).strip(), None, ""
@@ -5151,6 +7142,7 @@ class FatFish:
         if blank:                          # 私聊里一句都没得发：别标成回过 留给补回（10-28 审查 reply-5；群里空的 = 没话说 照旧）
             log(f"[私聊] {key} {name} 这一轮清洗完一句都没有：不标成回过（补回会再回）")
         sent = None
+        stop = None                        # 这一轮停了（刹车 / 撤回）→ 后面的动作都不做（11-03 v1.17.13）
         if segs_out or sreq:
             target = gid if scene == "group" else uid
             if scene == "group":           # 她说话的时候别人回她 也能认出来是在接她
@@ -5167,10 +7159,25 @@ class FatFish:
                 if prank == "card":
                     card_info["mids"] = mids_now
                 _SEND_CAP.reset(cap_tok)
-            if sreq:
+            # 11-03 v1.17.13（Codex F4 + Gemini R1-F2）：他撤回了 / 刹车停了（又说「算了」/ 又补了一句）/ 字发完以后他才说「算了」→ 后面的也都不做：
+            #   唱一段、唱整首、后面那句、代码文件、开做东西（名额照「没发出去」那条路 reply() 收尾时还回去）、再发一次文件、动画（下面）
+            #   小明 定：第一句已经发出去以后他才说「算了」/ 撤回 —— 后面的也都不做；只有唱歌标记、没有字（say 没调）也要看撤回
+            stop = self._halted(key, scene, ctx)
+            if stop and (sreq or segs_after or bigs or job or resend):
+                log(f"[刹车] {key} 这一轮停了（{stop}）→ 后面的不做了：" + "、".join(
+                    w for w, v in (("唱歌", sreq), ("后面那句", segs_after), ("代码文件", bigs), ("做东西", job), ("再发文件", resend)) if v))
+                if sreq and any(str(x.get("uid")) == str(uid) and x.get("seq", 0) > (ctx.get("seq0") or 0) for x in ctx.get("who") or []) \
+                        and not self._brake_why(key, ctx, 0, scene, strong=True) and getattr(sing, "hold", lambda *a: 0)(key, str(uid)):
+                    log(f"[唱歌] {key} 他又补了一句（下一轮一起回）→ 这次没唱成的许可留给他下一轮（不然下一轮他没再说唱 她也唱不了）")
+                sreq, segs_after, bigs, job, resend = None, [], [], None, None
+            self._selfie_after(ctx, scene, target, key, str(uid), name, sfreq, sent)   # 自拍（11-03 v1.17.13）：发完字以后后台拍；刹车 / 撤回了不拍
+            if sreq and sing.full_permit(key, uid):    # 唱整首（11-01 v1.16.5）：后台做（不挡别的聊天）弄好了自己发；后面那句等唱完再发
+                self._start_full(scene, target, key, sreq, str(uid), name, segs_after, t0=t0)
+                segs_after = []
+            elif sreq:
                 sinfo = {}
                 sung = await self._sing(scene, target, key, sreq, None if sent else ctx.get("msg_id"),
-                                        said=" ".join(segs_out + segs_after), info=sinfo)
+                                        said=" ".join(segs_out + segs_after), info=sinfo, ctx=ctx)
                 if sung:
                     sent = list(sent or []) + [sung]
                 if sinfo.get("sung"):      # 真唱出来了：答应过他的「唱歌」划掉（10-31 v1.15.17）
@@ -5181,6 +7188,10 @@ class FatFish:
                 if segs_after and not sinfo.get("sung"):     # 没唱成：后面那句（「怎么样 好听吧」）不发了（10-28 审查 reply-6）
                     log(f"[唱歌] {key} 没唱成 → 后面那句不发：{' '.join(segs_after)[:30]}")
                     segs_after = []
+                if (segs_after or bigs or job or resend) and self._halted(key, scene, ctx):   # 唱的那会儿（现找 / 剪 要好几秒）他撤回了 / 说算了（11-03 v1.17.13）
+                    stop = ctx.get("braked")
+                    log(f"[刹车] {key} 唱的时候这一轮停了（{stop}）→ 后面那句、代码文件、做东西都不做了")
+                    segs_after, bigs, job, resend = [], [], None, None
                 if segs_after:
                     sent = list(sent or []) + list(await self.say(scene, target, segs_after, conv=key) or [])
             if bigs:                       # 长代码 → 文件（10-28 v1.7.0）
@@ -5250,9 +7261,12 @@ class FatFish:
                 if scene == "group" and rhythm.spoke(gid, bool(ctx.get("addr") or at_me or called)) == "enter":
                     log(f"[节奏] 群{gid} 聊起来了 → {rhythm.status(gid)}")
             else:
-                log(f"[发送] {key} 这一轮一句都没发出去：不记进聊天记录 也不标成回过（下一轮还能回）")
+                log(f"[发送] {key} 这一轮一句都没发出去：不记进聊天记录" + ("（这一轮停了 只有唱歌标记：他这几句算回过）" if stop and not segs_out
+                                                                    else " 也不标成回过（下一轮还能回）"))
         if aspec and not silent:
-            if amode == "ok":
+            if self._halted(key, scene, ctx):  # 这一轮停了（刹车 / 撤回；只有动画标记、没有字也看）→ 动画也不提交（11-03 v1.17.13 Codex F4）
+                log(f"[刹车] {key} 这一轮停了（{ctx.get('braked')}）→ 动画不做：{aspec[:40]}")
+            elif amode == "ok":
                 asyncio.create_task(self.make_anim({
                     "scene": scene, "target": gid if scene == "group" else uid, "conv": key, "uid": str(uid),
                     "name": name, "is_owner": is_owner, "spec": aspec, "proactive": False,
@@ -5281,19 +7295,27 @@ class FatFish:
                         and not self._was_seen(mem["history"][pos - 1], seen, t0):
                     pos -= 1
                 a_entry = {"role": "assistant", "name": BOT_NAME, "text": " ".join(sent), "ts": t0, "to": str(uid)}
+                if sysrec:                 # 这一轮给她看过的系统资料（11-02 v1.17.3）：只在记忆里 不进存档（archive_append 只留白名单字段）
+                    a_entry["sys"] = "；".join(x for x in sysrec if x)[:400]
                 if scene == "group" and qmid:
                     a_entry["re"] = str(qmid)
                 if prank:                  # 演的 / 整人的那几句：不提炼成记忆（10-28 v1.10.0）
                     a_entry["prank"] = True
                 mem["history"].insert(pos, a_entry)
-                if code_info.get("file"):  # 这一轮直接发了代码文件：他接着要改 也能接上（10-28；群里按人记 10-28 Gemini 复查 #4）
+                if code_info.get("file") and not gone:   # 这一轮直接发了代码文件：他接着要改 也能接上（10-28；群里按人记 10-28 Gemini 复查 #4）
+                    # （11-03 v1.17.13 Gemini R1-F9）这一轮里他删了自己的数据 → 不记（里面有他的原话；跟 make_file 一样）
                     _set_last_make(mem, scene, uid, {"ts": time.time(), "kind": (job or {}).get("kind") or "代码",
                                                      "ext": code_info.get("ext") or "", "said": list(texts)[-4:],
                                                      "file": code_info["file"], "what": "", "path": code_info.get("path") or ""})
                 if scene == "group" and not is_owner:
-                    self._pingpong(gid, str(uid), name)
+                    self._pingpong(gid, str(uid), name, hist=mem["history"])
                 if not gone_p:
                     archive_append(key, a_entry)
+                if personcard is not None and not gone:      # 人物卡：她回了他一句 = 来往 +1（11-02 v1.17.7 第一印象的门槛）
+                    try:
+                        personcard.note_round(uid, key, t0, name)
+                    except Exception:
+                        pass
                 mem["since_extract"] = mem.get("since_extract", 0) + 1
                 if scene == "private":
                     soul.bump_turn(mem, is_owner)
@@ -5333,9 +7355,35 @@ class FatFish:
             state.pop("call", None)
             await self.apply_state(state)
             if state.get("self") and prank != "card":     # 整人那轮写的「自己」不当真（复查）
-                soul.add_self(state["self"], log)
+                if self_hold:              # 被质疑 / 立着案 / 刚核对 / 刚更正的这一轮写的不收（11-02 v1.17.3 C74：「账本我其实看不到」这种假教训）
+                    log(f"[自我] {key} 这一轮{self_hold} → 她写的「{str(state['self'])[:30]}」不记")
+                else:
+                    self._self_note(state["self"], key)
+            if state.get("life") and prank != "card":     # 她改今天的日程（11-01 v1.16.4 C39 状态行 life）
+                try:
+                    life.apply_edit(state["life"], log=log)
+                except Exception as e:
+                    log("[日程] 改日程出错:", repr(e)[:100])
+            blk = block_why(state.get("block")) if (blocklist is not None and prank != "card" and not gone) else ""
+            if blocklist is not None and state.get("block") not in (None, "", False) and not blk and prank != "card" and not gone:
+                log(f"[拉黑] {key} 状态行 block 写的是「{str(state.get('block'))[:12]}」（否定 / 不是原因）→ 不算要拉黑")
+            fav0 = circle0 = None
+            if blk:                        # 豁免按这一轮扣分之前的好感和圈子算（11-02 v1.17.10 阶段1 B2：以前先扣分再查）
+                fav0 = (galgame.get(uid, name, is_owner) or {}).get("favor", 0)
+                circle0 = "老板" if is_owner else self._circle_of(str(uid))
             if "favor" in state and not silent:
                 galgame.add(uid, state.get("favor"), name, is_owner, log)
+                try:                       # 她给他的好感打了最低分（−3）→ 记下（11-02 v1.17.10 阶段1：她的感受 只放进卷宗 不计入任何门槛）
+                    if blocklist is not None and not is_owner and float(state.get("favor")) <= -3:
+                        if blocklist.mark(uid, "favor_min", key, " / ".join(own_text(t) for t in texts[-2:]), name=name):
+                            log(f"[拉黑] {key} 记下她给「{name}」的好感 −3（她的感受 不算证据）")
+                except (TypeError, ValueError):
+                    pass
+            if blk:                        # 她不想再理这个人（11-02 v1.17.6 C80 → v1.17.10 阶段1 → 11-03 v1.17.13：立案 → 先不回他、等法庭一审 / 二审）
+                try:
+                    await self._her_block(key, scene, str(uid), name, blk, is_owner, fav=fav0, circle=circle0)
+                except Exception as e:
+                    log("[拉黑] 出错:", repr(e)[:120])
         if had_event and sent and not gone:
             galgame.event_done(uid)
         said_txt = (voice.strip(stickers.strip(" ".join(segs_out + segs_after))) or " ".join(sent)) if sent else ""
@@ -5351,13 +7399,13 @@ class FatFish:
                 stated = True
             if state and state.get("do") and not gone and not prank:      # 冒充老板那几句是演的：不记成承诺
                 do, mk = self._split_make_do(state.get("do"))
-                if mk and not job and MK.get("enabled", True):          # 她答应了现在就做个东西（系统这轮没认出来）→ 真去做（10-28）
+                if mk and not job and not stop and MK.get("enabled", True):          # 她答应了现在就做个东西（系统这轮没认出来）→ 真去做（10-28）；这一轮停了不做（11-03）
                     self._make_from_do(key, scene, gid if scene == "group" else uid, uid, name, is_owner, mk, texts,
                                        _last_make(mem, scene, uid), ctx.get("msg_id"))
                 if do:
                     self._declare(key, scene, do, said_txt, uid, name, "state", ask=" / ".join(t for t in texts[-3:] if t))
                     stated = True
-            if not (gone or prank or job or resend or code_info.get("file")) and MK.get("enabled", True) \
+            if not (gone or prank or job or resend or stop or code_info.get("file")) and MK.get("enabled", True) \
                     and _mk_slot(key, uid) not in self._make_conv:
                 # 刚交货 她嘴上答应「这几处我改」/ 说「改完了」「再甩你一次」—— 系统这轮什么都没做 → 真去做（10-28 v1.9.1）
                 # 群里只认他自己那件、只看他自己说的（10-28 Gemini 复查 #4）
@@ -5391,12 +7439,13 @@ class FatFish:
                                        on_do=None if (prank or stated) else (lambda d, k=key, sc=scene, t=said_txt, u=uid, n=name,
                                                                              a=" / ".join(x for x in fresh_user_texts[-3:] if x):
                                                                              self._declare(k, sc, d, t, u, n, "judge", ask=a)),
-                                       names=name or "", conv=key))
+                                       names=name or "", conv=key,
+                                       alive=lambda u=uid, t=t0: not _gone(u, t)))   # （11-03 v1.17.13 Codex F2）裁判回来时他删了数据 → 不写回时间线、不记承诺
 
         # 她自己说「我查一下」：去查 查到了补一句（10-28 审查 reply-9：她选了 [[不说]]、一句没发出去、他刚删了数据 都不补）
         want = (state or {}).get("search") if B.get("web_search", True) else None
         if want and isinstance(want, str) and not web_txt and sent and not silent and not gone and not gone_p:
-            asyncio.create_task(self.follow_up_search(ctx, want.strip()[:40], is_owner))
+            asyncio.create_task(self.follow_up_search(dict(ctx, t0=t0), want.strip()[:40], is_owner))   # 带上这一轮的 t0（_reply_done 马上就清掉 ctx 里的；11-03 合并复查）
 
         maybe_distill(mem)
 
@@ -5445,7 +7494,7 @@ class FatFish:
         return raw3 or '[[不说]]\n%%STATE%%{"favor": 0}'
 
     # ---- 做东西：网页 / 代码 → 文件（10-28 v1.7.0 maker.py）----
-    async def _upload(self, scene, target, path):
+    async def _upload(self, scene, target, path, timeout=None):
         """用 QQ 文件发（NapCat upload_private_file / upload_group_file；文件在这台电脑上 给绝对路径）→ 发成了没有"""
         if scene == "group" and control.group_mode(target) == "mute":
             return False
@@ -5455,7 +7504,8 @@ class FatFish:
             tgt = int(target)
         except (TypeError, ValueError):
             tgt = target
-        r = await self.call(act, **{pk: tgt, "file": str(Path(path).resolve()), "name": Path(path).name})
+        r = await self.call(act, **({"_timeout": timeout} if timeout else {}),
+                            **{pk: tgt, "file": str(Path(path).resolve()), "name": Path(path).name})
         ok = bool(r) and r.get("retcode") == 0
         if not ok:
             log(f"[做东西] 文件没发出去（{act}）：{str(r)[:160]}")
@@ -5467,9 +7517,14 @@ class FatFish:
         out = []
         folder = DATA / "files" / clock.strf("%Y-%m-%d")
         for lang, code, closed in blocks[:3]:
-            ext = maker.ext_of(lang, code, (job or {}).get("ext") or "")
+            ext = maker.target_ext(lang, code, job)
+            note = ""
             try:
-                path = await asyncio.to_thread(maker.save, folder, maker.file_name(job, code, ext), code)
+                if ext in docmaker.EXTS:   # Word / PDF / Excel / PPT / Markdown / 文本：她写的是内容 这里转成真文件（11-02 v1.17.4）
+                    path, ext, note = await asyncio.to_thread(docmaker.build, ext, code, folder, maker.file_name(job, code, ""),
+                                                              "", maker.PDF_BROWSER)
+                else:
+                    path = await asyncio.to_thread(maker.save, folder, maker.file_name(job, code, ext), code)
             except Exception as e:
                 log("[做东西] 存文件失败:", repr(e)[:120])
                 continue
@@ -5485,6 +7540,11 @@ class FatFish:
                 stats.add("files")
                 log(f"[做东西] {conv} 发了文件 {path.name}（{lines} 行 {len(code)} 字）" + ("" if closed else "（后面断了）"))
                 out.append(f"[发了文件「{path.name}」（{lines} 行）]")
+                if note:                   # 要的格式这台电脑做不出来 换了一种：让她说一声（上游只给状态）
+                    log(f"[做东西] {conv} 格式换了：{note}")
+                    line = await self._state_line("make_fmt", f"你刚发给他的文件是「{path.name}」：{note}。跟他说一声。", f"（{note}）")
+                    if line:
+                        await self.say(scene, target, [line], conv=conv)
                 continue
             parts, more = maker.chunks(code)
             # 每段包一层 ```：say 见到 ``` 开头的那条不压空格（10-28 审查 reply-13：以前退回贴的代码缩进全压成一个空格 跑不了）
@@ -5602,7 +7662,7 @@ class FatFish:
                 else:
                     scene_txt = f"你在一个 QQ 群里。「{name}」让你做个{job['kind']}，你刚答应了。"
                 system, dyn = build_system(mem, scene_txt, " ".join(job.get("said") or []), bool(job.get("is_owner")),
-                                           speaker=(uid, name), split=True)
+                                           speaker=(uid, name), split=True, model_slot=True)   # 做东西也是替她说话（11-02 v1.17.8）
                 dyn += maker.make_block(job, job.get("said") or [], _old_code(job))
                 msgs = to_messages(mem, None, dynamic=dyn)
             t_llm = time.time()
@@ -5640,7 +7700,7 @@ class FatFish:
                 "make_fail", f"你刚才答应给「{name}」做的{job['kind']}没做出来（你这边出了岔子）。跟他说一声；他再说一次你可以重新弄。",
                 "啊 弄砸了 刚才那个没做出来…你再说一次我重新弄")], conv=conv)
             return
-        info = {}
+        info, files = {}, []               # files：真发出去的文件 / 贴出去的代码（11-03 v1.17.13 Codex F9：交没交货看这个 不看 info）
         if not blocks:
             log(f"[做东西] {conv} 做{job['kind']}：她没写出代码（{raw[:60]}）")
             MAKE_Q.give_back(uid, job.get("charged"))
@@ -5698,16 +7758,57 @@ class FatFish:
                             "said": (list(job.get("before") or []) + list(job.get("said") or []))[-6:],
                             "file": info["file"], "what": what, "path": info.get("path") or ""})
                     save_mem(mem)
-            if info.get("file") and job.get("task_n"):     # 到点的那件「做个东西」：文件真发出去了才算做了（10-31 v1.15.17）
+            if files and job.get("task_n"):     # 到点的那件「做个东西」：文件真发出去了才算做了（10-31 v1.15.17；11-03 v1.17.13 Codex F9：以前存了文件就算）
                 t = commit.find_task(job["task_n"])
                 if t and t.get("id") == job.get("task_id") and t.get("status") == "pending":
                     commit.task_done(t, f"（交了文件：{info['file']}）", conv, log=log, by="做东西 交了文件")
-            if info.get("file"):               # 承诺表里「明早把画改了」这种同一件事 → 做完了就划掉（10-28）
+            if files:                          # 真发生的事（11-01 v1.16.4 每日生活：第二天排日程带上；11-03 v1.17.13 Codex F9：真交了才记）
+                life.note_event("做东西", f"给{job.get('name') or '人'}做了{job.get('kind') or '东西'}「{info['file']}」")
+            if files:                          # 承诺表里「明早把画改了」这种同一件事 → 做完了就划掉（10-28；11-03 v1.17.13 Codex F9：真交了才划）
                 for t in commit.pending_for(uid):
                     if t.get("conv") == conv and maker.task_like(t.get("what")) and \
                             float(t.get("created") or 0) >= t0 - AGAIN_TASK_SEC and \
                             maker.same_thing(t.get("what"), list(job.get("before") or []) + list(job.get("said") or []) + [what]):
                         commit.task_done(t, f"（已经做好发过去了：{info['file']}）", conv, log=log, by="做东西")
+
+    async def _anim_landed(self, scene, target, t_send):
+        """QQ 当时回超时的那条视频 后来到没到（11-03 v1.17.14）：翻一页最近的消息 —— 她自己发的、带视频、发的时间在这之后
+        → True（到了）/ False（没有）/ None（翻不了）"""
+        api = "get_friend_msg_history" if scene == "private" else "get_group_msg_history"
+        idk = {"user_id": int(target)} if scene == "private" else {"group_id": int(target)}
+        try:
+            r = await self.call(api, **idk, message_seq=0, count=30, reverseOrder=False)
+        except Exception:
+            return None
+        data = (r or {}).get("data")
+        msgs = data.get("messages") if isinstance(data, dict) else (data if isinstance(data, list) else None)
+        if not isinstance(msgs, list):
+            return None
+        me = str(self.self_id or "")
+        for m in msgs:
+            if not isinstance(m, dict) or float(m.get("time") or 0) < t_send - 10:
+                continue
+            uid = str(m.get("user_id") or (m.get("sender") or {}).get("user_id") or "")
+            segs = m.get("message") if isinstance(m.get("message"), list) else []
+            if me and uid == me and any(isinstance(x, dict) and x.get("type") == "video" for x in segs):
+                return True
+        return False
+
+    async def _anim_recheck(self, scene, target, conv, t_send, waits=(150, 300)):
+        """QQ 回超时（多半还在传）：过 2 分半、再过 5 分钟各翻一次 → anim.note_qq(late / lost)（11-03 v1.17.14）
+        她之后被问到「你发的视频」时 状态里照实写到没到；只改记录 不说话"""
+        got = None
+        for w in waits:
+            await asyncio.sleep(w)
+            got = await self._anim_landed(scene, target, t_send)
+            if got:
+                getattr(anim, "note_qq", lambda *a, **k: None)(conv, "late", force=True)
+                log(f"[动画] {conv} 那条 QQ 当时回超时的视频 后来发到了（{int(time.time() - t_send)} 秒后翻到）")
+                return True
+        if got is False:
+            getattr(anim, "note_qq", lambda *a, **k: None)(conv, "lost", force=True)
+            log(f"[动画] {conv} 那条 QQ 当时回超时的视频 过了 {int(sum(waits) / 60)} 分钟还没翻到（多半没发出去）")
+        return got
 
     async def make_anim(self, job, tid=None):
         """做动画：准备第一帧 → 提交 → 等 → 下载 → 发视频（tid 有值 = 重启前提交的 接着等）"""
@@ -5786,10 +7887,20 @@ class FatFish:
                 await asyncio.sleep(random.uniform(0.8, 1.6))
             action = "send_group_msg" if scene == "group" else "send_private_msg"
             pk = "group_id" if scene == "group" else "user_id"
+            try:                           # 压小再发（11-03 v1.17.14：QQ 传得慢 2 MB 的 NapCat 只等 18 秒）；压不了就发原来的
+                path = await getattr(anim, "shrink", None)(path, log) if hasattr(anim, "shrink") else path
+            except Exception as e:
+                log("[动画] 压小出错（发原来的）:", repr(e)[:100])
+            t_send = time.time()
             r = await self._send(action, pk, target, [{"type": "video", "data": {"file": path.resolve().as_uri()}}])
             ok = bool(r) and r.get("retcode") == 0
             # QQ 回「Timeout」：多半还在传（10-31 小明 截图：QQ 里视频在转圈 9%，她却说「传不过去」）→ 不当成失败
             slow = (not ok) and isinstance(r, dict) and "timeout" in str(r.get("message") or r.get("wording") or "").lower()
+            getattr(anim, "note_qq", lambda *a, **k: None)(conv, "ok" if ok else ("slow" if slow else "fail"))   # 聊到她的视频时给她看（11-03 v1.17.14）
+            if slow:                       # QQ 回超时：过一会儿回头翻一下到没到（不挡别的）
+                ct = asyncio.create_task(self._anim_recheck(scene, target, conv, t_send))
+                self.__dict__.setdefault("_anim_checks", set()).add(ct)
+                ct.add_done_callback(self.__dict__["_anim_checks"].discard)
             log(f"[动画] {label} 做好了（{tokens} token 约 ¥{cny}）" + ("发出去了" if ok else
                 (f" QQ 回超时 多半还在传（不说失败）：{str(r)[:100]}" if slow else f" 但 QQ 没发出去：{str(r)[:120]}")))
             if not ok and not slow:
@@ -5819,11 +7930,11 @@ class FatFish:
         for tid, t in anim.pending():
             log(f"[动画] 接着等重启前提交的那个（{t.get('conv')}）")
             asyncio.create_task(self.make_anim(dict(t), tid=tid))
-        q0, q1 = B.get("quiet_hours") or [4, 12]
+        q0, q1 = B.get("quiet_hours") or [3, 8]       # 她睡觉的时候（11-02 v1.17.5：北京时间 3–8 点 以前 4–12）
         while True:
             await asyncio.sleep(random.uniform(900, 1500))
             try:
-                if not self.ws or not anim.proactive_ok() or in_hours(clock.hour(), q0, q1):
+                if not self.ws or not anim.proactive_ok() or in_hours(clock.hour(), q0, q1) or _asleep():
                     continue
                 gids = [g for g in rhythm.active_groups()
                         if control.allow("group", g, "bubble") and f"group_{g}" not in self.pending_reply
@@ -5865,8 +7976,10 @@ class FatFish:
         await self.make_anim({"scene": "group", "target": gid, "conv": key, "uid": "", "name": "",
                               "is_owner": False, "spec": spec, "caption": caption, "proactive": True})
 
-    async def follow_up_search(self, ctx, q, is_owner):
+    async def follow_up_search(self, ctx, q, is_owner, t0=None):
         key, scene, gid, uid, name = ctx["key"], ctx["scene"], ctx["gid"], ctx["uid"], ctx["name"]
+        t0 = float(t0 or ctx.get("t0") or 0) or time.time()   # （11-03 v1.17.13 Gemini 3-F3）从回他那一轮算：查的这几秒里他删了数据 → 私聊不补
+        #   （合并复查）_reply 传一份带 t0 的 ctx 进来：这个任务开始跑的时候 _reply_done 已经把原来那份 ctx 里的 t0 清掉了
         try:
             res = await asyncio.wait_for(websearch.search(q, log), 25)
             if not res:
@@ -5883,9 +7996,12 @@ class FatFish:
             if commit.hold(key, uid) == "all":
                 log(f"[搜索] {key} 查到了 但她已经说了要走（说到做到）不补了")
                 return
+            if scene == "private" and _gone(uid, t0):     # （11-03 v1.17.13 Gemini 3-F3）查 / 写的这几秒里他删了自己的数据：不补（补了还会把他的私聊记忆建回来）
+                log(f"[搜索] {key} 查到了 但他刚删了自己的数据 → 不补了")
+                return
             if segs and "[[不说]]" not in raw:
                 sent = await self.say(scene, gid if scene == "group" else uid, segs, conv=key)
-                if not sent:
+                if not sent or (scene == "private" and _gone(uid, t0)):    # 发的那几秒里删的：也别写回他的私聊记忆
                     return
                 async with mem_lock(key):
                     mem = load_mem(key, scene)
@@ -5895,7 +8011,7 @@ class FatFish:
         except Exception as e:
             log("[搜索] 补充失败:", repr(e)[:120])
 
-    def _pingpong(self, gid, uid, name):
+    def _pingpong(self, gid, uid, name, hist=None):
         """对聊刹车（10-26 晚：别人家的一条鱼句句引用她 跟她互道晚安 30 多轮 —— 引用她就算叫她 不受接话轮数的限制）：
         她回了这个人一次 —— 他那句要是她说完 20 秒内就接上的 算一轮「秒接的来回」；10 分钟里够 8 轮 → 先停 10 分钟不回他
         （老板不算），同时叫认 AI 马上再看一眼。config behavior 里 brake_rounds / brake_window_sec / brake_pause_sec / brake_fast_sec 能调
@@ -5907,10 +8023,22 @@ class FatFish:
         pp = [x for x in self._pp.get((gid, uid), []) if now - x[0] < win] + [(now, quick)]
         self._pp[(gid, uid)] = pp
         n = sum(1 for _, qk in pp if qk)
-        if n < int(B.get("brake_rounds", 8)) or self._brake.get((gid, uid), 0) > now or control.is_human(uid):
+        need, lv, st = int(B.get("brake_rounds", 8)), 0, None
+        if hist is not None and getattr(style, "loop_state", None):   # 跟别的鱼来回说同一套（11-02 v1.17.5 C77）→ 提早刹
+            try:
+                st = style.loop_state(hist, uid, names=[name, BOT_NAME, GROUP_CARD] + list(ALIASES), fish=_fishlike(uid, name))
+                lv = int(st.get("level") or 0) if st and st.get("fish") else 0
+            except Exception:
+                lv = 0
+        if lv >= 2:
+            need = min(need, 2)
+        elif lv == 1:
+            need = min(need, max(2, need // 2))
+        if n < need or self._brake.get((gid, uid), 0) > now or control.is_human(uid):
             return
         ev = aidetect.evidence(gid, uid, now, win)          # 真人也可能跟她聊得又勤又快：还得有机器人的样子才刹
-        if ev["burst"] < 8 and ev["selfref"] + ev["bracket"] < 2 and ev["atnl"] < 2 and not control.is_bot(uid):
+        if ev["burst"] < 8 and ev["selfref"] + ev["bracket"] < 2 and ev["atnl"] < 2 and not control.is_bot(uid) \
+                and not (lv and self._is_ai(uid)):
             if now - self._brake_log.get(("pp", gid, uid), 0) > win:
                 self._brake_log[("pp", gid, uid)] = now
                 log(f"[对聊刹车] 群{gid} {name} 跟她来回 {n} 轮 但看着像真人在聊（没有几秒内连发、没自称本鱼）不刹")
@@ -5919,8 +8047,9 @@ class FatFish:
         self._brake[(gid, uid)] = now + pause
         self._pp[(gid, uid)] = []
         stats.add("chat_brakes")
-        log(f"[对聊刹车] 群{gid} {name}({uid}) {int(win // 60)} 分钟里跟她来回 {n} 轮 每次都是她说完 {int(float(B.get('brake_fast_sec', 20)))} 秒内就接 → "
-            f"先停 {int(pause // 60)} 分钟不回他；叫认 AI 再看一眼")
+        log(f"[对聊刹车] 群{gid} {name}({uid}) {int(win // 60)} 分钟里跟她来回 {n} 轮 每次都是她说完 {int(float(B.get('brake_fast_sec', 20)))} 秒内就接"
+            + (f"；两边一直在说同一套（{'、'.join(g for g, _a, _b in st['phrases'][:3])} {st['rounds']} 轮 第 {lv} 档）→ 够 {need} 轮就提早刹" if lv else "")
+            + f" → 先停 {int(pause // 60)} 分钟不回他；叫认 AI 再看一眼")
         if not aidetect.skip(uid, OWNER_QQ, self.self_id):
             asyncio.create_task(self._brake_check(gid, uid, name))
 
@@ -6029,6 +8158,7 @@ class FatFish:
         要走的话 群聊节奏马上回观望（别再试探、收尾）"""
         if not do or not commit.enabled():
             return []
+        multi = {}                         # 名字 → 用过这个名字的几个号（11-02 v1.17.10 阶段1 B11：同名多号的「不理」不记）
         try:
             mem = load_mem(key, scene)
             hist = mem.get("history") or []
@@ -6036,15 +8166,39 @@ class FatFish:
             for h in hist[-80:]:
                 if h.get("role") == "user" and h.get("name") and h.get("uid"):
                     names[str(h["name"])] = str(h["uid"])
+                    multi.setdefault(str(h["name"]), set()).add(str(h["uid"]))
             for nm, call in (mem.get("alias") or {}).items():     # 她给人起的外号也认得（她说「不理 + 外号」也知道是谁）
                 if nm in names and call:
                     names.setdefault(str(call), names[nm])
+                    multi.setdefault(str(call), set()).update(multi.get(nm) or set())
+            # 「不理 X」认不出 X（名字认不出 / 写的「他们」/ 群里写「他 / 她」/ 同名多号）→ 这一条不交给 commit.declare（11-03 v1.17.13 Gemini 2-F3：
+            #   以前 commit._who 认不出就落到正在说话的人头上 → 承诺表里记一条 ignore → 正在说话的人被晾）；没写 /「你」/ 他自己的名字照旧算他
+            items = do if isinstance(do, list) else [do]
+            keep = [x for x in items if not (isinstance(x, dict) and commit.kind_of(x.get("act") or x.get("kind")) == "ignore"
+                                             and not self._who_sure(x.get("who"), uid, name, multi, scene))]
+            if len(keep) < len(items):
+                drop_who = "、".join(str(x.get("who") or "") for x in items if isinstance(x, dict) and x not in keep)
+                log(f"[说到做到] {key} 她说不理「{drop_who}」—— 认不出是谁（会落到正在说话的人头上）→ 不记")
+                if not keep:
+                    return []
+                do = keep
             recs = commit.declare(key, scene, do, said, time.time(), hist, str(uid or ""), name or "", names, src, log,
                                   owner_uid=OWNER_QQ, ai=self._is_ai, ask=ask)
         except Exception as e:
             log("[说到做到] 记承诺出错:", repr(e)[:150])
             return []
+        sure = {self._who_sure((x or {}).get("who") if isinstance(x, dict) else "", uid, name, multi, scene)
+                for x in (do if isinstance(do, list) else [do])} - {""}
         for r in recs:
+            if r.get("kind") == "ignore" and r.get("who") and blocklist is not None and str(r["who"]) != str(OWNER_QQ):
+                if str(r["who"]) not in sure:      # 目标是按名字猜的（认不出落到正在说话的人 / 同名多号）→ 不记（11-02 v1.17.10 阶段1 B11）
+                    log(f"[拉黑] {key} 她说不理「{r.get('who_name') or r['who']}」—— 这个人是按名字猜的（认不出 / 同名）→ 不记")
+                else:
+                    try:                   # 她宣布不理他 → 记下（她的感受 只放进卷宗 不计入任何门槛 11-02 v1.17.10 阶段1）
+                        if blocklist.mark(r["who"], "ignore", key, r.get("say") or "", name=r.get("who_name") or ""):
+                            log(f"[拉黑] {key} 记下她说不理「{r.get('who_name') or r['who']}」（她的感受 不算证据）")
+                    except Exception as e:
+                        log("[拉黑] 记账出错:", repr(e)[:80])
             if r.get("kind") in commit.AWAY:
                 stats.add("commit_away")
                 if scene == "group":
@@ -6060,6 +8214,14 @@ class FatFish:
         except Exception as e:
             log("[说到做到] 10-31 清理出错:", repr(e)[:150])
         aidetect.ON_MARK[:] = [self._ai_marked]
+        try:                               # 11-02 v1.17.1：重启前还在后台弄的整首（没弄完 = 没唱成）→ 下次他来找她时告诉她一声
+            for u, j in sing.full_jobs_left():
+                nt = getattr(commit, "note", None)
+                if nt and nt(u, f"你答应给他唱的整首「{j.get('song') or '那首歌'}」还在后台弄的时候程序重启了 —— 没发出去 他没听到",
+                             conv=j.get("conv")):
+                    log(f"[唱歌] 重启前给「{j.get('who') or u}」弄的整首「{j.get('song')}」没弄完 → 下次他来找她时告诉她没唱成")
+        except Exception as e:
+            log("[唱歌] 查重启前没唱完的整首出错:", repr(e)[:100])
         try:
             for u in commit.ai_uids():     # 已经记上、后来被认出是别人家 AI 的：全划掉 告诉老板
                 if self._is_ai(u):
@@ -6137,6 +8299,949 @@ class FatFish:
             log(f"[说到做到] 没法私聊老板（不在事件循环里）：{text[:80]}")
         return out
 
+    async def _is_friend(self, uid):
+        """他是不是她的 QQ 好友（get_friend_list 5 分钟查一次；查不到 → None）"""
+        c = self.__dict__.setdefault("_friends_cache", {"t": 0.0, "s": None})
+        if c["s"] is None or time.time() - c["t"] > 300:
+            try:
+                r = await asyncio.wait_for(self.call("get_friend_list"), 10)
+                data = (r or {}).get("data")
+                if isinstance(data, list):
+                    c.update(t=time.time(), s={str(f.get("user_id")) for f in data if isinstance(f, dict)})
+            except Exception as e:
+                log("[拉黑] 查好友列表出错:", repr(e)[:80])
+        return (str(uid) in c["s"]) if c["s"] is not None else None
+
+    def _circle_of(self, uid):
+        """他在她哪个圈（social.circles：老板 / 最亲 / 熟人 / 认识的 / 陌生人 / 别人家的鱼；公开版没有 → ""）"""
+        if social is None or not hasattr(social, "circles"):
+            return ""
+        try:
+            fav = galgame._load() if hasattr(galgame, "_load") else {}
+            bots = set((control.rules().get("bots") or {}).keys())
+            return str(social.circles(fav, OWNER_QQ, bots).get(str(uid), ""))
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _who_sure(w, to_uid, to_name, multi, scene):
+        """「不理 X」的 X 认得准不准（11-02 v1.17.10 阶段1 B11：commit._who 认不出就落到正在说话的人、同名只认后说话的）
+        → 认得准的 QQ 号 / \"\"（是猜的 —— _declare 就不记「不理」那笔）
+        准：没写 /「你」/「对方」（= 正在跟她说话的这个人）；私聊里的「他 / 她」；写的号是正在说话的人或者近 80 条里出现过的；
+            名字（或外号）近 80 条里只有一个号用过（含正在说话的这个人的名片）"""
+        w = str(w or "").strip().lstrip("@").strip()
+        if not w or w in ("你", "对方") or (w in ("他", "她") and scene == "private"):
+            return str(to_uid or "")
+        if w.isdigit() and len(w) >= 5:
+            return w if (w == str(to_uid) or any(w in us for us in (multi or {}).values())) else ""
+        us = set((multi or {}).get(w) or set())
+        if to_name and w == to_name and to_uid:
+            us.add(str(to_uid))
+        return next(iter(us)) if len(us) == 1 else ""
+
+    def _block_clues(self, key, scene, uid, name, mine, ctx):
+        """拉黑的线索（11-02 v1.17.10 阶段1 B3 / B4 / B12）：擦边 / 改设定 / 冒充老板 —— 立案以后放进卷宗给法庭看、控制台能看，不计入任何门槛
+        只看他冲她说的那几条（私聊 / 记忆里标了 to_me 的：@她 / 叫她 / 引用她 / 接她的话 / 本轮找她的那条），他对别人说的旧话不看（B12）；
+        用他本人的原话（own_text：去掉开头「（回复了 X 的「…」）」和转发的聊天记录 B4）；带消息 id：同一条消息命中几类只记一条（B3）
+        幽默提示那边（humor.analyze 给她看的）照旧看全文 —— 这里另跑一遍、只看原话 → 记了几条"""
+        hd = ctx.get("head") or {}
+        hm = {str(x) for x in (hd.get("msg_id"), hd.get("ask_mid")) if x is not None}
+        n = 0
+        for h in mine or []:
+            mid = h.get("mid")
+            if not (scene == "private" or h.get("to_me") or (mid is not None and str(mid) in hm)):
+                continue
+            own = own_text(h.get("text") or "")
+            ks = []
+            if own.strip():
+                a = humor.analyze([own], False, False)
+                ks = [k for k in ("sexy", "jailbreak") if a.get(k)]
+            if h.get("fake_owner"):
+                ks.append("fake_owner")
+            if ks and blocklist.mark(uid, ks, key, own, now=h.get("ts"), name=name, mid=mid):
+                n += 1
+                log(f"[拉黑] {key} 记一条线索「{name}」：{'、'.join(blocklist.KINDS.get(k, k) for k in ks)}（只当线索 不算门槛）")
+        return n
+
+    async def _friend_check(self, uid):
+        """删好友以后核实（11-02 v1.17.10 阶段1 B9）：现查一次好友列表（不用缓存）→ True 还是好友 / False 已经不是 / None 查不到"""
+        try:
+            r = await asyncio.wait_for(self.call("get_friend_list"), 10)
+            data = (r or {}).get("data") if isinstance(r, dict) else None
+            if not isinstance(data, list):
+                return None
+            s = {str(f.get("user_id")) for f in data if isinstance(f, dict)}
+            self.__dict__.setdefault("_friends_cache", {"t": 0.0, "s": None}).update(t=time.time(), s=s)
+            return str(uid) in s
+        except Exception as e:
+            log("[拉黑] 核实好友列表出错:", repr(e)[:80])
+            return None
+
+    def _block_lock(self):
+        """拉黑案执行的全局锁（11-02 v1.17.10 阶段1 B8：两个案子同时到 → 一个一个来、锁里重查名单和今天删了几个）"""
+        lk = self.__dict__.get("_blk_lock")
+        if lk is None:
+            lk = self._blk_lock = asyncio.Lock()
+        return lk
+
+    def _blk_bg(self, coro):
+        """后台跑（留着引用 别被回收；测试里等它跑完）"""
+        t = asyncio.get_running_loop().create_task(coro)
+        s = self.__dict__.setdefault("_blk_tasks", set())
+        s.add(t)
+        t.add_done_callback(s.discard)
+        return t
+
+    async def _her_block(self, key, scene, uid, name, why, is_owner=False, fav=None, circle=None):
+        """状态行 block（11-02 v1.17.6 C80 → v1.17.10 阶段1 走法庭 → 11-03 v1.17.13 小明 批的新流程）：她不想再理这个人
+        立案 → 先不回他、等法庭（占位：现有的冷却先冷却 hold_sec 秒）→ 后台开庭（Opus 单独一个上下文、不退回 DeepSeek）：
+          一审（第一次 / 最亲圈 / 好感 ≥ protect_favor 的人）：放过（马上恢复、什么都不留）/ 冷却（从判完起 cool_hours 小时）
+          二审（「冷却过」的人、不是最亲的）：删除（拉黑 + 删好友 + 清数据）/ 保留（这次核实过至少 1 句 → 冷却；一句都没有 → 放过）
+          没判成（没有法庭 / 关着 / 调不通 / 超时 / 格式不对）：冷却 cool_hours 小时、不升级
+        → 代码核对引用 + 封顶（只往轻里压 blocklist.trial_caps）→ 执行（全局锁）→ 私聊告诉老板 → 给她一行状态（只写事实 E1）
+        冷却中（有法庭、不是最亲的）：他冲她说的话只当证据收着（handle → _block_ev），说完安静 retrial_quiet_sec 秒再审（_rt_watch）
+        审理中（占位）/ 冷却中 / 已经拉黑的又被写 block：不另开庭、不重复通知（2-存疑1：从这里查到立案之间没有 await）
+        谁不能被告（blocklist.gate）：老板 → 什么都不做；fav / circle：调用方在应用这一轮 favor 之前记下的（B2）；没给 → 按现在的算"""
+        if blocklist is None or not blocklist.on() or not uid:
+            return None
+        uid = str(uid)
+        why = re.sub(r"\s+", " ", str(why or "")).strip()[:40] or "没写原因"
+        now = time.time()
+        if blocklist.is_blocked_forever(uid) or blocklist.cooling(uid, now) or blocklist.open_case_of(uid, now):
+            log(f"[拉黑] {key} 她想拉黑「{name}」—— 已经{'在名单里' if blocklist.is_blocked_forever(uid) else '在冷却 / 审理中'}了（不另开庭）")
+            return None
+        if fav is None:
+            fav = (galgame.get(uid, name, is_owner) or {}).get("favor", 0)
+        if circle is None:
+            circle = "老板" if (OWNER_QQ and uid == OWNER_QQ) else self._circle_of(uid)
+        g = blocklist.gate(uid, OWNER_QQ, fav, circle)
+        at = clock.strf("%m-%d %H:%M", now)
+        note = getattr(commit, "note", lambda *a, **k: False)
+        if g["level"] == "owner":
+            log(f"[拉黑] {key} 她想拉黑「{name}」（{why}）→ 是老板：不冷却、不立案")
+            note(uid, f"你 {at} 想拉黑他（{why}）—— 他是你老板：系统不冷却、不立案", conv=key, tell=False)
+            blocklist.note_try(uid, name, why, {"why": "是老板：不冷却、不立案"}, now)
+            return {"result": "老板"}
+        if g["level"] not in ("cool", "case"):
+            return None
+        protect = g["level"] == "cool"     # 最亲圈 / 好感 ≥ protect_favor：只走一审、冷却中不收证据不再审、不进二审 —— 永远不会被判删除
+        day, cap = clock.strf("%Y-%m-%d", now), int(blocklist._f("court_daily"))
+        n_today = blocklist.cases_on(day)
+        if n_today >= cap:                 # 今天送法庭的到上限了（复核 R15）：只冷却、不开庭；第一次超的时候告诉老板一次
+            until = blocklist.start_cool(uid, name, why, key, now=now)
+            if not until:
+                log(f"[拉黑] {key} 她要拉黑「{name}」但 blocklist.json 写不进去（打不开 / 读坏了）→ 这次没冷却")
+                return None
+            till = clock.strf("%m-%d %H:%M", until)
+            log(f"[拉黑] {key} 她想拉黑「{name}」({uid})（{why}）→ 今天已经送法庭 {n_today} 个（每天最多 {cap} 个）：只冷却到 {till}、不开庭")
+            note(uid, f"你 {at} 想拉黑他（{why}）—— 系统先让你们冷却到 {till}；今天送法庭的已经 {n_today} 个了（每天最多 {cap} 个）：只冷却 不升级",
+                 conv=key, tell=False)
+            blocklist.note_try(uid, name, why, {"why": f"今天开庭到上限（{cap} 个）：只冷却到 {till}"}, now)
+            told = self.__dict__.setdefault("_court_cap_told", {})
+            told[day] = told.get(day, 0) + 1
+            if told[day] == 1 and OWNER_QQ:
+                self._blk_bg(self._owner_tell(f"【拉黑】今天送法庭的案子到上限了（每天最多 {cap} 个，config blocklist.court_daily）："
+                                              f"今天之后她再写 block 只冷却、不开庭（明天恢复）。这次是「{name}」({uid})：{why} → 冷却到 {till}", "拉黑"))
+            return {"result": "只冷却", "until": until, "why": "今天开庭到上限"}
+        has_court = court is not None and hasattr(court, "judge_block") and bool(blocklist.C.get("court", True))
+        stage = "二审" if (has_court and not protect and blocklist.cooled_of(uid, now)) else "一审"
+        hold = max(float(blocklist._f("hold_sec")), float(blocklist._f("court_timeout")) + 60)   # 占位要比法庭最多等的久
+        cid = blocklist.new_cid(now)
+        until = blocklist.start_cool(uid, name, why, key, now=now, hours=hold / 3600, case=cid)
+        if not until:
+            log(f"[拉黑] {key} 她要拉黑「{name}」但 blocklist.json 写不进去（打不开 / 读坏了）→ 这次没冷却")
+            return None
+        if not blocklist.open_case(uid, name, why, key, now=now, cool_until=until, stage=stage, evok=has_court and not protect, cid=cid):
+            # 案子写不进去（复核 R17）：只冷却 cool_hours、不开庭（开了也结不了案、开机收尾也管不到）
+            until = blocklist.start_cool(uid, name, why, key, now=now) or until
+            till = clock.strf("%m-%d %H:%M", until)
+            log(f"[拉黑] {key} 她想拉黑「{name}」({uid})（{why}）→ 案子写不进 blocklist.json → 只冷却到 {till}、不开庭")
+            note(uid, f"你 {at} 想拉黑他（{why}）—— 系统先让你们冷却到 {till}；法庭没判成（案子没记上）：只冷却 不升级", conv=key, tell=False)
+            if OWNER_QQ:
+                self._blk_bg(self._owner_tell(f"【拉黑】她想拉黑「{name}」({uid})：{why} → 冷却到 {till}；案子写不进 blocklist.json（打不开 / 读坏了）→ 没开庭", "拉黑"))
+            return {"result": "只冷却", "until": until, "why": "案子没记上"}
+        blocklist.note_try(uid, name, why, {"why": f"立案 {cid}（{stage}）：先不理他、等法庭判"}, now)
+        log(f"[拉黑] {key} 她想拉黑「{name}」({uid})（{why}）→ 立案 {cid}（{stage}" + ("；最亲 / 好感高：只走一审、不会被删除" if protect else "")
+            + f"）：先不理他（占位到 {clock.strf('%H:%M:%S', until)}）、后台开庭")
+        info = {"fav": fav, "close": circle == "最亲", "ai": bool(self._is_ai(uid)),
+                "first": (galgame.get(uid, name, is_owner) or {}).get("first"), "nick": str(getattr(self, "self_nick", "") or "")}
+        if stage == "二审":
+            info["prev"] = blocklist.cooled_of(uid, now)
+        self._blk_bg(self._block_trial(cid, key, scene, uid, name, why, now, until, info))
+        return {"result": "立案", "case": cid, "until": until, "stage": stage}
+
+    def _dossier(self, cid, uid, name, key, why, t0, info):
+        """拼卷宗的材料（11-02 v1.17.10 阶段1；在线程里跑：要翻 window_days 天的存档）→ court.block_input 要的 case
+        他的话从哪来：data/archive/<北京日期>/<对话>.jsonl 里他发的（有消息 id、时间、对话、原文）；赦免之前的不要
+        「冲她说」怎么认（存档里没有 to_me 这个标记 用近似）：
+          私聊 = 冲她；群里 = 记忆（data/memory 的 history / overflow）里那条有 to_me（@她 / 叫她 / 引用她 / 接她的话）；
+          或者存档里没标 re / to（= 没在引用别人、没在接着跟刚 @ 的人说）而且原话里叫了她的名字（OWN_NAMES、@她的名片）/ 开头引用的是她
+        标记：转发（带转发的聊天记录）> 引用别人（开头「（回复了 别人 的…」）> 本人→她 > 本人·没冲她
+        群号不写进卷宗：群 A / 群 B（这个案子的对话排第一）；私聊写「私聊」
+        二审（11-03 v1.17.13；info["prev"] = 他的「冷却过」）：他的话只要上次冷却到期以后的（那以前的已经判过了 不重复算）+ 上次冷却的情况"""
+        now = time.time()
+        days = int(blocklist._f("window_days"))
+        pd = blocklist.pardoned_at(uid)
+        prev = info.get("prev") if isinstance(info.get("prev"), dict) else None
+        since = float(prev.get("last") or 0) if prev else 0.0
+        lim = max(now - days * 86400, pd + 0.001, since)
+        me = {n for n in (list(OWN_NAMES) + [GROUP_CARD, BOT_NAME, str(info.get("nick") or "")]) if n}
+        at_me = "@" + (GROUP_CARD or BOT_NAME)
+        rows, needle = [], f'"uid": "{uid}"'
+        for i in range(days + 1):
+            d = ARCHIVE / clock.strf("%Y-%m-%d", now - i * 86400)
+            if not d.is_dir():
+                continue
+            for p in d.glob("*.jsonl"):
+                ck = p.stem
+                his = ck == f"private_{uid}"
+                if ck.startswith("private_") and not his:
+                    continue                   # 别人的私聊里没有他的话
+                try:
+                    txt = p.read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                for ln in txt.splitlines():
+                    if not his and needle not in ln:
+                        continue
+                    try:
+                        e = json.loads(ln)
+                    except ValueError:
+                        continue
+                    if not isinstance(e, dict) or e.get("role") != "user" or e.get("prank") or e.get("auto"):
+                        continue
+                    if str(e.get("uid") or (uid if his else "")) != uid:
+                        continue
+                    ts = float(e.get("ts") or 0)
+                    if lim <= ts <= now + 60:
+                        rows.append((ts, ck, e))
+        to_me, gone = set(), set()
+        for ck in {c for _, c, _ in rows} | {key}:
+            m = safeio.read_json(mem_file(ck), None)
+            for h in ((m or {}).get("overflow") or []) + ((m or {}).get("history") or []) if isinstance(m, dict) else []:
+                if isinstance(h, dict) and h.get("role") == "user" and str(h.get("uid") or "") == uid and h.get("mid") is not None:
+                    if h.get("to_me"):
+                        to_me.add(str(h["mid"]))
+                    if h.get("recalled"):
+                        gone.add(str(h["mid"]))
+        code = {}
+
+        def where(ck):
+            if ck.startswith("private_"):
+                return "私聊"
+            if ck not in code:
+                k = len(code)
+                code[ck] = "群 " + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[k % 26] + (str(k // 26 + 1) if k >= 26 else "")
+            return code[ck]
+        here = where(key)
+        msgs, seen, names = [], set(), []
+        for ts, ck, e in sorted(rows, key=lambda r: r[0]):
+            mid = e.get("mid")
+            k2 = (ck, str(mid)) if mid is not None else (ck, ts)
+            if k2 in seen:
+                continue
+            seen.add(k2)
+            text = str(e.get("text") or "")
+            own = own_text(text)
+            qm = re.match(r"^（回复了 (.{0,40}?) 的「", text)
+            qwho = qm.group(1).strip() if qm else ""
+            ats = re.findall(r"@([^\s@]{1,30})", own)
+            at_other = any(not any(a.startswith(n) for n in me) for a in ats) and at_me not in own
+            named = at_me in own or any(n.lower() in own.lower() for n in OWN_NAMES)
+            core = re.sub(r"[\s，,。.!！?？~～…]+", "", own)
+            vocative = at_me in own or "你" in own or any(core.startswith(n) or core.endswith(n) for n in OWN_NAMES)
+            if "[转发的聊天记录" in text:
+                tag = blocklist.TAG_FWD
+            elif qwho and qwho not in me:
+                tag = blocklist.TAG_QUOTE
+            elif at_other and qwho not in me:      # @了别人（不是她）、也没引用她 = 在跟别人说（复核 R9）
+                tag = blocklist.TAG_NOT
+            elif ck.startswith("private_") or (mid is not None and str(mid) in to_me) or \
+                    (not e.get("re") and not e.get("to") and (qwho in me or (named and vocative))):
+                tag = blocklist.TAG_OWN            # 存档里只是提到她的名字：还得像是在叫她（@她 / 带「你」/ 名字在开头或结尾）才算（R9）
+            else:
+                tag = blocklist.TAG_NOT
+            msgs.append({"t": ts, "mid": mid, "uid": uid, "conv": ck, "where": where(ck), "tag": tag, "text": text,
+                         "recalled": mid is not None and str(mid) in gone})
+            nm = clean_name(e.get("name") or "")
+            if nm and nm not in names:
+                names.append(nm)
+        m = safeio.read_json(mem_file(key), None)
+        ctx = [("她" if h.get("role") == "assistant" else (h.get("name") or "某人"), str(h.get("text") or ""))
+               for h in ((m or {}).get("history") or [])[-20:]
+               if isinstance(h, dict) and float(h.get("ts") or 0) > pd] if isinstance(m, dict) else []   # 赦免之前的也不给
+        clues = [{"mid": x.get("mid"), "t": x.get("t"), "kinds": [k for k in blocklist.kinds_of(x) if k in blocklist.CLUE_KINDS]}
+                 for x in blocklist.marks(uid, now, kinds=blocklist.CLUE_KINDS)]
+        prevs = [{"t": c.get("t"), "verdict": c.get("verdict") or "", "reason": c.get("reason") or "",
+                  "result": c.get("result") or c.get("state") or ""} for c in blocklist.cases(uid, after=pd) if c.get("id") != cid]
+        pc = None
+        if prev:                           # 二审：上次冷却（那个案子还在、没被删数据 → 原因、理由、当时核实过的原话；过期了只剩次数和时间）
+            pc = {"n": prev.get("n"), "last": prev.get("last")}
+            c0 = blocklist.case(str(prev.get("case") or "")) or {}
+            if c0 and not c0.get("wiped"):
+                pc.update(t=c0.get("t"), why=c0.get("why"), stage=c0.get("stage") or "一审", verdict=c0.get("verdict"), reason=c0.get("reason"),
+                          quotes=c0.get("quotes") or [])
+        return {"uid": uid, "name": name, "names": names, "fav": info.get("fav"), "close": info.get("close"), "ai": info.get("ai"),
+                "first": info.get("first"), "prev": prevs, "why": why, "since": since or None, "prev_cool": pc,
+                "favor_min": [x.get("t") for x in blocklist.marks(uid, now, kinds=("favor_min",))],
+                "ignore": [x.get("t") for x in blocklist.marks(uid, now, kinds=("ignore",))],
+                "clues": clues, "msgs": msgs, "ctx": ctx, "where": here, "now": now, "days": days,
+                "limit": int(blocklist._f("case_msgs"))}
+
+    async def _block_trial(self, cid, key, scene, uid, name, why, t0, until, info):
+        """后台庭审（一审 / 二审；11-02 v1.17.10 阶段1 → 11-03 v1.17.13）：卷宗 → 法庭（只走 Claude）→ 锁里：核对引用 → 封顶 → 执行 → 结案
+        → 锁外：私聊告诉老板、给她状态；判了冷却、占位期间他冲她说过话 → 接着按冷却中的规矩等他说完再审（_rt_kick）
+        法庭失败（没有 / 关着 / 用不了 / 调不通 / 超时 / 格式不对）一律不升级：冷却 cool_hours 小时
+        执行到一半出错：已经执行了的照实记（复核 R7）；什么都还没做的按没判成（冷却 cool_hours 小时）"""
+        v, fail, meta = None, "", {}
+        stage = (blocklist.case(cid) or {}).get("stage") or "一审"
+        if court is None or not hasattr(court, "judge_block"):
+            fail = "这个版本没有法庭 只冷却"
+        elif not blocklist.C.get("court", True):
+            fail = "法庭关着（config blocklist.court = false）只冷却"
+        else:
+            try:
+                case = await asyncio.to_thread(self._dossier, cid, uid, name, key, why, t0, info)
+                case["stage"] = stage
+                to = max(5.0, float(blocklist._f("court_timeout")))      # 法庭最多等多久（court.block_llm 只走 Claude 绝不退回 DeepSeek）
+                v = await asyncio.wait_for(court.judge_block(case, court.block_llm(key, uid, to, meta, log), log=log), to + 20)
+                if not v.get("ok"):
+                    fail = v.get("why") or "法庭没判成"
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                fail = "法庭超时"
+            except Exception as e:
+                fail = f"法庭出错（{type(e).__name__}）"
+        out, st = None, {"done": ""}
+        try:                               # （11-03 v1.17.13 合并复查）判完了、等锁之前把占位续上：别的案子在锁里删好友 / 清数据可能要几十秒，
+            #                                 占位到点了他就又被回、冷却中的证据也不收了（只续这个案子的那一项；撤销了 / 判过了不动）
+            getattr(blocklist, "keep_hold", lambda *a, **k: False)(uid, cid, time.time() + 600)
+        except Exception as e:
+            log("[拉黑] 续占位出错:", repr(e)[:80])
+        async with self._block_lock():
+            try:
+                out = await self._block_exec(cid, key, uid, name, why, t0, until, v, fail, meta, st)
+            except Exception as e:
+                log("[拉黑] 执行出错:", repr(e)[:150])
+                e2 = blocklist.blocked_list().get(str(uid)) or {} if blocklist.is_blocked_forever(uid) else {}
+                did = st.get("done") or ("拉黑" if e2.get("case") == cid else "")
+                res = did or "没判成"
+                rwhy = f"执行到一半出错（{type(e).__name__}）" + ("：已经执行了、记录可能没写全" if did else "")
+                u2 = until
+                if not did:                    # 什么都还没做：按没判成 冷却 cool_hours 小时（11-03 v1.17.13：占位到点就恢复太轻）
+                    try:
+                        u2 = blocklist.start_cool(uid, name, why, key, hours=float(blocklist._f("cool_hours")), case=cid) or until
+                    except Exception as e4:
+                        log("[拉黑] 冷却也没记上:", repr(e4)[:100])
+                try:
+                    blocklist.close_case(cid, result=res, result_why=rwhy, cool_until=int(u2), ev=[])
+                except Exception as e3:
+                    log("[拉黑] 记结果也出错:", repr(e3)[:100])
+                out = {"result": res, "why": rwhy, "v": v if did else None, "ok": [], "cp": {}, "meta": meta, "broken": True,
+                       "until": u2, "stage": stage}
+        try:
+            await self._block_tell(cid, key, uid, name, why, t0, until, out)
+        except Exception as e:
+            log("[拉黑] 告诉老板 / 给她状态出错:", repr(e)[:120])
+        if out and out.get("result") == "冷却" and (blocklist.case(cid) or {}).get("state") == "冷却中":
+            self._rt_kick(cid)             # 占位期间他冲她说过话：判了冷却以后照冷却中的规矩等他说完再审（11-03 v1.17.13）
+        return out
+
+    def _keep_safe(self, uid):
+        """删除之前再看一眼保护（11-03 v1.17.13 合并复查）→ 不能删的原因 / ""：老板、最亲圈、好感 ≥ protect_favor（庭审期间老板在控制台改了好感也算）；
+        好感一时读不出来（favor.json 被占着 / 读出错）→ 也当不能删（不可逆的事往保守的方向）"""
+        try:
+            fav = galgame._load() if hasattr(galgame, "_load") else {}
+        except Exception:
+            fav = None
+        if not isinstance(fav, dict) or isinstance(fav, safeio.Unsaved):
+            return "好感一时读不出来（favor.json 被占着）：这次不删"
+        rec = fav.get(str(uid))
+        fv0 = rec.get("favor", 0) if isinstance(rec, dict) else 0
+        g = blocklist.gate(uid, OWNER_QQ, fv0, self._circle_of(uid))
+        return "" if g.get("level") == "case" else f"{g.get('why') or '受保护'}：不会被删除"
+
+    async def _block_exec(self, cid, key, uid, name, why, t0, until, v, fail, meta, st=None):
+        """锁里（一审 / 二审；11-02 v1.17.10 阶段1 → 11-03 v1.17.13）：重查（撤销了 / 已经在名单里 / 删了数据）→ 核对引用 → 封顶 → 执行 → 结案、记法庭日志
+        放过 → 占位马上结束（什么都不留：占位期间收的证据也扔）；
+        冷却 → 从现在起 cool_hours 小时、好感 −cool_favor_drop、记「冷却过」；收证据的案子（有法庭、不是最亲的）转「冷却中」（冷却期间收证据 / 再审）；
+        删除（二审）→ _block_remove（拉黑 → 删好友 → 清数据）；没判成 → 冷却 cool_hours 小时、不升级
+        st["done"]：已经执行到哪一步（出错时照实记 R7）；庭审期间删了他的数据（案子带 wiped）→ 名单 / 日志 / 通知里不写名字、原因、原话（R11；
+        删除那一步每个 await 之后都重查 Codex F1）"""
+        st = st if isinstance(st, dict) else {}
+        now = time.time()
+        c0 = blocklist.case(cid) or {}
+        stage = c0.get("stage") or "一审"
+        table = (v or {}).get("table") or {}
+        ok, cp, extra, fv = [], {"result": "", "why": "", "n": 0, "days": 0}, {}, None
+        till = until
+        wiped = bool(c0.get("wiped"))
+        if wiped:
+            name, why = "", "（删数据时抹掉了）"
+        if blocklist.pardoned_at(uid) >= t0:
+            res, rwhy = "撤销了", "老板在控制台撤销了（庭审期间）"
+        elif blocklist.is_blocked_forever(uid):
+            res, rwhy = "已经在名单里", ""
+        elif fail:
+            res, rwhy = "没判成", fail
+        else:
+            ok = blocklist.verify(v.get("cites"), table, uid, now)
+            cp = blocklist.trial_caps(stage, v.get("verdict"), ok)
+            ok = cp.get("ok", ok)
+            res, rwhy = cp["result"], cp["why"]
+        if res == "删除":
+            pw = self._keep_safe(uid)      # 庭审期间成了她最亲的人 / 好感 ≥ protect_favor（老板在控制台改了好感）→ 不删（11-03 合并复查：照再审那样再看一眼）
+            if pw:
+                res, rwhy = ("冷却" if len(ok) >= int(blocklist._f("cool_min")) else "放过"), pw
+        if res == "删除":
+            extra = await self._block_remove(cid, key, uid, name, why, t0, ok, now, st)
+            res, rwhy = extra.get("result") or res, extra.get("why") or rwhy
+            fv = extra.get("favor")
+            till = extra.get("until") or till
+            if extra.get("wiped"):
+                wiped, name, why, ok = True, "", "（删数据时抹掉了）", []
+        elif res in ("冷却", "没判成"):
+            u2 = blocklist.start_cool(uid, name, why, "" if wiped else key, now=now, hours=float(blocklist._f("cool_hours")), case=cid)
+            if u2:
+                till = u2
+                st["done"] = "冷却"
+                if res == "冷却":
+                    if not wiped:
+                        fv = self._court_favor(uid, cid, "冷却")
+                    blocklist.mark_cooled(uid, u2, cid, now)
+            else:
+                rwhy = (rwhy + "；" if rwhy else "") + "blocklist.json 写不进去：冷却没记上（占位到点就恢复）"
+        elif res == "放过":
+            blocklist.end_cool(uid, cid, now)
+        vd = (v or {}).get("verdict", "") if (v and not fail) else ""
+        reason = "" if wiped else ((v or {}).get("reason", "") if vd else "")
+        fields = dict(verdict=vd, kind=(v or {}).get("kind", "") if vd else "", reason=reason,
+                      cites=list((v or {}).get("cites") or []) if vd else [], n_ok=cp.get("n", 0), days=cp.get("days", 0),
+                      result=res, result_why=rwhy, cool_until=int(till), model=meta.get("model", ""),
+                      ms=meta.get("ms") or (v or {}).get("ms") or 0, usd=meta.get("usd", 0.0), err=meta.get("err", ""))
+        if ok and not wiped and res in ("冷却", "删除", "拉黑"):     # 核实过的原话（再审 / 二审给法庭看「立案时的情况」「上次冷却」用；每句 ≤60 字）
+            fields["quotes"] = [{"n": m.get("n"), "t": m.get("t"), "text": re.sub(r"\s+", " ", own_text(m.get("text")))[:60]} for m in ok[:6]]
+        if fv:
+            fields["favor"] = fv
+        for k in ("friend", "wipe"):
+            if extra.get(k):
+                fields[k] = extra[k]
+        if res in ("放过", "没判成", "已经在名单里"):
+            fields["ev"] = []              # 放过：什么都不留；没判成 / 已经在名单里：不会再审 占位期间收的用不上
+        if res == "冷却" and c0.get("evok") and st.get("done") == "冷却" and till > now:
+            blocklist.update_case(cid, state="冷却中", **fields)    # 冷却期间收证据 / 再审；到点由再审的去抖 / 开机 / 下次立案顺手结案
+        else:
+            blocklist.close_case(cid, **fields)
+        shadowlog.write("court", {"ev": "block", "id": cid, "stage": stage, "conv": key, "uid": uid, "verdict": vd,
+                                  "kind": (v or {}).get("kind", "") if vd else "", "reason": reason[:60],
+                                  "cites": list((v or {}).get("cites") or []) if vd else [],
+                                  "ok": [{"n": m.get("n")} if wiped else {"n": m.get("n"), "text": re.sub(r"\s+", " ", own_text(m.get("text")))[:60]}
+                                         for m in ok],
+                                  "days": cp.get("days", 0), "result": res, "why": rwhy, "model": meta.get("model", ""),
+                                  "ms": meta.get("ms") or (v or {}).get("ms") or 0, "usd": meta.get("usd", 0.0)},
+                        now, (court.C.get("keep_days", 30) if court is not None else 30))
+        log(f"[拉黑] 案子 {cid}（{stage}）「{name}」({uid})：" + (f"法庭判 {vd}（{(v or {}).get('kind')}：{reason}）"
+                                                               f"引用 {(v or {}).get('cites')} 核实 {cp.get('n', 0)} 句 → " if vd else "")
+            + f"{res}" + (f"（{rwhy}）" if rwhy else "") + (f"；好感 {fv['before']}→{fv['after']}" if fv else ""))
+        return {"result": res, "why": rwhy, "v": v if vd else None, "ok": [] if wiped else ok, "cp": cp, "meta": meta, "wiped": wiped,
+                "until": till, "stage": stage, "favor": fv, "friend": extra.get("friend", ""), "wipe": extra.get("wipe", ""),
+                "evok": bool(c0.get("evok"))}
+
+    async def _block_delete(self, uid, name, why, ok, cid, now, t0=0.0):
+        """auto 模式真删好友（锁里调 11-02 v1.17.10 阶段1）：先落盘「进行中」（幂等键 = QQ + 北京日期 B18）→ 调之前再查一次撤销（R6）→ delete_friend
+        → 超时 / 出错：查一次好友列表（B9）→ (删了 / 没删 / 不确定 / 拉黑（今天已经删过他）/ 撤销了, 出错的说明)"""
+        day = clock.strf("%Y-%m-%d", now)
+        if not blocklist.pending_start(uid, day, {"case": cid, "name": name}, now):
+            log(f"[拉黑] 「{name}」({uid}) 今天已经在删 / 删过了（幂等）→ 这次不再调 delete_friend")
+            return "拉黑", "今天已经处理过他的删好友"
+        if t0 and blocklist.pardoned_at(uid) >= t0:
+            blocklist.pending_end(uid, day, "撤销了", "删之前老板撤销了")
+            return "撤销了", "删之前老板在控制台撤销了"
+        r, err = None, ""
+        try:
+            r = await asyncio.wait_for(self.call("delete_friend", user_id=int(uid)), 15)
+        except asyncio.TimeoutError:
+            err = "超时"
+        except Exception as e:
+            err = repr(e)[:80]
+        data = (r or {}).get("data") if isinstance(r, dict) else None
+        good = isinstance(r, dict) and r.get("retcode") == 0 and not (isinstance(data, dict) and data.get("valid") is False)
+        if good:
+            res = "删了"
+        else:
+            err = err or ("NapCat 没回" if r is None else str(r)[:80])
+            fs = await self._friend_check(uid)
+            res = "删了" if fs is False else ("没删" if fs is True else "不确定")
+        if (blocklist.case(cid) or {}).get("wiped"):   # 删好友那十几秒里删了他的数据 → 记录里不写名字、原因、原话（11-03 v1.17.13 Codex F1）
+            name, why, ok = "", "（删数据时抹掉了）", []
+        blocklist.note_delete(uid, name, why, res == "删了", err=err, ms=ok, now=now, result=res, case=cid)
+        if res == "删了":
+            blocklist.mark_deleted(uid)
+            self.__dict__.get("_friends_cache", {}).update(t=0.0)
+        blocklist.pending_end(uid, day, res, err)
+        log(f"[拉黑] 删好友「{name}」({uid})：{res}" + (f"（{err}；查了好友列表）" if err else ""))
+        return res, err
+
+    async def _block_tell(self, cid, key, uid, name, why, t0, until, out):
+        """结案以后（锁外；一审 / 二审）：每个案子都私聊告诉老板（判了什么、核实几句、结果、好感扣了多少、现在多少）；
+        给她一行状态（只写事实 E1：放过 / 冷却到几点 / 没判成 / 撤销了；删除只说以后不会再理他了）
+        给她的状态都用 commit.note(…, tell=False)：后面不带「跟他说一声」（不通知被告）；法庭的理由给她之前去掉引号里的话、带建议的整句不给（R8）
+        删了他的数据（wiped：庭审期间别人删的 / 判删除自己清的）→ 不给她状态、老板那条不写名字和原话（R11 / Codex F1）"""
+        out = out or {}
+        res, rwhy, v, ok, cp, meta = out.get("result"), out.get("why") or "", out.get("v"), out.get("ok") or [], out.get("cp") or {}, out.get("meta") or {}
+        stage = out.get("stage") or "一审"
+        wiped = bool(out.get("wiped"))
+        if wiped:
+            name, why = "", "（删数据时抹掉了）"
+        at, till = clock.strf("%m-%d %H:%M", t0), clock.strf("%m-%d %H:%M", out.get("until") or until)
+        note = getattr(commit, "note", lambda *a, **k: False)
+        head = f"你 {at} 想拉黑他（{why}）—— "
+        vd = (v or {}).get("verdict") or ""
+        rs = _reason_for_her((v or {}).get("reason"))
+        rsx = f"（{rs}）" if rs else ""
+        if wiped:
+            pass
+        elif res == "撤销了":
+            note(uid, head + "老板在控制台撤销了：不冷却了", conv=key, tell=False)
+        elif res == "没判成":
+            note(uid, head + (f"系统让你们冷却到 {till}；" + ("这个版本没有法庭 只冷却" if "没有法庭" in rwhy else f"法庭没判成（{rwhy}）：只冷却 不升级")),
+                 conv=key, tell=False)
+        elif res == "放过":
+            note(uid, head + (f"法庭判{vd}{rsx}：不冷却" if vd in ("放过", "保留") else f"法庭判{vd}，但代码核对他冲你说的话不够（{rwhy}）：放过 不冷却"),
+                 conv=key, tell=False)
+        elif res == "冷却":
+            note(uid, head + f"法庭判{vd}{rsx}" + (f"，核对下来不够删除（{rwhy}）" if vd == "删除" and rwhy else "")
+                 + f"：你们冷却到 {till}", conv=key, tell=False)
+        elif res in ("删除", "拉黑"):
+            note(uid, head + "以后不会再理他了", conv=key, tell=False)
+        if not OWNER_QQ:
+            return
+        if res == "冷却":
+            did = (f"冷却到 {till}（所有群和私聊不理他）" + (
+                f"；冷却期间他冲她说的话只当证据收着（她看不到），说完安静 {int(blocklist._f('retrial_quiet_sec')) // 60} 分钟再审"
+                f"（最多 {int(blocklist._f('retrial_max'))} 次）" if out.get("evok") else "；他是她最亲的人 / 好感高：冷却中不再审、不会被删除"))
+        else:
+            did = {"放过": "放过 → 不冷却、马上恢复正常（什么都不留）",
+                   "删除": f"删除：拉黑（所有群和私聊都不理他、他再加好友自动拒绝）；删好友：{out.get('friend') or '—'}；清数据：{out.get('wipe') or '—'}",
+                   "拉黑": f"只拉黑（{rwhy}）", "没判成": f"法庭没判成（{rwhy}）→ 不升级 只冷却到 {till}",
+                   "撤销了": "你在控制台撤销了（庭审期间）→ 不执行",
+                   "已经在名单里": "他已经在拉黑名单里了（别的案子先拉黑了）→ 这个案子不再执行"}.get(res, res)
+        who = f"「{name}」({uid})" if name else f"({uid}，他的数据删了)"
+        lines = [f"【拉黑案 {cid}·{stage}】{who}", f"她 {at} 写的原因：{why}（先不理他、等法庭判）"]
+        if v:
+            lines.append(f"法庭（{meta.get('model') or 'Claude'}" + (f"，{float(meta.get('ms') or 0) / 1000:.0f} 秒" if meta.get("ms") else "")
+                         + (f"，${float(meta.get('usd') or 0):.3f}" if meta.get("usd") else "") + f"）判：{v.get('verdict')}｜{v.get('kind')}｜"
+                         f"{'（删了数据 不写）' if wiped else (v.get('reason') or '没写理由')}｜引用 {' '.join('#' + str(n) for n in v.get('cites') or []) or '无'} → "
+                         f"代码核实 {cp.get('n', 0)} 句")
+        lines.append(f"结果：{did}" + (f"（降级：{rwhy}）" if rwhy and res in ("放过", "冷却") and v and not out.get("broken") else "")
+                     + (f"（{rwhy}）" if out.get("broken") else ""))
+        fv = out.get("favor")
+        if fv:
+            lines.append(f"好感：−{fv.get('n')}（{fv.get('before')} → {fv.get('after')}）" if fv.get("n") else "好感：已经是 0（没再扣）")
+        if ok and not wiped:
+            lines.append("被引用的原话：" + "；".join(f"#{m.get('n')} {clock.strf('%m-%d %H:%M', m.get('t'))}「{own_text(m.get('text'))[:40]}」"
+                                                 for m in ok[:4]))
+        if res not in ("撤销了",):
+            lines.append("要撤：控制台「群和人 → 她拉黑的人」（撤销 = 解除拉黑和冷却、清掉「冷却过」，之前的线索、案子不再算；删掉的好友要他重新加；清掉的数据回不来）")
+        await self._owner_tell("\n".join(lines), "拉黑")
+
+    async def _block_boot(self):
+        """开机（连上 NapCat 以后一次 11-02 v1.17.10 阶段1 B18 → 11-03 v1.17.13）：
+        ① 还「进行中」的删好友（调用期间重启了）→ 查一次好友列表核实 记 删了 / 没删 / 不确定
+        ② 卡在「审理中」的案子（一审 / 二审到一半重启了）：重启前已经执行了（名单里那一项是这个案号 / 有它的删好友）→ 照实记（复核 R7）；
+           没执行 → 按没判成：冷却 cool_hours 小时（从立案那一刻算）、不升级、给她一行状态；占位期间收的证据扔掉（不会再审）
+        ③ 冷却中的案子：再审到一半重启了 → 那次再审按不动记；冷却到点了 → 结案；还有没审的证据 → 接着等他说完再审（证据不丢）
+        ①② 有的话私聊告诉老板一次；只管这次开机之前的（开机以后新立的案、新起的再审不碰）"""
+        try:                               # （11-03 v1.17.13 合并复查）② 里没执行的那种：先把冷却写上再等 —— 开机补回（_catch_up）马上就跑，
+            #                                 等 15 秒再写 占位到点以后他发的就已经被补回、回过了；庭审期间老板撤销了的不冷却
+            for c in blocklist.stuck_cases():
+                e0 = blocklist.blocked_list().get(str(c.get("uid"))) or {}
+                if float(c.get("t") or 0) < START_TS and e0.get("case") != c.get("id") and not c.get("pardoned") \
+                        and blocklist.pardoned_at(c.get("uid")) < float(c.get("t") or 0):
+                    blocklist.start_cool(c.get("uid"), c.get("name") or "", c.get("why") or "", c.get("conv") or "",
+                                         now=float(c.get("t") or time.time()), hours=float(blocklist._f("cool_hours")), case=c.get("id"))
+        except Exception as e:
+            log("[拉黑] 开机先冷却出错:", repr(e)[:100])
+        await asyncio.sleep(15)
+        told, done = [], {}
+        try:
+            note = getattr(commit, "note", lambda *a, **k: False)
+            for p in blocklist.pending_open():
+                if float(p.get("t") or 0) >= START_TS:
+                    continue
+                fs = await self._friend_check(p.get("uid"))
+                res = "删了" if fs is False else ("没删" if fs is True else "不确定")
+                blocklist.pending_end(p.get("uid"), p.get("day"), res, "重启后核实")
+                blocklist.note_delete(p.get("uid"), p.get("name") or "", "（重启后核实）", res == "删了", err="重启后核实", result=res,
+                                      case=p.get("case") or "")
+                if res == "删了":
+                    blocklist.mark_deleted(p.get("uid"))
+                if p.get("case"):
+                    done[str(p["case"])] = res
+                log(f"[拉黑] 开机：删「{p.get('name') or p.get('uid')}」好友的时候程序重启了 → 查了好友列表：{res}")
+                told.append(f"删「{p.get('name') or p.get('uid')}」({p.get('uid')}) 好友的时候程序重启了 → 开机查了好友列表：{res}")
+            for c in blocklist.stuck_cases():
+                if float(c.get("t") or 0) >= START_TS:
+                    continue
+                e = blocklist.blocked_list().get(str(c.get("uid"))) or {}
+                if e.get("case") == c.get("id") or str(c.get("id")) in done:     # 重启前已经执行了（R7）
+                    res = done.get(str(c.get("id"))) or "拉黑"
+                    blocklist.close_case(c["id"], result=res, result_why="重启前已经执行了（结案的记录没写完 开机补上）")
+                    log(f"[拉黑] 开机：案子 {c.get('id')}「{c.get('name')}」重启前已经执行了 → 记「{res}」")
+                    told.append(f"案子 {c.get('id')}「{c.get('name')}」({c.get('uid')})：重启前已经执行了 → {res}（结案的记录开机补上了）")
+                    continue
+                if c.get("pardoned") or blocklist.pardoned_at(c.get("uid")) >= float(c.get("t") or 0):   # 庭审期间老板撤销了：结案、不冷却（11-03 合并复查）
+                    blocklist.close_case(c["id"], result="撤销了", result_why="老板在控制台撤销了（庭审到一半程序重启了）", ev=[])
+                    log(f"[拉黑] 开机：案子 {c.get('id')}「{c.get('name')}」庭审期间老板撤销了 → 结案 不冷却")
+                    continue
+                u2 = blocklist.start_cool(c.get("uid"), c.get("name") or "", c.get("why") or "", c.get("conv") or "", now=float(c.get("t") or time.time()),
+                                          hours=float(blocklist._f("cool_hours")), case=c.get("id")) or 0
+                blocklist.close_case(c["id"], result="没判成", result_why="重启（庭审到一半程序重启了）", cool_until=int(u2 or c.get("cool_until") or 0), ev=[])
+                till = clock.strf("%m-%d %H:%M", u2) if u2 else ""
+                if u2 > time.time():
+                    note(c.get("uid"), f"你 {clock.strf('%m-%d %H:%M', c.get('t'))} 想拉黑他（{c.get('why') or '没写原因'}）—— 系统让你们冷却到 "
+                                       f"{till}；法庭没判成（程序重启了）：只冷却 不升级", conv=c.get("conv"), tell=False)
+                log(f"[拉黑] 开机：案子 {c.get('id')}（{c.get('stage') or '一审'}）「{c.get('name')}」上次没审完 → 记「没判成（重启）」，冷却到 {till or '（已经到点）'}")
+                told.append(f"案子 {c.get('id')}「{c.get('name')}」({c.get('uid')})：上次庭审到一半程序重启了 → 没判成，不升级（冷却到 {till or '已经到点'}）")
+            blocklist.sweep()
+            for c in blocklist.cooling_cases():          # 冷却中的（11-03 v1.17.13）：证据不丢、接着按规矩再审
+                rr = c.get("rt_run")
+                if rr and float(rr) < START_TS:
+                    blocklist.retrial_end(c["id"], {"t": int(time.time()), "k": len(c.get("retrials") or []) + 1, "verdict": "", "result": "不动",
+                                                    "why": "重启（再审到一半程序重启了）"})
+                    log(f"[拉黑] 开机：案子 {c.get('id')} 上次再审到一半程序重启了 → 这次再审按不动记")
+                if blocklist.ev_due(c):             # 还有没审的、他冲她说的话
+                    self._rt_kick(c["id"])
+        except Exception as e:
+            log("[拉黑] 开机收尾出错:", repr(e)[:120])
+        if told and OWNER_QQ:
+            await self._owner_tell("【拉黑】开机收尾：\n" + "\n".join(told[:8]), "拉黑")
+
+    def _court_favor(self, uid, cid, what):
+        """法庭判冷却 / 删除（核实过至少 1 句；11-03 v1.17.13）→ 他的好感 −cool_favor_drop（最低 0、不排好感事件）
+        galgame.court_drop 是私有的（公开空壳没有 → 不扣）→ {"before", "after", "n"} / None"""
+        fn = getattr(galgame, "court_drop", None)
+        try:
+            n = int(blocklist._f("cool_favor_drop"))
+        except (TypeError, ValueError):
+            n = 0
+        if not fn or n <= 0:
+            return None
+        try:
+            return fn(uid, n, f"法庭判{what}（案子 {cid}）", log)
+        except Exception as e:
+            log("[拉黑] 扣好感出错:", repr(e)[:80])
+            return None
+
+    async def _block_remove(self, cid, key, uid, name, why, t0, ok, now, st=None):
+        """删除（二审 / 再审判的；11-03 v1.17.13 锁里调）：先拉黑 → 再删好友（是好友才删；delete_mode）→ 最后清数据（wipe_mode）；好感 −cool_favor_drop
+        每天最多 delete_daily 个（影子模式的「本来会删 / 本来会清」也算）：超了只拉黑（不删好友、不清数据）
+        每个 await 之后都重查撤销（R6）和删数据（Codex F1：删了 → 名单 / 记录 / 通知里不写名字、原因、原话）
+        → {"result": 删除 / 拉黑 / 冷却（名单写不进去）/ 撤销了, "why", "friend", "wipe", "wiped", "favor", "until"}"""
+        st = st if isinstance(st, dict) else {}
+        out = {"result": "删除", "why": "", "friend": "", "wipe": "", "wiped": False, "favor": None}
+
+        def gone():
+            return bool((blocklist.case(cid) or {}).get("wiped"))
+
+        def pardoned():
+            return blocklist.pardoned_at(uid) >= t0
+        friend = await self._is_friend(uid) if self.ws else None
+        if gone():                         # Codex F1：查好友列表那几秒里删了他的数据
+            name, why, ok, out["wiped"] = "", "（删数据时抹掉了）", [], True
+        if pardoned():                     # 查好友列表那几秒里老板撤销了（R6）
+            return dict(out, result="撤销了", why="老板在控制台撤销了（庭审期间）")
+        daily = max(0, int(blocklist._f("delete_daily")))
+        dn = blocklist.deleted_today(now)
+        w = out["wiped"]
+        if not blocklist.add_block(uid, blocklist.entry(uid, name, why, "" if w else key, [] if w else ok, now, case=cid)):
+            u2 = blocklist.start_cool(uid, name, why, "" if w else key, now=now, hours=float(blocklist._f("cool_hours")), case=cid)
+            return dict(out, result="冷却", why="blocklist.json 写不进去 → 没拉黑（照旧冷却）", until=u2 or 0)
+        st["done"] = "拉黑"
+        if not w:
+            out["favor"] = self._court_favor(uid, cid, "删除")
+        if dn >= daily:
+            return dict(out, result="拉黑", why=f"今天已经删除了 {dn} 个（每天最多 {daily} 个）：只拉黑、不删好友、不清数据")
+        auto = blocklist.wipe_mode() == "auto"
+        plan = "清数据中" if auto else "本来会清"
+        if friend is True:
+            if blocklist.delete_mode() != "auto":
+                blocklist.note_delete(uid, name, why, False, ms=[] if w else ok, now=now, result="本来会删", shadow=True, case=cid, wipe=plan)
+                out["friend"] = "本来会删"
+            else:
+                r, err = await self._block_delete(uid, name, why, [] if w else ok, cid, now, t0=t0)
+                out["friend"] = "今天已经处理过他的删好友" if r == "拉黑" else r
+                out["why"] = err if r != "删了" else ""
+                blocklist.note_wipe(cid, plan)
+                if gone() and not w:       # Codex F1：删好友那十几秒里删了他的数据
+                    w = out["wiped"] = True
+        else:
+            out["friend"] = "不是好友（不用删）" if friend is False else "查不到好友列表（没删）"
+            blocklist.note_delete(uid, name, why, False, ms=[] if w else ok, now=now, result=out["friend"], case=cid, wipe=plan)
+        st["done"] = "删除"
+        if pardoned():                     # 删好友那十几秒里老板撤销了：不清数据
+            return dict(out, result="撤销了", why=f"执行到一半老板在控制台撤销了（删好友：{out['friend']}）", wipe="撤销了（没清）")
+        if auto:                           # 最后清数据（11-03 v1.17.13 wipe_mode auto：调机器人删数据的流程；名单里他那一项留着、名字原因抹掉）
+            try:
+                rep = await self.wipe_person(uid, "法庭判删除")
+                busy = (rep or {}).get("busy") or []
+                out["wipe"] = "清了" + (f"（{len(busy)} 个文件一时打不开 没清到）" if busy else "")
+            except Exception as e:
+                out["wipe"] = f"清数据出错（{type(e).__name__}）"
+            out["wiped"] = True
+            blocklist.note_wipe(cid, out["wipe"])
+        else:
+            out["wipe"] = "本来会清"
+        return out
+
+    async def _block_ev(self, ev, uid, self_id):
+        """审理中（占位）/ 冷却中的人发来的消息（handle 开头 control.blocked 那里；11-03 v1.17.13 小明 批的新流程）
+        冲她说的只当证据收进案子（blocklist.add_ev）：私聊的；群里 @她 / 引用她的；群里提到她名字的照卷宗的标法标出来（像在叫她 → 本人→她，
+        @了别人 / 只是提到 → 本人·没冲她）让法庭自己判 —— 不进聊天记录 / 存档 / 记忆、不调 _enqueue、不回，
+        也不跑 幽默 / 接话 / 心情 / 承诺 / 语音听写 / 读转发；收了 → 冷却中的案子去抖再审
+        不收：群里没冲她的话；永久拉黑的、控制台屏蔽的；没有法庭（公开版）/ 最亲的人 / 删了数据的案子（ev_case 给 None）→ 照旧完全不理"""
+        try:
+            if not blocklist.cooling(uid) or blocklist.is_blocked_forever(uid) or str(uid) in (control.rules().get("blocked") or {}):
+                return False
+            c = blocklist.ev_case(uid)
+            if not c:
+                return False
+            segs = ev.get("message") or []
+            if isinstance(segs, str):
+                segs = [{"type": "text", "data": {"text": cq_text(segs)}, "gen": True}]
+            private = ev.get("message_type") == "private"
+            ckey = f"private_{uid}" if private else f"group_{ev.get('group_id', '')}"
+            text = own_text(seg_text(segs))
+            if not text.strip():
+                return False
+            plain = "".join(str((s.get("data") or {}).get("text") or "") for s in segs if s.get("type") == "text")
+            ats = [str((s.get("data") or {}).get("qq")) for s in segs if s.get("type") == "at"]
+            at_me = str(self_id) in ats
+            fwd = any(s.get("type") == "forward" for s in segs)
+            rid = next(((x.get("data") or {}).get("id") for x in segs if x.get("type") == "reply"), None)
+            q_me = bool(rid) and await self.quoted_is_me(rid, self_id)
+            if private:
+                tag = blocklist.TAG_FWD if fwd else blocklist.TAG_OWN
+            else:
+                if not (at_me or q_me or self._called(str(ev.get("group_id", "")), plain)):
+                    return False           # 群里没冲她（没 @ / 没引用她 / 没提她名字）：不收
+                core = re.sub(r"[\s，,。.!！?？~～…]+", "", plain)
+                if fwd:
+                    tag = blocklist.TAG_FWD
+                elif rid and not q_me:
+                    tag = blocklist.TAG_QUOTE          # 引用的是别人的话
+                elif at_me or q_me:
+                    tag = blocklist.TAG_OWN
+                elif any(a not in (str(self_id), "all") for a in ats):
+                    tag = blocklist.TAG_NOT            # @了别人、只是提到她（R9）
+                elif "你" in plain or any(core.startswith(n) or core.endswith(n) for n in OWN_NAMES):
+                    tag = blocklist.TAG_OWN            # 叫她名字、像是在跟她说（名字在开头 / 结尾、带「你」）
+                else:
+                    tag = blocklist.TAG_NOT            # 只是提到她
+            if not blocklist.add_ev(c["id"], {"t": time.time(), "mid": ev.get("message_id"), "conv": ckey, "tag": tag, "text": text}):
+                return False
+            log(f"[拉黑] {ckey} 「{sender_name(ev)}」在{'审理' if c.get('state') == '审理中' else '冷却'}中冲她说的话 → 只当证据收进案子 {c['id']}"
+                f"（{tag}；她看不到、不回）")
+            if c.get("state") == "冷却中":
+                self._rt_kick(c["id"])
+            return True
+        except Exception as e:
+            log("[拉黑] 收冷却中的证据出错:", repr(e)[:100])
+            return False
+
+    def _rt_kick(self, cid):
+        """冷却中有了没审过的证据 → 这个案子的再审去抖任务（一个案子一个；已经在等的不另起）"""
+        ts = self.__dict__.setdefault("_rt_tasks", {})
+        t = ts.get(cid)
+        if t is not None and not t.done():
+            return t
+        try:
+            t = self._blk_bg(self._rt_watch(cid))
+        except RuntimeError:               # 不在事件循环里（不会发生在线上：handle / 开机都在循环里）
+            return None
+        ts[cid] = t
+        return t
+
+    async def _rt_watch(self, cid):
+        """再审的去抖（11-03 v1.17.13）：等他说完 —— 最后一句之后安静满 retrial_quiet_sec 秒 → 再审一次（这次没审过的那几句）；
+        又说了 → 接着等；冷却到点 / 撤销了 / 删了数据 / 再审用完（retrial_max）/ 已经拉黑 → 不再审（冷却到点的顺手结案）"""
+        while True:
+            c = blocklist.case(cid) or {}
+            uid = str(c.get("uid") or "")
+            now = time.time()
+            if not c or c.get("wiped") or c.get("state") != "冷却中" or not uid or blocklist.is_blocked_forever(uid):
+                return
+            cu = blocklist.cooling(uid, now)
+            if not cu or float(c.get("cool_until") or 0) <= now:
+                blocklist.sweep(now)       # 冷却到点：不再审、结案
+                return
+            if len(c.get("retrials") or []) >= max(0, int(blocklist._f("retrial_max"))):
+                return
+            if not blocklist.ev_due(c):     # 没审过的里没有他冲她说的（只有 @别人 / 只是提到她的：收着当背景、不为它们开庭）
+                return
+            wait = float(c.get("ev_last") or 0) + float(blocklist._f("retrial_quiet_sec")) - now
+            if wait > 0:
+                await asyncio.sleep(min(wait, max(0.05, cu - now)) + 0.05)
+                continue
+            if not await self._retrial(cid):
+                return
+
+    def _rt_dossier(self, c, now):
+        """再审的卷宗材料（court.block_input 的 case，stage 再审）：立案时的情况（她写的原因、当时的判词和理由、核实过的原话）+
+        冷却期间他的话（单独编号；群号写成 群 A / 群 B）"""
+        uid = str(c.get("uid"))
+        code = {}
+
+        def where(ck):
+            if ck.startswith("private_"):
+                return "私聊"
+            if ck not in code:
+                k = len(code)
+                code[ck] = "群 " + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[k % 26] + (str(k // 26 + 1) if k >= 26 else "")
+            return code[ck]
+        ev = [dict(x, uid=uid, where=where(str(x.get("conv") or ""))) for x in c.get("ev") or [] if isinstance(x, dict)]
+        try:
+            fav = ((galgame._load() if hasattr(galgame, "_load") else {}) or {}).get(uid, {}).get("favor")
+        except Exception:
+            fav = None
+        return {"stage": "再审", "uid": uid, "name": c.get("name") or "", "fav": fav, "close": self._circle_of(uid) == "最亲",
+                "ai": bool(self._is_ai(uid)), "now": now, "limit": blocklist.EV_MAX, "ev": ev,
+                "orig": {"t": c.get("t"), "why": c.get("why"), "stage": c.get("stage") or "一审", "verdict": c.get("verdict"),
+                         "reason": c.get("reason"), "quotes": c.get("quotes") or [], "until": c.get("cool_until")}}
+
+    async def _retrial(self, cid):
+        """再审一次（11-03 v1.17.13）：卷宗 = 立案时的情况 + 冷却期间他冲她说的话（单独编号）→ 法庭（只走 Claude）判 删除 / 不动
+        → 锁里：核对引用（冷却期间至少 1 句、加上立案时核实过的一共 ≥ retrial_min_total；像道歉的不算）→ 删除：_block_remove；不动：冷却照常到期
+        法庭没判成 = 不动；删除的才告诉老板（不动的只记日志、控制台看得到）→ 这次开审了没有（没有要审的 → False）"""
+        now = time.time()
+        c = blocklist.retrial_begin(cid, now)
+        if not c:
+            return False
+        uid, k = str(c.get("uid")), len(c.get("retrials") or []) + 1
+        v, fail, meta = None, "", {}
+        if court is None or not hasattr(court, "judge_block") or not blocklist.C.get("court", True):
+            fail = "这个版本没有法庭 / 法庭关着"
+        else:
+            try:
+                to = max(5.0, float(blocklist._f("court_timeout")))
+                v = await asyncio.wait_for(court.judge_block(self._rt_dossier(c, now), court.block_llm(c.get("conv") or "", uid, to, meta, log), log=log),
+                                           to + 20)
+                if not v.get("ok"):
+                    fail = v.get("why") or "法庭没判成"
+            except asyncio.CancelledError:
+                raise
+            except asyncio.TimeoutError:
+                fail = "法庭超时"
+            except Exception as e:
+                fail = f"法庭出错（{type(e).__name__}）"
+        out = None
+        async with self._block_lock():
+            try:
+                out = await self._rt_exec(cid, c, k, v, fail, meta)
+            except Exception as e:
+                log("[拉黑] 再审执行出错:", repr(e)[:150])
+                try:
+                    blocklist.retrial_end(cid, {"t": int(time.time()), "k": k, "verdict": "", "result": "不动",
+                                                "why": f"执行出错（{type(e).__name__}）"})
+                except Exception:
+                    pass
+        if out and out.get("result") not in ("不动",):
+            try:
+                await self._rt_tell(cid, c, k, out)
+            except Exception as e:
+                log("[拉黑] 再审告诉老板出错:", repr(e)[:120])
+        return True
+
+    async def _rt_exec(self, cid, c, k, v, fail, meta):
+        """再审的锁里那段：重查（撤销了 / 已经在名单里 / 冷却到点了 / 删了数据）→ 核对引用 → 封顶 → 删除 / 不动 → 案子里记一笔（不带原话）"""
+        now = time.time()
+        uid, key = str(c.get("uid")), str(c.get("conv") or "")
+        t0 = float(c.get("t") or 0)
+        name, why = c.get("name") or "", c.get("why") or ""
+        table = (v or {}).get("table") or {}
+        ok, cp, extra = [], {"n": 0, "days": 0, "why": ""}, {}
+        wiped = bool((blocklist.case(cid) or {}).get("wiped"))
+        if wiped:
+            name, why = "", "（删数据时抹掉了）"
+        if blocklist.pardoned_at(uid) >= t0:
+            res, rwhy = "撤销了", "老板在控制台撤销了"
+        elif blocklist.is_blocked_forever(uid):
+            res, rwhy = "已经在名单里", ""
+        elif not blocklist.cooling(uid, now):
+            res, rwhy = "不动", "冷却已经到点了"
+        elif fail:
+            res, rwhy = "不动", f"法庭没判成（{fail}）"
+        else:
+            ok = blocklist.verify(v.get("cites"), table, uid, now)
+            cp = blocklist.trial_caps("再审", v.get("verdict"), ok, prior=int(c.get("n_ok") or 0))
+            ok = cp.get("ok", ok)
+            res, rwhy = cp["result"], cp["why"]
+        if res == "删除":                  # 冷却期间成了她最亲的人 / 好感 ≥ protect_favor（老板在控制台改了好感）→ 永远不会被删除（11-03 v1.17.13）
+            pw = self._keep_safe(uid)      # （合并复查）好感一时读不出来也不删（以前当成 0 → 受保护的人看着像不受保护）
+            if pw:
+                res, rwhy, ok = "不动", pw, []
+        if res == "删除":
+            extra = await self._block_remove(cid, key, uid, name, why, t0, ok, now)
+            res, rwhy = extra.get("result") or res, extra.get("why") or rwhy
+            if extra.get("wiped"):
+                wiped, name, why, ok = True, "", "（删数据时抹掉了）", []
+        vd = (v or {}).get("verdict", "") if (v and not fail) else ""
+        rec = {"t": int(now), "k": k, "verdict": vd, "kind": (v or {}).get("kind", "") if vd else "",
+               "reason": "" if wiped else ((v or {}).get("reason", "") if vd else ""), "cites": list((v or {}).get("cites") or []) if vd else [],
+               "n_ok": cp.get("n", 0), "result": res, "why": rwhy, "model": meta.get("model", ""),
+               "ms": meta.get("ms") or (v or {}).get("ms") or 0, "usd": meta.get("usd", 0.0)}
+        for f in ("friend", "wipe", "favor"):
+            if extra.get(f):
+                rec[f] = extra[f]
+        fields = {}
+        if res in ("删除", "拉黑"):
+            fields = {"state": "结案", "result": res, "end": f"再审第 {k} 次判删除", "closed": int(now)}
+        blocklist.retrial_end(cid, rec, **fields)
+        shadowlog.write("court", {"ev": "block_retrial", "id": cid, "k": k, "conv": key, "uid": uid, "verdict": vd, "kind": rec["kind"],
+                                  "reason": rec["reason"][:60], "cites": rec["cites"],
+                                  "ok": [{"n": m.get("n")} if wiped else {"n": m.get("n"), "text": re.sub(r"\s+", " ", own_text(m.get("text")))[:60]}
+                                         for m in ok], "result": res, "why": rwhy, "model": rec["model"], "ms": rec["ms"], "usd": rec["usd"]},
+                        now, (court.C.get("keep_days", 30) if court is not None else 30))
+        log(f"[拉黑] 案子 {cid} 再审第 {k} 次「{name}」({uid})：" + (f"法庭判 {vd}（{rec['kind']}：{rec['reason']}）引用 {rec['cites']} 核实 {cp.get('n', 0)} 句 → "
+                                                                if vd else "") + res + (f"（{rwhy}）" if rwhy else ""))
+        return {"result": res, "why": rwhy, "v": v if vd else None, "ok": [] if wiped else ok, "cp": cp, "meta": meta, "wiped": wiped,
+                "favor": extra.get("favor"), "friend": extra.get("friend", ""), "wipe": extra.get("wipe", ""), "n_ev": len(c.get("ev") or [])}
+
+    async def _rt_tell(self, cid, c, k, out):
+        """再审判了删除（或者撤销了 / 已经在名单里）→ 私聊告诉老板（好感扣了多少、现在多少）；删除给她一行状态（只说以后不会再理他了 E1）"""
+        res, rwhy, v, ok, cp, meta = out.get("result"), out.get("why") or "", out.get("v"), out.get("ok") or [], out.get("cp") or {}, out.get("meta") or {}
+        uid, key = str(c.get("uid")), str(c.get("conv") or "")
+        wiped = bool(out.get("wiped"))
+        name, why = ("", "（删数据时抹掉了）") if wiped else (c.get("name") or "", c.get("why") or "")
+        at = clock.strf("%m-%d %H:%M", float(c.get("t") or 0))
+        if res in ("删除", "拉黑") and not wiped:
+            getattr(commit, "note", lambda *a, **kw: False)(uid, f"你 {at} 想拉黑他（{why}）—— 以后不会再理他了", conv=key, tell=False)
+        if not OWNER_QQ:
+            return
+        did = {"删除": f"删除：拉黑（所有群和私聊都不理他、他再加好友自动拒绝）；删好友：{out.get('friend') or '—'}；清数据：{out.get('wipe') or '—'}",
+               "拉黑": f"只拉黑（{rwhy}）", "撤销了": f"你在控制台撤销了 → 不执行（{rwhy}）", "冷却": f"照旧冷却（{rwhy}）",
+               "已经在名单里": "他已经在拉黑名单里了 → 不再执行"}.get(res, res)
+        who = f"「{name}」({uid})" if name else f"({uid}，他的数据删了)"
+        lines = [f"【拉黑案 {cid}·再审第 {k} 次】{who}",
+                 f"她 {at} 写的原因：{why}；冷却到 {clock.strf('%m-%d %H:%M', float(c.get('cool_until') or 0))}，"
+                 f"这期间他冲她说了 {out.get('n_ev') or 0} 句（她看不到、没回），说完安静了 → 再审"]
+        if v:
+            lines.append(f"法庭（{meta.get('model') or 'Claude'}" + (f"，{float(meta.get('ms') or 0) / 1000:.0f} 秒" if meta.get("ms") else "")
+                         + (f"，${float(meta.get('usd') or 0):.3f}" if meta.get("usd") else "") + f"）判：{v.get('verdict')}｜{v.get('kind')}｜"
+                         f"{'（删了数据 不写）' if wiped else (v.get('reason') or '没写理由')}｜引用 {' '.join('#' + str(n) for n in v.get('cites') or []) or '无'} → "
+                         f"代码核实冷却期间 {cp.get('n', 0)} 句 + 立案时 {int(c.get('n_ok') or 0)} 句")
+        lines.append(f"结果：{did}")
+        fv = out.get("favor")
+        if fv:
+            lines.append(f"好感：−{fv.get('n')}（{fv.get('before')} → {fv.get('after')}）" if fv.get("n") else "好感：已经是 0（没再扣）")
+        if ok and not wiped:
+            lines.append("被引用的原话（冷却期间）：" + "；".join(f"#{m.get('n')} {clock.strf('%m-%d %H:%M', m.get('t'))}「{own_text(m.get('text'))[:40]}」"
+                                                         for m in ok[:4]))
+        if res not in ("撤销了",):
+            lines.append("要撤：控制台「群和人 → 她拉黑的人」（撤销 = 解除拉黑和冷却、清掉「冷却过」；删掉的好友要他重新加；清掉的数据回不来）")
+        await self._owner_tell("\n".join(lines), "拉黑")
+
     async def _owner_tell(self, text, tag="说到做到"):
         """私聊告诉老板一条固定的通知（不过模型 跟纠错那条一样）；记进跟老板的私聊 他回过来她接得上"""
         try:
@@ -6199,6 +9304,7 @@ class FatFish:
             ways = [("private", who, None)] + ([("group", gid, who)] if gid else [])
         else:
             ways = [("group", gid, who)]
+        sig0 = self._task_sig(t)           # （11-03 v1.17.13 Codex F3）开写时的时间 / 内容 / 重复（存值：t 是原地改的）
         for scene, target, at_uid in ways:
             if scene == "group" and (control.group_mode(target) == "mute" or control.qq_ban(target)):
                 why = "群里被静音 / 禁言了"
@@ -6208,6 +9314,12 @@ class FatFish:
             except Exception as e:
                 ok, out = False, "出错了：" + repr(e)[:60]
             partial = t.pop("_partial", None)     # 话发出去了 事没做成（唱歌没唱出来 / 说的不是这件事）（10-31 v1.15.17）
+            if not apology and self._task_sig(t) != sig0:
+                # （11-03 v1.17.13 Codex F3）写 / 发的这几秒里他改了时间或内容（「七点半再叫我」）：这次不记做了、也不记没做成（不道歉）
+                #   照改过的来（以前旧那句照发 还记成做了：一次性的不再叫、每天的跳过今天改到的那次）
+                t.pop("_by", None)
+                log(f"[说到做到] #{t.get('n')} 写的时候改过了（{out}）→ 这次不记账 照改过的来")
+                return bool(ok or partial)
             if ok and not apology and t.get("making"):
                 log(f"[说到做到] #{t.get('n')} 开做了：交了文件才算做了")
                 return True
@@ -6217,6 +9329,7 @@ class FatFish:
                 else:
                     commit.task_done(t, out, f"{scene}_{target}", log=log, by=t.pop("_by", "") or "")
                     stats.add("tasks_done")
+                    life.note_event("答应的事", f"做了答应{t.get('who_name') or '人'}的「{str(t.get('what') or '')[:24]}」")   # 11-01 v1.16.4
                 return True
             if not commit.still(t, apology):
                 return False               # 她写的时候他取消了 / 道过歉了：不算没做成（10-28 审查 commit-14）
@@ -6226,12 +9339,14 @@ class FatFish:
                 if commit.task_failed(t, out, log=log, final=second, retry_in=300, apology=False) == "missed":
                     stats.add("tasks_missed")
                 return True
+            why = str(out or why)          # （11-03 v1.17.13 Gemini 2-F5）没做成的原因照实记（以前一律记「发不出去」）
             if scene == "private" and len(ways) > 1:
                 log(f"[说到做到] #{t.get('n')} 私聊「{t.get('who_name') or who}」发不出去（{out}）→ 回原来的群 @ 他")
         if apology:
             commit.apology_failed(t, why, log=log)
         elif commit.task_failed(t, why, log=log) == "missed":
             stats.add("tasks_missed")
+            life.note_event("答应的事", f"没做成答应{t.get('who_name') or '人'}的「{str(t.get('what') or '')[:24]}」")   # 11-01 v1.16.4
         return False
 
     def _task_make(self, t, scene, target, key):
@@ -6263,9 +9378,15 @@ class FatFish:
             mt.add_done_callback(_made)
         return f"（到点了 开始做：{what[:40]}）"
 
+    @staticmethod
+    def _task_sig(t):
+        """这件事的时间 / 内容 / 重复（11-03 v1.17.13 Codex F3：写的那几秒里改过没有 —— edit_task 是原地改 t 的 所以记值）"""
+        return t.get("due"), t.get("what"), t.get("repeat")
+
     async def _task_say(self, t, scene, target, at_uid, apology):
         """写一句、发出去 → (发出去了没有, 发出去的话 / 为什么没发出去)"""
         key, now = f"{scene}_{target}", time.time()
+        sig0 = self._task_sig(t)           # （11-03 v1.17.13 Codex F3）开写时的样子：发之前再比一次
         if not apology and MK.get("enabled", True) and maker.task_like(t.get("what")) and \
                 not (scene == "group" and control.group_mode(target) == "mute"):
             return True, self._task_make(t, scene, target, key)
@@ -6314,6 +9435,8 @@ class FatFish:
             return False, "她没写出要说的话"
         if not commit.still(t, apology):          # 她写这句的时候他说了不用了 / 当面道过歉了：不发（10-28 审查 commit-14）
             return False, "取消了"
+        if not apology and self._task_sig(t) != sig0:   # （11-03 v1.17.13 Codex F3）她写这句的时候他改了时间 / 内容：旧那句不发（照改过的来）
+            return False, "改过了"
         sent = list(await self.say(scene, target, segs, conv=key, at_uid=at_uid) or []) if segs else []
         sinfo = {}
         if sreq:
@@ -6323,6 +9446,8 @@ class FatFish:
             if raw_after and sent and sinfo.get("sung"):      # 没唱成：后面那句（「好听吧」）不发（跟回复里一样 10-28 审查 reply-6）
                 sent += list(await self.say(scene, target, split_reply(detic(raw_after), 1), conv=key) or [])
         if not sent:
+            if not apology and self._task_sig(t) != sig0:   # （11-03 v1.17.13 Codex F3）发的时候改过了：旧那句别存成草稿（不然到新的时间照发旧的）
+                return False, "改过了"
             commit.save_draft(t, key, first, apology)   # 下次重试照发这句（10-28 审查 commit-5）
             return False, "QQ 没收（私聊不是好友 / 发送失败）" if scene == "private" else "群里发不出去"
         text = " ".join(sent)
@@ -6381,7 +9506,10 @@ class FatFish:
         peer = key.split("_", 1)[1]
         why = "unignore" if rec.get("kind") == "ignore" else "back"     # 不理他到点了：她一直在 不是走开回来（10-28 审查 commit-12）
         if scene == "group":
-            c = commit.back_call(rec)
+            try:                           # 全局的睡觉（11-02 v1.17.5）：只回在这个群里叫过她的
+                c = commit.back_call(rec, key=key)
+            except TypeError:              # 公开版空壳 / 老的 back_call 不收 key
+                c = commit.back_call(rec)
             if not c or commit.hold(key, c["uid"]) == "all" or control.blocked(c["uid"]) or control.is_bot(c["uid"]):
                 return
             if control.group_mode(peer) == "mute":
@@ -6523,14 +9651,24 @@ class FatFish:
                 self.self_nick = new_nick
                 log(f"资料已更新 → 昵称:{new_nick} 签名:{used}")
 
-    async def _send(self, action, pk, target, msg):
-        r = await self.call(action, **{pk: int(target), "message": msg})
+    async def _send(self, action, pk, target, msg, timeout=None):
+        r = await self.call(action, **({"_timeout": timeout} if timeout else {}), **{pk: int(target), "message": msg})
         mid = ((r or {}).get("data") or {}).get("message_id")
         if mid is not None:
             self.my_msgs = (self.my_msgs + [str(mid)])[-300:]
+            try:                           # 她发的这条 → 原话、时间（别人贴表情 / 设精华时认得出是她的话 11-01）
+                qqevents.remember(mid, ("group_" if pk == "group_id" else "private_") + str(target),
+                                  " ".join(((m.get("data") or {}).get("text") or "").strip() if m.get("type") == "text"
+                                           else {"record": "[语音]", "image": "[图片]", "mface": "[表情包]", "face": "[表情]",
+                                                 "file": "[文件]"}.get(m.get("type"), "")
+                                           for m in msg if isinstance(m, dict) and m.get("type") not in ("reply", "at")).strip())
+            except Exception:
+                pass
             cap = _SEND_CAP.get()
             if cap is not None:            # 恶作剧那一轮：记下发出去的消息 id（控制台 2 分钟内能撤回 10-28 v1.10.0）
                 cap.append(str(mid))
+        if mid is not None or (isinstance(r, dict) and r.get("retcode") == 0):    # 她在这个对话里刚发了一条（每日生活：正看着这个对话 11-02 v1.17.1）
+            self.__dict__.setdefault("_said_at", {})[("group_" if pk == "group_id" else "private_") + str(target)] = time.time()
         if pk == "group_id" and isinstance(r, dict) and r.get("retcode") == 0:   # 她在群里说了一句：记时间（对聊刹车、认 AI 看秒回）
             t = time.time()
             self._last_said[str(target)] = t
@@ -6564,9 +9702,24 @@ class FatFish:
             log(f"[发送] {target} 等不到 QQ 的回音 不知道发没发出去（当成发了 不重发）：{what}")
         return ok
 
-    async def _sing(self, scene, target, conv, req, reply_to=None, said="", info=None):
+    def _halted(self, conv, scene, ctx):
+        """这一轮回复停了没有 → 原因 / None（11-03 v1.17.13 Codex F4）：他把她在回的那句撤回了、她打字时刹车了（ctx["braked"]）、
+        或者字发完以后他才说「算了 / 不用了」（打字刹车开着才看 只认强信号）—— 停了：后面的唱歌、代码文件、做东西、动画都不做
+        停了会写进 ctx["braked"]（后面再看 / 别的模块看 ctx 都认得出；_reply_done 清掉）"""
+        if not isinstance(ctx, dict):
+            return None
+        why = ctx.get("braked") or ("他把她在回的那句撤回了" if ctx.get("recalled") else None)
+        if not why and B.get("typing_brake", False) and ctx.get("uid"):
+            why = self._brake_why(conv, ctx, 0, scene, strong=True)
+        if why:
+            ctx["braked"] = why
+        return why
+
+    async def _sing(self, scene, target, conv, req, reply_to=None, said="", info=None, quiet=False, ctx=None):
         """唱一段（发录好的歌 剪好的一段当 QQ 语音）→ 聊天记录里记的那句 [[唱:歌名]] / 没唱成时补的那句 / None
-        info（dict）：唱成了没有写进 info["sung"]（没唱成 后面那句「怎么样 好听吧」就别发了 10-28 审查 reply-6）"""
+        info（dict）：唱成了没有写进 info["sung"]（没唱成 后面那句「怎么样 好听吧」就别发了 10-28 审查 reply-6）
+        quiet：只发语音 没唱成也不补话（拿不准问了没人选、到点唱第一个 11-01 v1.16.0：不替她写话）
+        ctx：这一轮回复的 ctx（11-03 v1.17.13）—— 剪好了、真发之前再看一眼这一轮停了没有（撤回 / 刹车）；别的地方调不传 照旧"""
         info = info if isinstance(info, dict) else {}
         info["sung"] = False
         if scene == "group" and control.group_mode(target) == "mute":
@@ -6579,6 +9732,14 @@ class FatFish:
             got, crashed = None, True
         if not got:
             fail = sing.pop_fail(conv)
+            if ctx is not None and self._halted(conv, scene, ctx):   # 这一轮停了（11-03 v1.17.13）：没唱成也不补话；拿不准的那几个也别留着到点唱
+                if (fail or {}).get("why") == "拿不准":
+                    sing.drop_choice(conv)
+                log(f"[刹车] {conv} 这一轮停了（{ctx.get('braked')}）→ 没唱成也不补话")
+                return None
+            if quiet:
+                log(f"[唱歌] {conv} 没唱成（{(fail or {}).get('why') or '出错了'}）→ 不补话")
+                return None
             if not fail and crashed:           # 10-26 晚：出错了也得补一句（以前她说完「咳咳」就没下文了）
                 fail = {"name": (req.get("name") if isinstance(req, dict) else "") or "", "why": "出错了", "err": True}
             if not fail or (fail.get("why") in ("还不会", "没许可") and re.search(r"不会|唱不了|没学|不唱", said or "")) \
@@ -6587,7 +9748,18 @@ class FatFish:
             # 她说了要唱 结果没唱成：补一句 别让人干等（也记进聊天记录 她自己知道没唱成）
             nm = fail.get("name") or "这首"
             # 照实的状态给她 她自己说（10-30 v1.15.3：以前这几句都写死）；模型调不通才用后面那句照实的
-            if fail.get("why") == "还不会":
+            lim = 60
+            if fail.get("why") == "拿不准":       # 网上找到好几个 拿不准是哪个：选项给她 她自己问（11-01 v1.16.0）
+                opts = fail.get("options") or []
+                lst = "；".join(f"{i}. {sing.opt_label(o)}" for i, o in enumerate(opts, 1))
+                sec = sing.choice_sec()
+                st = (f"你刚才说要唱「{nm}」 网上找到好几个版本 拿不准他要的是哪个：{lst}。"
+                      f"问他要哪个 —— 这几个都列给他（回数字、说歌手都行）；{sec} 秒内他没选 你就唱第一个。")
+                fb, lim = f"「{nm}」有好几个版本：{lst}（{sec} 秒没选就唱第 1 个）", 120
+            elif fail.get("link"):               # 他发的链接没拿到歌（11-01 v1.16.0）
+                st, fb = (f"他发了个{fail.get('plat') or ''}链接要你唱 你照着链接去拿了 没拿到能唱的音频（{str(fail.get('why'))[:40]}）。"
+                          "这次唱不了 可以让他发歌名再点一次。"), "他发的那个链接我没拿到歌 这次唱不了 发歌名再点一次试试"
+            elif fail.get("why") == "还不会":
                 st, fb = f"你刚才说要唱「{nm}」 但这首你还不会。", "这首我还不会唱"
             elif fail.get("why") == "没歌名":     # 写了 [[唱]] 没写歌名（10-28 审查 reply-6）
                 st, fb = "你刚才说要唱歌 但没说唱哪首 —— 你得问他想听哪首。", "你想听哪首呀"
@@ -6602,16 +9774,25 @@ class FatFish:
             else:
                 st, fb = f"你刚才说要唱「{nm}」 你在网易云和B站都找了 没找到能唱的原版 这次唱不了。", \
                     f"「{nm}」我翻了网易云和B站 没找着能唱的原版 这次唱不了"
-            line = await self._state_line("sing_fail", st, fb)
+            line = await self._state_line("sing_ask" if fail.get("why") == "拿不准" else "sing_fail", st, fb, limit=lim)
+            if fail.get("why") == "拿不准":           # 11-02 v1.17.11 现场：她问「搜出来三个 你要哪个呀」没列选项 → 他没法选 → 系统补上
+                line = getattr(sing, "with_options", lambda x, o: x)(line, fail.get("options") or [])
             if await self._deliver("send_group_msg" if scene == "group" else "send_private_msg",
                                    "group_id" if scene == "group" else "user_id", target,
                                    [{"type": "text", "data": {"text": line}}]) is not False:
+                if fail.get("why") == "拿不准":
+                    self._choice_later(scene, target, conv)      # 问了：choice_sec 秒没人选 → 唱第一个
                 return line
+            if fail.get("why") == "拿不准":
+                sing.drop_choice(conv)                         # 问的那句没发出去：他也选不了 别到点自己唱
             return None
         rec, song, a, b = got
         action = "send_group_msg" if scene == "group" else "send_private_msg"
         pk = "group_id" if scene == "group" else "user_id"
         await asyncio.sleep(random.uniform(0.8, 1.6))
+        if ctx is not None and self._halted(conv, scene, ctx):  # 剪好了、真发之前再看一眼（11-03 v1.17.13 Codex F4）：他撤回了 / 说算了 → 不发
+            log(f"[刹车] {conv} 唱的那段剪好了 但这一轮停了（{ctx.get('braked')}）→ 不发")
+            return None
         r = await self._send(action, pk, target, [rec])          # QQ 语音只能单独一条（不能带引用）
         ok = self._result(r)
         if ok is False and b - a > sing.short_sec() + 1:
@@ -6625,7 +9806,10 @@ class FatFish:
                 rec, song, a, b = got
                 r = await self._send(action, pk, target, [rec])
                 ok = self._result(r)
-        sing.done(conv, ok is not False)
+        sing.done(conv, ok is not False, song)
+        if ok is False and quiet:
+            log(f"[唱歌] 没发出去：{str(r)[:120]}（到点唱的 不补话）")
+            return None
         if ok is False:
             log(f"[唱歌] 没发出去：{str(r)[:120]}")
             line = await self._state_line("sing_fail", "你唱好了那段 但没发出去（QQ 那边没收）。跟他说一声。",
@@ -6637,7 +9821,223 @@ class FatFish:
             log("[唱歌] 等不到 QQ 的回音 不知道发没发出去（当成唱了）")
         stats.add("songs")
         info["sung"] = True
+        life.note_event("唱歌", f"唱了《{song.get('name') or ''}》" + ("给老板" if OWNER_QQ and conv == f"private_{OWNER_QQ}" else ""))   # 真发生的事（11-01 v1.16.4 第二天排日程带上）
         return sing.history_line(song)
+
+    # ---- 唱整首（11-01 v1.16.5）----
+    def _circle(self, uid):
+        """C59 关系圈（social.py 判的；唱整首是第一个真按圈改行为的地方）：老板 / 最亲 / 熟人 / 认识的 / 陌生人 / 别人家的鱼
+        判不出来（公开版没有 social.py / 出错）→ 认识的"""
+        uid = str(uid or "")
+        if OWNER_QQ and uid == OWNER_QQ:
+            return "老板"
+        if social is None or not uid:
+            return "认识的"
+        try:
+            if self._is_ai(uid):
+                return "别人家的鱼"
+            fav = galgame._load() if hasattr(galgame, "_load") else {}
+            fav = dict(fav) if isinstance(fav, dict) else {}
+            fav.setdefault(uid, {"favor": 0})
+            bots = set((control.rules().get("bots") or {}).keys())
+            return social.circles(fav, OWNER_QQ, bots).get(uid) or "认识的"
+        except Exception as e:
+            log("[唱歌] 判关系圈出错（当认识的）:", repr(e)[:80])
+            return "认识的"
+
+    def _full_turn(self, key, scene, uid, name, texts, smode, her_last, fx):
+        """这一轮他要不要整首（明说「整首 / 全曲 / 完整版…」）→ (fp, smode)：按关系圈定肯不肯、每天几次（sing.full_plan）
+        要他再求一次的那一档：10 分钟内他接着求（这句没带「唱」字也算）→ 补一个唱歌许可（plan force：隔多久 / 每天上限 / 别唱了 照旧）"""
+        which = getattr(sing, "full_which", lambda *a: False)(key, str(uid))   # 问过他要哪首整首、等他回（11-03 v1.17.13 小明 定：回了歌名就唱整首）
+        if fx.get("active") or commit.has(key, "nosing") or not (sing.full_ask(texts) or sing.full_pending(key, str(uid)) or which):
+            if sing.full_permit(key, str(uid)) and not getattr(sing, "full_kept", lambda c: False)(key):
+                sing.full_drop(key)        # 上一轮给的整首许可 这一轮没再要整首：她这轮写唱歌标记就是一段（上一轮刹车时留着的留这一次 11-03）
+            return None, smode
+        try:
+            fp = sing.full_plan(key, str(uid), texts, self._circle(uid), smode, log=log)
+        except Exception as e:
+            log("[唱歌] 唱整首判断出错:", repr(e)[:100])
+            return None, smode
+        if not fp:
+            return None, smode
+        if fp.get("need_permit"):
+            try:
+                smode = sing.plan(key, scene, texts, (her_last or {}).get("text") or "", (her_last or {}).get("ts") or 0,
+                                  force=True, by=str(uid), log=log)
+            except TypeError:
+                smode = sing.plan(key, scene, texts, force=True)
+            if smode != "sing":
+                log(f"[唱歌] {key} {name} 要整首 但现在唱不了（{smode}）")
+                return None, smode
+        if fp.get("state") in ("grant", "begged"):
+            sing.full_grant(key, str(uid), fp)
+        log(f"[唱歌] {key} {name} 要整首（{fp.get('circle')}）→ " + {
+            "grant": "给整首许可", "beg": "第一次 先不答应（等他再求）", "begged": "他又求了 答应", "cap": "今天的整首用完了",
+            "none": "别人家的鱼 不唱整首", "busy": "他上一首整首还在弄", "which": "没说哪首、最近也没唱 → 先问是哪首"}.get(
+                fp.get("state"), str(fp.get("state"))) + (f"（刚才那首：{fp.get('song')}）" if fp.get("song") else ""))
+        return fp, smode
+
+    def _start_full(self, scene, target, conv, req, uid, name, after=None, t0=None):
+        """后台唱整首（参考做东西的后台交货：不挡别的聊天）；正在弄的这首算占着他的名额（发出去才真扣）"""
+        sing.full_start(uid, conv)          # 11-02 v1.17.1：这个对话里在弄整首 → 这时候再点歌先等它发出去
+        try:                               # 弄到一半程序重启了：开机时认得出没唱成（下次他来找她时告诉她一声）
+            sing.full_job_add(conv, uid, name, (req or {}).get("name") or "")
+        except Exception as e:
+            log("[唱歌] 记整首在弄出错（不影响唱）:", repr(e)[:80])
+        t = asyncio.create_task(self._sing_full(scene, target, conv, req, uid, name, list(after or []), t0=t0))
+        tasks = self.__dict__.setdefault("_full_tasks", set())
+        tasks.add(t)
+        t.add_done_callback(tasks.discard)
+        log(f"[唱歌] {conv} 给「{name}」唱整首《{(req or {}).get('name') or ''}》→ 后台去弄（要几分钟）")
+        return t
+
+    async def _remember_line(self, conv, scene, line):
+        async with mem_lock(conv):
+            m2 = load_mem(conv, scene)
+            add_assistant(m2, line)
+            save_mem(m2)
+
+    async def _sing_full(self, scene, target, conv, req, uid, name, after, t0=None):
+        """后台：render_full（线程里：网上找 + 换声 可能几分钟）→ 先发语音 → 发不出去发音频文件（mp3）→ 再不行剪一段发
+        （剪一段 / 全没发成：给她状态 她自己说一句没发成整首）。名额只在整首真发出去（语音 / 文件）以后才扣"""
+        action = "send_group_msg" if scene == "group" else "send_private_msg"
+        pk = "group_id" if scene == "group" else "user_id"
+        t0 = float(t0 or 0) or time.time()   # （11-03 v1.17.13 Gemini 3-F3）弄的这几分钟里他删了自己的数据：私聊不发；群里照发 但名额、记录、记忆都不记他
+        #   （合并复查）从回他那一轮开始写回复算（_reply 传进来）：她写那句的工夫删的也算
+
+        async def keep(line):              # 记进这个对话的记忆（他删了数据 → 不记）
+            if not _gone(uid, t0):
+                await self._remember_line(conv, scene, line)
+        try:
+            if scene == "group" and control.group_mode(target) == "mute":
+                sing.full_drop(conv)
+                return None
+            try:
+                got = await asyncio.to_thread(sing.render_full, req, conv, log)
+            except Exception as e:
+                log("[唱歌] 整首出错:", repr(e)[:160])
+                got = None
+            if scene == "private" and _gone(uid, t0):     # 私聊：弄好了也不发（发了要记名额、写记忆 又把他的私聊建回来）
+                sing.full_drop(conv)
+                log(f"[唱歌] {conv} 整首弄完了 但他刚删了自己的数据 → 不发了")
+                return None
+            if not got:
+                fail = sing.pop_fail(conv) or {"why": "出错了"}
+                sing.full_drop(conv)
+                nm = fail.get("name") or (req or {}).get("name") or "这首"
+                why = {"还不会": "这首你还不会", "没歌名": "你没说唱哪首", "没整首许可": "许可过期了"}.get(
+                    fail.get("why"), "网上没找到能唱的完整版" if not fail.get("err") else "你这边出了岔子")
+                log(f"[唱歌] {conv} 整首「{nm}」没弄出来（{fail.get('why')}）")
+                line = await self._state_line("sing_full_fail", f"你刚才答应给他唱整首「{nm}」 结果没弄出来（{why}）。整首这次没唱成。",
+                                              f"整首「{nm}」这次没弄出来")
+                if line and await self._deliver(action, pk, target, [{"type": "text", "data": {"text": line}}]) is not False:
+                    await keep(line)
+                return None
+            rec, song, a, b, path, src = got
+            await asyncio.sleep(random.uniform(0.8, 1.6))
+            r = await self._send(action, pk, target, [rec], timeout=180)       # QQ 语音只能单独一条
+            ok, how = self._result(r), "语音"
+            if ok is False:
+                log(f"[唱歌] 整首（{b:.0f} 秒）语音 QQ 没收（{str(r)[:80]}）→ 转成音频文件发")
+                mp3 = await asyncio.to_thread(sing.to_mp3, path, src)
+                ok, how = ((await self._upload(scene, target, mp3, timeout=180)) if mp3 else False), "音频文件"
+            if ok is False:
+                log("[唱歌] 整首的音频文件也没发出去 → 照旧剪一段发")
+                clip = await asyncio.to_thread(sing.clip_of_full, song, path, log)
+                ok2 = self._result(await self._send(action, pk, target, [clip[0]])) if clip else False
+                sing.full_drop(conv)
+                if ok2 is not False:
+                    sing.done(conv, True, song)
+                    stats.add("songs")
+                    await keep(sing.history_line(song))
+                    st, fb = ("你答应给他唱整首 但整首太长、QQ 发不出去（语音、文件都没发成）：只发成了一段。跟他说一声没发成整首。",
+                              "整首太长 QQ 发不出去 先给你唱了一段")
+                else:
+                    st, fb = "你答应给他唱整首 但整首和剪的一段都没发出去（QQ 那边没收）。跟他说一声。", "整首没发出去 QQ 那边没收"
+                line = await self._state_line("sing_full_fail", st, fb)
+                if line and await self._deliver(action, pk, target, [{"type": "text", "data": {"text": line}}]) is not False:
+                    await keep(line)
+                return None
+            if ok is None:
+                log("[唱歌] 整首等不到 QQ 的回音 不知道发没发出去（当成发了）")
+            gone = _gone(uid, t0)          # 群里（私聊上面拦了；发的那会儿删的也算）：照发 但名额、生活记录、承诺、记忆都不记他
+            if gone:
+                sing.full_drop(conv)
+            else:
+                n = sing.full_done(conv, uid)
+            sing.done(conv, True, song)
+            stats.add("songs")
+            log(f"[唱歌] {conv} 整首《{song.get('name')}》发出去了（{how} {b:.0f} 秒）"
+                + ("（他刚删了自己的数据 不记他）" if gone else f"→「{name}」今天第 {n} 次整首"))
+            if not gone:
+                life.note_event("唱歌", f"给{name}唱了整首《{song.get('name') or ''}》")
+                try:
+                    commit.sung(conv, uid, (req or {}).get("name") or "", log=log)
+                except Exception as e:
+                    log("[说到做到] 唱完划掉答应出错:", repr(e)[:100])
+            await keep(sing.history_line(song))
+            if after:
+                more = await self.say(scene, target, after, conv=conv)
+                if more:
+                    await keep(" ".join(more))
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log("[唱歌] 后台唱整首出错:", repr(e)[:160])
+            sing.full_drop(conv)
+            return None
+        finally:
+            sing.full_end(uid, conv)
+            try:
+                sing.full_job_end(conv, uid)
+            except Exception:
+                pass
+
+    def _choice_later(self, scene, target, conv):
+        """拿不准问了他要哪个版本（11-01 v1.16.0）：起一个后台任务 choice_sec 秒没人选 → 唱第一个（不堵别的消息）
+        同一个对话又问了一次 → 上一个任务取消"""
+        ch = sing.choice_of(conv)
+        if not ch:
+            return None
+        tasks = self.__dict__.setdefault("_choice_tasks", {})
+        old = tasks.get(conv)
+        if old and not old.done():
+            old.cancel()
+        tasks[conv] = asyncio.create_task(self._choice_wait(scene, target, conv, ch))
+        return tasks[conv]
+
+    async def _choice_wait(self, scene, target, conv, ch):
+        """等他选：他选了 / 又点了别的 / 说不要了（sing 那边问的那次换了或没了）→ 不唱；到点 → 只发语音唱第一个 记进聊天记录"""
+        me = asyncio.current_task()
+        try:
+            while True:
+                if sing.choice_of(conv) is not ch:
+                    log(f"[唱歌] {conv} 问了要哪个版本：他选了 / 又点了别的 / 说不要了 → 不用到点唱第一个")
+                    return
+                left = float(ch.get("t") or 0) + sing.choice_sec() - time.time()
+                if left <= 0:
+                    break
+                await asyncio.sleep(min(left, 5))
+            opt = sing.take_choice(conv, ch, log)
+            if not opt:
+                return
+            log(f"[唱歌] {conv} 问了要哪个版本 {sing.choice_sec()} 秒没人选 → 唱第一个：{sing.opt_label(opt)}")
+            info = {}
+            line = await self._sing(scene, target, conv, {"name": str(opt.get("title") or "")}, None, info=info, quiet=True)
+            if line and info.get("sung"):
+                async with mem_lock(conv):
+                    m2 = load_mem(conv, scene)
+                    add_assistant(m2, line)
+                    save_mem(m2)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log("[唱歌] 到点唱第一个出错:", repr(e)[:120])
+        finally:
+            tasks = self.__dict__.get("_choice_tasks") or {}
+            if tasks.get(conv) is me:
+                tasks.pop(conv, None)
 
     def _keep_word(self, conv, segs):
         """说到做到：她说过这阵子不发语音 → 语音标记去掉（那句照样打字发）；不发表情包 → 表情包标记去掉"""
@@ -6684,6 +10084,8 @@ class FatFish:
                 if stopped:
                     break
             d = self._typing_delay(i, seg, lead, (brake or {}).get("last_text"))
+            if scene == "private":         # 每条之前：让他看到「正在输入」（11-01；同一个人 8 秒最多一次）
+                asyncio.create_task(self._show_typing(target))
             if bk is None:
                 await asyncio.sleep(d)
             else:
@@ -6720,8 +10122,10 @@ class FatFish:
                     hist_seg = bili.IMG_MARK.sub("", hist_seg).strip()
 
             had_mark = bool(stickers.MARK.search(seg) or stickers.LOOSE.search(seg))
+            prev_stk = getattr(stickers, "last_at", lambda c: None)(ckey)   # resolve2 先记账（冷却 / 最近发过）：核对没过要还回去（11-03 v1.17.13）
             seg, sticker, slabel = stickers.resolve2(seg, ckey, said_all)
             if sticker and not await self._sticker_fits(slabel, said_all, ckey):
+                getattr(stickers, "undo", lambda *a: False)(ckey, slabel, prev_stk)   # 没发：冷却、最近发过、用了几次都还回去（Gemini 4-F8）
                 sticker, slabel = None, None   # 跟她这句对不上（10-28）：不发
             if had_mark:                       # 聊天记录里记真发出去的那张（没发就不记 免得她以为发过了）
                 hist_seg = (stickers.strip(hist_seg) + (" " + slabel if sticker and slabel else "")).strip()
@@ -6764,8 +10168,10 @@ class FatFish:
                         sent.append(vtext)
                 if after:
                     await asyncio.sleep(random.uniform(0.5, 1.2))
+                    prev_a = getattr(stickers, "last_at", lambda c: None)(ckey)
                     a_txt, a_stk, a_lab = stickers.resolve2(after, ckey, said_all)
                     if a_stk and not await self._sticker_fits(a_lab, said_all, ckey):
+                        getattr(stickers, "undo", lambda *a: False)(ckey, a_lab, prev_a)    # 核对没过：记的账还回去（11-03 v1.17.13）
                         a_stk, a_lab = None, None
                     a_msg = ([{"type": "text", "data": {"text": a_txt}}] if a_txt else []) + ([a_stk] if a_stk else [])
                     if a_msg and await self._deliver(action, pk, target, a_msg) is not False:
@@ -6781,6 +10187,11 @@ class FatFish:
                 attention.on_self(str(target), " ".join(sent), time.time(), reply_to=reply_to)
             except Exception as e:
                 log("[注意力] 记她的话出错:", repr(e)[:100])
+        if sent and scene == "group" and social is not None:      # 小圈（C61 影子）：她说的那段 = 她在的圈
+            try:
+                social.on_self(str(target), " ".join(sent), time.time(), reply_mid=reply_to)
+            except Exception as e:
+                log("[社交·影子] 记她的话出错:", repr(e)[:100])
         if stopped:
             if bk is not None:
                 bk["braked"] = stopped
@@ -6876,6 +10287,13 @@ class FatFish:
             log(f"[好友] 收到申请 {uid} 备注:{comment or '无'}")
             if not rq.get("auto_accept_friend", True):
                 return
+            if blocklist is not None and blocklist.is_blocked_forever(uid):   # 她自己拉黑的人又来加好友（11-02 v1.17.6 C80）→ 自动拒绝
+                r = await self.call("set_friend_add_request", flag=flag, approve=False, remark="")
+                log(f"[好友] {uid} 是她拉黑的人 → 自动拒绝" + ("" if (r and r.get("retcode") == 0) else f"（拒绝没成：{str(r)[:60]}）"))
+                return
+            if blocklist is not None and blocklist.cooling(uid):   # 冷却中（11-02 v1.17.10 阶段1）：不同意也不拒绝（申请留着）
+                log(f"[好友] {uid} 正在冷却（到 {clock.strf('%m-%d %H:%M', blocklist.cooling(uid))}）→ 不通过也不拒绝（申请留着）")
+                return
             if control.blocked(uid):           # 屏蔽了的人：完全不理 —— 不通过、不打招呼（10-28 审查 media-9：以前照样通过还热情招呼）
                 log(f"[好友] {uid} 在屏蔽名单里 → 不通过（申请留着 过几天自己失效）")
                 return
@@ -6907,8 +10325,9 @@ class FatFish:
                                                "text": f"（{uid} 刚加你好友，验证消息：{comment or '无'}）",
                                                "ts": time.time()})
                         save_mem(mem)
-                        system = build_system(mem, "有人刚加你好友，你们还没说过话。你主动说第一句：热情点打个招呼、"
-                                                   "一句话说你是谁，再问问他怎么称呼、怎么找到你的。")
+                        # 11-02 v1.17.7（v1.17.6 agent 发现 C74 ④ 同一类 E1）：以前写着问称呼 / 问来路的示范 → 只写目标
+                        system = build_system(mem, "有人刚加你好友（验证消息在上面）、你们还没说过话。这一条你先开口：目标是打个招呼、"
+                                                   "让他知道你是谁；说什么、问不问他什么 你自己定。")
                         msgs = to_messages(mem)
                     raw = await llm(system, msgs, max_tokens=200)
                     raw, st = strip_state(raw)
@@ -6938,9 +10357,12 @@ class FatFish:
             if control.blocked(uid):           # 屏蔽了的人拉她进群：不去
                 log(f"[群] {uid} 在屏蔽名单里 拉她进群 {gid} → 不去")
                 return
+            self._invites[uid] = {"gid": gid, "t": time.time(), "st": "正在通过（几秒后就进去了）"}   # 11-01：回他私聊时给她看
             await asyncio.sleep(random.uniform(3, 10))
             r = await self.call("set_group_add_request", flag=flag, sub_type=sub, approve=True)
-            log(f"[群] {'已通过' if r and r.get('retcode') == 0 else '通过失败'} {gid}")
+            ok = bool(r and r.get("retcode") == 0)
+            self._invites[uid] = {"gid": gid, "t": time.time(), "st": "已经进去了" if ok else "没进成（QQ 那边没通过）"}
+            log(f"[群] {'已通过' if ok else '通过失败'} {gid}")
 
     # ---- 共享记忆 ----
     async def shared_loop(self):
@@ -6959,12 +10381,12 @@ class FatFish:
         if not cfg.get("enabled", True):
             return
         interval = int(cfg.get("interval_min", 30)) * 60
-        q0, q1 = B.get("quiet_hours") or [4, 12]
+        q0, q1 = B.get("quiet_hours") or [3, 8]       # 11-02 v1.17.5：她睡觉的时候 3–8 点（以前 4–12）
         log(f"[冒泡] 已启用 每 {interval // 60} 分钟掷一次 {'（试运行：只记日志不发）' if cfg.get('dry_run', True) else ''}")
         await asyncio.sleep(180)
         while True:
             try:
-                if not in_hours(clock.hour(), q0, q1):
+                if not in_hours(clock.hour(), q0, q1) and not _asleep():    # 她说了要睡（全局）也不冒泡
                     groups = [str(g) for g in cfg.get("groups") or []] or \
                         [p.stem.split("_", 1)[1] for p in MEM_DIR.glob("group_*.json")]
                     for gid in groups:
@@ -6979,6 +10401,8 @@ class FatFish:
             return                         # QQ 掉线时也不冒泡（白花 token）
         if commit.hold(key):
             return                         # 她在这个群说了要走 / 要少说（说到做到）
+        if life.quiet():
+            return                         # 日程里在忙（slow / busy 11-01 v1.16.4 C39）：不冒泡
         mem = load_mem(key, "group")
         if not mem.get("history"):
             return
@@ -7041,8 +10465,12 @@ class FatFish:
                     if f"group_{gid}" in self.pending_reply:
                         continue                       # 正在回话 等会儿再看
                     act = rhythm.tick(gid)
-                    if act == "probe":
+                    if act == "probe" and life.quiet():
+                        log(f"[节奏] 群{gid} 冷场了 但她日程里在忙（{life.MODE_NAME.get(life.mode_now())}）→ 不试探")
+                    elif act == "probe":
                         await self._group_line(gid, rhythm.PROBE_SCENE, "（大家突然都不说话了）", "冷场试探")
+                    elif act == "exit" and life.quiet():    # 11-02 v1.17.1：日程里在忙（slow / busy）不主动开口 —— 收尾那句也不说（节奏照样回观望）
+                        log(f"[节奏] 群{gid} 到点收尾 但她日程里在忙（{life.MODE_NAME.get(life.mode_now())}）→ 不说收尾那句 安静回到观望")
                     elif act == "exit":
                         await self._group_line(gid, rhythm.EXIT_SCENE, "（你想下线/潜水了）", "收尾潜水")
                     elif act == "quiet":
@@ -7085,11 +10513,13 @@ class FatFish:
 
     async def _prank_flip(self, key, scene, target, uid, name, reply_to=None):
         """冒充老板（10-27 晚 humor.py）：她装作信了以后 30~60 秒自己拆穿（他先说话的话那一轮已经拆穿了 这里就不说）"""
+        claimed = said = False             # （11-03 v1.17.13 Gemini R5-3）先标「拆穿了」防两边都拆；没拆成 → 放回去
         try:
             await asyncio.sleep(humor.flip_delay())
             if not humor.prank_pending(key, uid) or not self.ws:
                 return
             humor.prank_mark(key, uid, "flipped")
+            claimed = True
             if scene == "group" and not control.allow("group", target, "at"):
                 log(f"[恶作剧] {key} 群里现在不让说话 不拆穿了（{name}）")
                 return
@@ -7107,6 +10537,7 @@ class FatFish:
             sent = await self.say(scene, target, segs, reply_to=reply_to if scene == "group" else None, conv=key)
             if not sent:
                 return
+            said = True
             async with mem_lock(key):
                 fresh = load_mem(key, scene)
                 add_assistant(fresh, " ".join(sent), prank=True)
@@ -7114,6 +10545,9 @@ class FatFish:
             log(f"[恶作剧] {key} 拆穿 {name} → {' / '.join(segs)}")
         except Exception as e:
             log("[恶作剧] 拆穿出错:", repr(e)[:120])
+        finally:
+            if claimed and not said:       # 没拆穿成（禁言 / 静音 / 模型出错 / 没写出来 / 没发出去）：放回去 他下次说话那一轮拆穿（以前就永远不拆了）
+                humor.prank_mark(key, uid, "acted")
 
     # ---- 恶作剧 / 恶趣味（10-28 v1.10.0 prank.py）----
     def _prank_blocked(self, key, scene, gid, uid, order=False):
@@ -7248,6 +10682,16 @@ class FatFish:
                     continue
                 while announce.quiet(int(clock.strf("%H", time.time()))):
                     await asyncio.sleep(600)
+                t_sleep = time.time()              # 11-02 v1.17.5：她说了要睡（全局）→ 等她醒了再接着说（最多等 10 小时）
+                while _asleep() and time.time() - t_sleep < 10 * 3600:
+                    if time.time() - t_sleep < 1:
+                        log("[版本播报] 她说了要睡（全局）→ 等她醒了再接着说")
+                    await asyncio.sleep(300)
+                t_busy = time.time()               # 11-02 v1.17.1：日程里在忙（slow / busy 不主动找人、不冒泡）→ 等她空下来再说（最多等 4 小时 再久就照常）
+                while life.quiet() and time.time() - t_busy < 4 * 3600:
+                    if time.time() - t_busy < 1:
+                        log(f"[版本播报] 她这会儿日程里在忙（{life.MODE_NAME.get(life.mode_now())}）→ 等她空下来再接着说")
+                    await asyncio.sleep(300)
                 ok = await self._announce_one(scene, target, name, ver, since, ch)
                 announce.mark(ver, f"{scene}_{target}", ok)
                 if ok:
@@ -7274,6 +10718,9 @@ class FatFish:
                 log(f"[版本播报] 群{target} 现在不能 / 不该说话（禁言 / 静音 / 少说 / 她说了要走）→ 跳过")
                 return False
         elif control.blocked(target) or not control.allow("private", target, "proactive"):
+            return False
+        elif commit.hold(key):                 # 11-02 v1.17.1：她在这个私聊里说了要睡 / 要走 / 不理他（说到做到）→ 不去播（以前私聊这边没看）
+            log(f"[版本播报] {key} 她在这个私聊里说了要走 / 要睡（说到做到）→ 跳过")
             return False
         async with mem_lock(key):
             mem = load_mem(key, scene)
@@ -8040,6 +11487,16 @@ class FatFish:
             return t2, bad
         return "", bad
 
+    def _qz_wiped(self):
+        """删过数据的人（还在删的也算）→ QQ 号集合（11-03 v1.17.13 Gemini R5-1 小明 定：以后都不看、不赞、不评、不回他的评论；
+        他的说说、评论都不读不存）。每一轮开头读一次 整轮都用这一份"""
+        got = {str(u) for u in _WIPE.get("uids") or ()}
+        try:
+            got |= {str(u) for u in wipe.all_wiped(DATA)}
+        except Exception as e:
+            log("[空间] 读删数据的名单出错:", repr(e)[:100])
+        return got
+
     def _qz_drop_wiped(self, t0, s, feed=None):
         """这一轮里有人删了自己的数据：存盘前把他的再删一遍（手里拿的是这一轮开始时那份 别写回去）（10-28 审查 qzone-11）
         → 这些人的 QQ 号"""
@@ -8054,6 +11511,7 @@ class FatFish:
 
     async def _qz_read(self):
         t0 = time.time()
+        wiped = self._qz_wiped()           # 删过数据的人：他的说说不看、不赞、不评、不存（11-03 v1.17.13 Gemini R5-1）
         s = qzone.load()
         if isinstance(s, safeio.Unsaved):
             return {"ok": False, "error": "空间的状态文件一时打不开 等一下再点"}
@@ -8067,7 +11525,7 @@ class FatFish:
         days = float(qzone.Q.get("read_days", 3))
         new = [x for x in fd if x["tid"] not in s["seen"] and (not x.get("ts") or now - x["ts"] < days * 86400)
                and x["uin"] != me and not control.is_bot(x["uin"]) and not control.blocked(x["uin"])
-               and not control.qzone_off(x["uin"])]
+               and not control.qzone_off(x["uin"]) and str(x["uin"]) not in wiped]
         new = new[:int(qzone.Q.get("read_max_posts", 8))]
         s["last_read"] = now
         if not new:
@@ -8108,7 +11566,7 @@ class FatFish:
         line_uin = {}                      # 第几行写的是谁（这一轮里有人删了数据 报告里那几行不写）
         n_like = n_cmt = 0
         mood_sum, worry = 0, 0
-        stop = False
+        stop = err = False                 # err：这一轮点赞 / 评论出过错 → 结尾别清零（11-03 v1.17.13 Codex F10）
         done = []
         for i, it in enumerate(items, 1):
             tid, uin = it["tid"], it["uin"]
@@ -8146,7 +11604,7 @@ class FatFish:
                         acts.append("赞")
                     except qzone.QzErr as e:
                         self._qz_err(e, f"给「{it.get('name')}」点赞")
-                        stop = e.kind in ("login", "busy")
+                        stop, err = e.kind in ("login", "busy"), True
             # 评论
             mine_c = any(c.get("uin") == me for c in it.get("comments") or [])
             if not stop and qzone.on("comment") and t["comment"] and not mine_c and tid not in s["commented"] \
@@ -8171,7 +11629,7 @@ class FatFish:
                             acts.append(f"评「{text}」")
                         except qzone.QzErr as e:
                             self._qz_err(e, f"评论「{it.get('name')}」的说说")
-                            stop = e.kind in ("login", "busy")
+                            stop, err = e.kind in ("login", "busy"), True
             if t["life"] or t["loop"]:
                 await self._qz_remember(it, t)
             mood_sum += t["mood"]
@@ -8188,7 +11646,8 @@ class FatFish:
             log(f"[空间] 刷到 {len(items)} 条 都没写出感想 → 先不标看过 下一轮再看")
             return {"ok": False, "error": "这轮没写出感想 下轮再看"}
         qzone.today(s, "read", len(done))
-        qzone.note_ok(s)
+        if not err:                        # 这一轮出过错就别清零（连错 3 次才会歇 —— 跟 _qz_replies 一样）（11-03 v1.17.13 Codex F10）
+            qzone.note_ok(s)
         qzone.event(s, "刷动态", f"看了 {len(done)} 条 · 赞 {n_like} · 评 {n_cmt}")
         gone = self._qz_drop_wiped(t0, s, feed)
         qzone.save(s)
@@ -8304,7 +11763,8 @@ class FatFish:
         except Exception as e:
             return self._qz_err(e, "看访客")
         known = {f"{v.get('uin')}:{v.get('ts')}" for v in s.get("visitors") or []}
-        new = [v for v in vs if f"{v['uin']}:{v['ts']}" not in known and not v.get("hide")]
+        wiped = self._qz_wiped()           # 删过数据的人来看过：不记（11-03 v1.17.13 Gemini R5-1）
+        new = [v for v in vs if f"{v['uin']}:{v['ts']}" not in known and not v.get("hide") and str(v.get("uin")) not in wiped]
         s["visitors"] = (s.get("visitors") or []) + sorted(new, key=lambda v: v["ts"])
         s["last_visit"] = time.time()
         qzone.note_ok(s)
@@ -8466,6 +11926,7 @@ class FatFish:
         except Exception as e:
             return self._qz_err(e, "看评论")
         cap, rounds_max = int(qzone.Q.get("reply_daily", 10)), int(qzone.Q.get("reply_rounds", 2))
+        wiped = self._qz_wiped()           # 删过数据的人：他的评论不读、不回、不存（11-03 v1.17.13 Gemini R5-1）
         n = 0
         stop, err = None, False            # 登录失效 / 太频繁 → 这一轮整个停下（以前 break 只跳出这条说说 接着拉下一条）（10-28 审查 qzone-8）
         for m in todo:
@@ -8480,7 +11941,7 @@ class FatFish:
                     return self._qz_err(e, "看评论")
                 continue
             m["cmtnum"] = p.get("cmtnum", 0)
-            cs = p.get("comments") or []
+            cs = [c for c in p.get("comments") or [] if str(c.get("uin")) not in wiped]
             for c in cs:
                 if c.get("uin") == me or not c.get("tid"):
                     continue
@@ -8666,6 +12127,13 @@ class FatFish:
                 return f"\n# 老板在群里让你看「{tname}」的 QQ 空间\n别人的空间在群里不说内容：回一句「私聊跟你说」就行（你一会儿私聊告诉他）。\n"
         if control.qzone_off(target) and target != str(uid):
             return f"\n# 「{tname}」说过不让你看他的空间\n所以你没去看。照实说。\n"
+        if str(target) in self._qz_wiped():    # （11-03 v1.17.13 Gemini R5-1 小明 定）删过数据的人：以后都不看他的空间（他自己叫也不看）
+            log(f"[空间] {name} 叫她看{'他自己' if kind == 'self' else '「' + tname + '」'}的空间 → 删过数据的人 不看")
+            if scene == "group":               # 群里不说为什么（删数据是他私下的事）
+                return "\n# 他叫你看他的 QQ 空间\n你没去看：他的空间你不看（定好的规矩；为什么别在群里说）。\n"
+            who_s = "他" if kind == "self" else f"「{tname}」"
+            return (f"\n# {'他叫你看他' if kind == 'self' else '老板让你看「' + tname + '」'}的 QQ 空间\n"
+                    f"你没去看：{who_s}删过自己的数据 之后{who_s}的空间你都不看、不赞、不评（定好的规矩）。\n")
         if self._qz.get("busy"):
             await asyncio.sleep(3)
         try:
@@ -8718,6 +12186,8 @@ class FatFish:
             return
         if control.qzone_off(target):              # 他说过别看：不去拉 私聊里照实跟老板说没看（10-28 审查 qzone-3）
             blk = f"\n# 「{tname}」说过不让你看他的空间\n所以你没去看。照实跟老板说（他说过不让看 所以没看）。\n"
+        elif str(target) in self._qz_wiped():     # （11-03 v1.17.13 Gemini R5-1 小明 定）删过数据的人：不去拉他的空间
+            blk = f"\n# 「{tname}」删过自己的数据\n之后他的空间你都不看、不赞、不评（定好的规矩） 所以你没去看。\n"
         else:
             try:
                 ps = await asyncio.wait_for(qzone.posts(target, 5), 25)
@@ -8807,8 +12277,8 @@ class FatFish:
             return
         await asyncio.sleep(60)
         while True:
-            q0, q1 = B.get("quiet_hours") or [4, 12]     # 她在睡觉的时候不主动找人
-            if in_hours(clock.hour(), q0, q1) or not self.ws:     # 睡觉时间 / QQ 掉线了：不主动找人（跨午夜也认 10-28 Codex #10）
+            q0, q1 = B.get("quiet_hours") or [3, 8]      # 她在睡觉的时候不主动找人（11-02 v1.17.5：3–8 点 以前 4–12）
+            if in_hours(clock.hour(), q0, q1) or not self.ws or _asleep():     # 睡觉时间 / 她说了要睡（全局）/ QQ 掉线了：不主动找人（跨午夜也认 10-28 Codex #10）
                 await asyncio.sleep(1800 if self.ws else 300)
                 continue
             await self.proactive_tick()
@@ -8830,6 +12300,8 @@ class FatFish:
 
     def _proactive_stale(self, key, uid, t_load):
         """主动找人：模型写好了、发之前再看一眼 —— 这几秒里他来消息了 / 她说了要走 / 他让别理他 → 别发（返回原因；没事 → ""）"""
+        if _gone(uid, t_load):             # （11-03 v1.17.13 Gemini 3-F3）等模型那几秒里他删了自己的数据
+            return "他刚删了自己的数据"
         try:
             now_m = load_mem(key, "private")
         except Exception:
@@ -8846,6 +12318,9 @@ class FatFish:
 
     async def proactive_tick(self):
         """每个私聊看一眼：该不该主动找他 / 他没回要不要追一句（10-28 拆出来：一个私聊出错不影响别的、测试能直接调）"""
+        if life.quiet():                   # 日程里在忙（slow / busy 11-01 v1.16.4 C39）：这轮不主动找人、不追
+            log(f"[日程] 她这会儿在忙（{life.MODE_NAME.get(life.mode_now())}）→ 这轮不主动找人")
+            return
         for p in sorted(MEM_DIR.glob("private_*.json")):
             try:
                 await self._proactive_one(p)
@@ -8853,6 +12328,8 @@ class FatFish:
                 log(f"主动发言出错（{p.stem}）:", repr(e)[:200])
 
     async def _proactive_one(self, p):
+        if not p.exists():                 # （11-03 v1.17.13 Gemini 3-F3）轮到他之前（前面几个私聊等模型的时候）他删了自己的数据：
+            return                         #   别读出一份空的、最后又存回去（把他的私聊记忆建回来）
         m = load_mem(p.stem, "private")
         t_load = time.time()               # 读记忆的时候（10-28 Codex：等模型那几秒他回了 → 这句不该再发）
         uid = p.stem.split("_", 1)[1]
@@ -8944,6 +12421,9 @@ class FatFish:
         sent = None
         if segs:
             sent = await self.say("private", uid, segs, conv=p.stem)
+        if _gone(uid, t_load):             # （11-03 v1.17.13）等模型 / 发的那几秒里他删了数据（她没话说时上面没查）：什么都不记 别把他的私聊记忆建回来
+            log(f"[主动] {uid} 刚删了自己的数据 → 这次什么都不记")
+            return
         if not (segs and sent):            # 没发出去（删了好友 / 临时会话不行）或者她没话说：记一次 下次退避（10-28 Gemini 复查 #7）
             async with mem_lock(p.stem):   # 不写 last_proactive：写了以后一段正常结束的聊天会被当成「主动找了他没回」去追
                 fresh = load_mem(p.stem, "private")
@@ -9042,8 +12522,9 @@ async def consolidate(why="夜里整理", dream=True):
                     sys_p, user_p = soul.build_gist_prompt(who, fs, (old or {}).get("text", ""), scene == "group")
                     raw = await llm_bg("gist", sys_p, [{"role": "user", "content": user_p}], temperature=0.3, max_tokens=200)
                     m = re.search(r"\{.*\}", raw or "", re.S)
-                    done.append((who, guid, fs, str((json.loads(m.group(0)) if m else {}).get("impression") or "").strip(),
-                                 [old["id"]] if old and old.get("id") else []))
+                    jj = json.loads(m.group(0)) if m else {}
+                    gtxt = str(jj.get("gist") or jj.get("impression") or "").strip()     # 11-02 v1.17.7 改叫 gist（老的 impression 也认）
+                    done.append((who, guid, fs, gtxt, [old["id"]] if old and old.get("id") else []))
                 except Exception as e:
                     log(f"[遗忘] {key} {who} 蒸馏印象失败（下次再试）:", repr(e)[:100])
             n = 0
@@ -9059,6 +12540,11 @@ async def consolidate(why="夜里整理", dream=True):
                         if not ids:
                             continue
                         uid = guid or (key.split("_", 1)[1] if scene == "private" and who == partner else "")
+                        bad = memory.gist_bad(text) if (text and hasattr(memory, "gist_bad")) else ""
+                        if bad:                # 11-02 v1.17.7：写了性格 / 判断 / 她的感觉 → 不蒸馏 细节照旧留着（感觉放人物卡的印象里）
+                            log(f"[遗忘] {key} {who or '群'} 蒸馏出来的那句不合格（{bad}）→ 这次不蒸馏 {len(ids)} 件细节照旧留着")
+                            rep.setdefault("gist_bad", []).append({"key": key, "why": bad})
+                            continue
                         g = memory.apply_gist(fresh, who, text, ids, uid=uid, near=is_close(uid), default_owner=partner,
                                               default_uid=duid, shown_ids=oids) if text else None
                         if g:
@@ -9074,6 +12560,11 @@ async def consolidate(why="夜里整理", dream=True):
                     log(f"[遗忘] {key} {n} 条忘得差不多了 → 归档（控制台「遗忘曲线」能找回）")
             else:
                 rep["convs"][key] = memory.overview(mem)
+        if personcard is not None and personcard.on("impress") and not getattr(memory, "STUB", False):
+            try:                           # 人物卡：现在的印象（来往够了、隔了一周的）夜里更新（11-02 v1.17.7）
+                rep["impress"] = await impress_update()
+            except Exception as e:
+                log("[人物卡] 夜里更新印象出错（下次再试）:", repr(e)[:150])
         if dream and FG.get("dream", True) and hasattr(soul, "write_dream") and not soul.has_dream(clock.her_day()):
             rep["dream"] = await _dream()
     except Exception as e:
@@ -9097,6 +12588,119 @@ async def consolidate(why="夜里整理", dream=True):
     log(f"[遗忘] {why}完了：清楚 {tot['clear']} · 模糊 {tot['fuzzy']} · 快想不起来 {tot['faint']} · 钉住 {tot['pinned']}"
         f" | 蒸馏 {len(rep['gists'])} 个印象 · 归档 {rep['archived']} 条 · 调模型 {rep['calls']} 次 · {rep['secs']} 秒")
     return rep
+
+
+# ═════════════ 人物卡：印象（11-02 v1.17.7 B6 / C78；规矩写在 personcard.py 开头）═════════════
+def _impress_skip(uid):
+    """不写印象的人：老板（config personcard.owner 才写）、别人家的鱼、拉黑的 / 不理的"""
+    uid = str(uid or "")
+    if not uid or (OWNER_QQ and uid == OWNER_QQ and not personcard.C.get("owner")):
+        return True
+    try:
+        return bool(control.is_bot(uid) or control.blocked(uid))
+    except Exception:
+        return False
+
+
+def _uname(uid):
+    try:
+        return str(((galgame._load() or {}).get(str(uid)) or {}).get("name") or "")
+    except Exception:
+        return ""
+
+
+async def _impress_one(uid, conv, n, kind="first"):
+    """写一条印象：kind = first（第一印象）/ new（这个场合还没有印象）/ update（现在的印象 看要不要更新）→ 结果（日志 / 测试用）"""
+    t_start = time.time()
+    p = personcard.person(uid)
+    name = _uname(uid) or p.get("name") or str(uid)
+    gn = cross.group_names() if hasattr(cross, "group_names") else {}
+    first = p.get("first") or None
+    prev = (p.get("now") or {}).get(conv)
+    if kind == "first":
+        lines = await asyncio.to_thread(personcard.exchange_lines, conv, uid, DATA, None, None, True, 24)
+        sys_p, user_p = personcard.first_prompt(name, conv, lines, gn)
+    else:
+        base = prev or (first if first and first.get("where") == conv else None)
+        since = float((base or {}).get("lr") or (base or {}).get("ts") or 0) or None
+        lines = await asyncio.to_thread(personcard.exchange_lines, conv, uid, DATA, since, None, False, 24)
+        sys_p, user_p = personcard.now_prompt(name, conv, lines, first, prev, gn)
+    if not any(x.get("role") == "user" for x in lines):
+        personcard.note_try(uid, "存档里没找到他们的来往")
+        return "没原话"
+    raw = await llm_bg("impress", sys_p, [{"role": "user", "content": user_p}], temperature=0.3, max_tokens=300)
+    if _gone(uid, t_start):                # 等模型的时候他删了自己的数据：不写回去
+        return "gone"
+    st, rec = personcard.parse(raw, lines, uid, conv, allow_same=(kind == "update"))
+    lab = personcard.where_label(conv, gn)
+    if st == "ok":
+        if kind == "first":                # 记的是依据那段里她回了他几次（开机补的老熟人：之后又来往了很多 → 夜里接着写现在的印象）
+            okw = personcard.set_first(uid, rec, sum(1 for x in lines if x.get("role") == "assistant"), name)
+            log(f"[人物卡] 第一印象 · {name}（{lab}）：{rec['text']}（依据：{rec['date'][5:]} {rec['basis']}）" + ("" if okw else "（没存上）"))
+        else:
+            okw = personcard.set_now(uid, conv, rec, n)
+            log(f"[人物卡] 现在的印象 · {name}（{lab}）：{rec['text']}（依据：{rec['date'][5:]} {rec['basis']}）" + ("" if okw else "（没存上）"))
+        return "ok"
+    if st == "same":
+        personcard.confirm(uid, conv, n)
+        log(f"[人物卡] {name}（{lab}）最近的来往跟上次的印象差不多 → 不换（刷新时间）")
+        return "same"
+    if st == "empty" and kind != "first":
+        personcard.confirm(uid, conv, n)
+        return "empty"
+    personcard.note_try(uid, rec if st == "bad" else "看不出什么感觉")
+    log(f"[人物卡] {name}（{lab}）{'第一印象' if kind == 'first' else '现在的印象'}这次没写成：{rec if st == 'bad' else '看不出什么感觉'}")
+    return st
+
+
+async def impress_first(now=None):
+    """该写第一印象的（来往够了门槛、那段聊完了）→ 写（每次最多 personcard.max_per_tick 个）"""
+    out = []
+    for uid, conv, n in personcard.ready_first(now, skip=_impress_skip):
+        try:
+            out.append((uid, await _impress_one(uid, conv, n, "first")))
+        except Exception as e:
+            personcard.note_try(uid, repr(e)[:60])
+            log("[人物卡] 写第一印象出错:", repr(e)[:120])
+    return out
+
+
+async def impress_update(now=None):
+    """夜里整理时：现在的印象（这个场合上次之后又来往了 update_rounds 次、隔了 update_days 天的）→ 更新（一晚最多 max_per_night 个）"""
+    personcard.flush()
+    res = {"ok": 0, "same": 0, "other": 0}
+    for uid, conv, kind, _k in personcard.due_updates(now, skip=_impress_skip):
+        n = int((personcard.rounds_of(uid).get(conv) or {}).get("n") or 0)
+        try:
+            r = await _impress_one(uid, conv, n, kind)
+        except Exception as e:
+            log("[人物卡] 更新印象出错:", repr(e)[:120])
+            r = "err"
+        res["ok" if r == "ok" else "same" if r in ("same", "empty") else "other"] += 1
+    if sum(res.values()):
+        log(f"[人物卡] 夜里看了 {sum(res.values())} 个人的现在的印象：换了 {res['ok']} · 没变 {res['same']} · 没写成 {res['other']}")
+    return res
+
+
+async def impress_loop(bot):
+    """人物卡：开机 3 分钟后从聊天存档补一次来往次数（只补一次）；之后每 10 分钟：来往次数写回文件、写该写的第一印象
+    DeepSeek 高峰时先攒着（第一印象晚一会儿写不要紧）；她睡着的时候也照写（后台活）"""
+    if personcard is None or getattr(memory, "STUB", False) or not personcard.on():
+        return
+    await asyncio.sleep(float((CFG.get("personcard") or {}).get("boot_delay_s", 180)))
+    try:
+        if not personcard.boot_done():       # 只补一次：读存档放线程里（不卡消息）、并进来在主线程（跟 note_round 同一份）
+            personcard.boot_merge(await asyncio.to_thread(personcard.boot_read, DATA), log)
+    except Exception as e:
+        log("[人物卡] 从存档补来往次数出错（下次开机再补）:", repr(e)[:150])
+    while True:
+        try:
+            personcard.flush()
+            if personcard.on("impress") and not peak_defer():
+                await impress_first()
+        except Exception as e:
+            log("[人物卡] 出错:", repr(e)[:150])
+        await asyncio.sleep(600)
 
 
 async def _dream():
@@ -9136,10 +12740,10 @@ async def _dream():
 
 
 async def forget_loop(bot):
-    """她睡着以后（默认北京时间 5~9 点：在睡觉、DeepSeek 也是空闲价）整理一次记忆 + 做个梦；她的每一天一次"""
+    """她睡着以后（默认北京时间 4~7 点：在睡觉（3–8 点）、DeepSeek 也是空闲价 —— 11-02 v1.17.5 以前 5~9 点）整理一次记忆 + 做个梦；她的每一天一次"""
     if getattr(memory, "STUB", False) or not FG.get("enabled", True) or not hasattr(memory, "fading"):
         return
-    h0, h1 = (FG.get("night_hours") or [5, 9])[:2]
+    h0, h1 = (FG.get("night_hours") or [4, 7])[:2]
     log(f"[遗忘] 遗忘曲线开着：半衰期 {'/'.join(str(int(v)) for v in memory.FORGET['half_life'].values())} 天"
         f"（L1~L5）· 每天北京时间 {h0}~{h1} 点她睡着后整理一次" + (" · 会做梦" if FG.get("dream", True) else ""))
     await asyncio.sleep(120)
@@ -9157,10 +12761,10 @@ async def forget_loop(bot):
 
 
 async def diary_loop(bot):
-    """每天她睡前（默认凌晨 4 点前后）写日记；签名换成日记里那句动态"""
+    """每天她睡前（默认凌晨 2 点前后 —— 11-02 v1.17.5 她 3 点睡、一天从 3 点算起；以前 4 点）写日记；签名换成日记里那句动态"""
     if not SOUL.get("diary", True):
         return
-    h_write = int(SOUL.get("diary_hour", 4))
+    h_write = int(SOUL.get("diary_hour", 2))
     await asyncio.sleep(90)
     while True:
         try:
@@ -9366,6 +12970,18 @@ async def probe_model():
         bad.append("搜索")
     log(f"[模型自检] 视频截帧：{'ffmpeg OK 可用' if media.ffmpeg_ok() else '没装 ffmpeg'}")
     log(f"[模型自检] 唱歌：{sing.status()}")
+    try:                               # 余额（11-02 v1.17.0）：DeepSeek 官方余额接口通不通（金额只到整数）、Claude 这期自己记的账
+        log(f"[模型自检] 余额：{balance.describe(await balance.deepseek((CFG.get('llm') or {}).get('deepseek') or {}), balance.claude(judge))}")
+    except Exception as e:
+        log("[模型自检] 余额出错:", repr(e)[:100])
+    try:                               # 现找歌的几个来源能不能用（不联网 只看登录 / 装没装；11-01 v1.16.0）
+        import music
+        ss = await asyncio.to_thread(music.sources_status) if hasattr(music, "sources_status") else {}
+        if ss:
+            log("[模型自检] 唱歌来源：" + " / ".join(f"{k}{'通' if v.get('ok') else '不通'}" + (f"（{str(v.get('why'))[:30]}）" if v.get("why") else "")
+                                             for k, v in ss.items() if isinstance(v, dict) and v.get("enabled", True)))
+    except Exception as e:
+        log("[模型自检] 唱歌来源出错:", repr(e)[:120])
     try:
         log(f"[模型自检] 梗百科：{await memewiki.selftest(log)}")
     except Exception as e:
@@ -9513,6 +13129,213 @@ def cleanup_memories():
         log(f"[遗忘] 以前记的 {leveled} 条补上了等级（从记下 / 上次想起那会儿开始算清晰度）")
 
 
+MEMFIX_FILE = DATA / "memfix_1102.json"
+
+
+def memfix_1102():
+    """一次性（11-02 v1.17.5 小明：「北京时间写的旧记忆可以清除」）—— 开机最先做（别的都还没开始 不会跟提炼抢）
+    v1.17.1（11-02 02:09:31）以前 记忆提炼用北京时间的「凌晨 / 半夜 / 早上几点」写过老板的事（老板不在北京：那个钟点对他是错的）
+    → memory.bj_clock_hit 认出来的那几条用记忆模块自己的墓碑去掉（memory.retire：从 facts 拿掉、id 进 tombstones；不留文字墓碑）
+    → 原条先备份进 data/memfix_1102.json（谁的对话、原样的那条）；做过一次就不再做
+    放回去：建一个 data/memfix_1102.restore（空文件就行）再重启 → 开机时原样放回、墓碑里的 id 拿掉（memory.unretire）
+    只动老板的（QQ 号 / 名字认）：别人的事多半在国内 北京钟点是对的；她自己的事也不动（宁可少删）"""
+    if getattr(memory, "STUB", False) or not hasattr(memory, "bj_clock_hit") or not OWNER_QQ:
+        return
+    try:
+        st = safeio.read_json(MEMFIX_FILE, None, log, busy_raise=True)
+    except safeio.Busy:
+        log("[记忆] memfix_1102.json 一时打不开 这次开机先不清北京钟点的旧记忆")
+        return
+    st = st if isinstance(st, dict) else {}
+    req = DATA / "memfix_1102.restore"
+    if req.exists() and st.get("items") and not st.get("restored"):
+        n = 0
+        by = {}
+        for it in st["items"]:
+            by.setdefault(it.get("key"), []).append(it.get("fact"))
+        for key, facts in by.items():
+            p = mem_file(key)
+            try:
+                m = json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+            except Exception as e:
+                log("[记忆] 放回北京钟点的旧记忆：读不出", key, repr(e)[:60])
+                continue
+            if isinstance(m, dict):
+                k = memory.unretire(m, facts)
+                if k:
+                    safeio.write_json(p, m)
+                    n += k
+        st["restored"] = time.time()
+        safeio.write_json(MEMFIX_FILE, st)
+        try:
+            req.replace(req.with_name("memfix_1102.restore.done"))
+        except OSError:
+            pass
+        log(f"[记忆] 按 data/memfix_1102.restore 把 11-02 清掉的北京钟点旧记忆放回去了 {n} 条")
+        return
+    if st.get("done"):
+        return
+    names = [str(x) for x in [OWNER_NAME, CFG.get("owner_name")] + list(((CFG.get("humor") or {}).get("prank") or {}).get("owner_names") or [])
+             if x and len(str(x)) >= 2]
+    names = list(dict.fromkeys(names))
+    if not names:
+        return
+    items = list(st.get("items") or [])           # 上次做到一半（备份了 还没记 done）：接着做 备份的那几条别丢
+    for p in sorted(MEM_DIR.glob("*.json")):
+        try:
+            m = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            log("[记忆] 清北京钟点的旧记忆：读不出", p.name, repr(e)[:60])
+            continue
+        if not isinstance(m, dict):
+            continue
+        hits = [(f, memory.bj_clock_hit(f, names, uid=OWNER_QQ)) for f in m.get("facts") or []]
+        hits = [(f, h) for f, h in hits if h]
+        if not hits:
+            continue
+        have = {(it.get("key"), (it.get("fact") or {}).get("id")) for it in items}
+        items += [{"key": p.stem, "fact": dict(f), "hit": h} for f, h in hits if (p.stem, f.get("id")) not in have]
+        st.update(items=items, rule="v1.17.1（11-02 02:09:31）以前记的、还在用的、写着北京钟点、是老板的事（QQ 号 / 名字认）")
+        safeio.write_json(MEMFIX_FILE, st)            # 先备份 再去掉
+        gone = memory.retire(m, [f.get("id") for f, _ in hits])
+        if gone:
+            safeio.write_json(p, m)
+    st.update(done=time.time(), items=items, n=len(items))
+    safeio.write_json(MEMFIX_FILE, st)
+    if items:
+        log(f"[记忆] 按北京钟点写的老板的旧记忆 {len(items)} 条 → 用墓碑去掉了（11-02 v1.17.5；原条备份在 data/memfix_1102.json，"
+            "要放回去：建 data/memfix_1102.restore 再重启）")
+
+
+UIDFIX_FILE = DATA / "uidfix_1102.json"
+
+
+def _names_map():
+    """名字 → QQ 号的表（11-02 v1.17.7 迁移用）：{对话: {名字: {号}}}、{名字: {号}}（所有对话 + 好感表）、见过的号"""
+    conv, glob, known = {}, {}, set()
+
+    def add(c, nm, u):
+        nm, u = str(nm or "").strip(), str(u or "")
+        if not nm or not u or nm == "系统":
+            return
+        conv.setdefault(c, {}).setdefault(nm, set()).add(u)
+        glob.setdefault(nm, set()).add(u)
+        known.add(u)
+    if ARCHIVE.is_dir():
+        for day in sorted(p for p in ARCHIVE.iterdir() if p.is_dir()):
+            for p in day.glob("*.jsonl"):
+                try:
+                    with open(p, encoding="utf-8") as fh:
+                        for line in fh:
+                            try:
+                                e = json.loads(line)
+                            except ValueError:
+                                continue
+                            if isinstance(e, dict) and e.get("role") == "user":
+                                add(p.stem, e.get("name"), e.get("uid"))
+                except OSError:
+                    continue
+    for p in MEM_DIR.glob("*.json"):
+        try:
+            m = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for h in (m.get("history") or []) + (m.get("overflow") or []):
+            if isinstance(h, dict) and h.get("role") == "user":
+                add(p.stem, h.get("name"), h.get("uid"))
+    try:
+        fav = galgame._load() or {}
+    except Exception:
+        fav = {}
+    for u, v in fav.items():
+        if isinstance(v, dict) and v.get("name"):
+            glob.setdefault(str(v["name"]).strip(), set()).add(str(u))
+        known.add(str(u))
+    return conv, glob, known
+
+
+def uidfix_1102():
+    """一次性（11-02 v1.17.7 人物卡 P0 卫生）—— 开机先做（别的都还没开始 不会跟提炼抢）：
+    ① 名字 → QQ 号：没记号的记忆 只补把握很高的（memory.uid_safe_plan：私聊对面那个人 / 这个名字只有一个号用过 / 名字就是 QQ 号的写法）；
+       拿不准的不补（对不上任何号 / 一个名字对好几个号 / 这个对话里没见过 / 一个字的名字）；补的条目标 uid_by
+    ② 还在用的「谁.印象」（夜里蒸馏的那句「记得个大概」）按新规矩再查：写了性格 / 判断 / 她的感觉的 → 归档（能找回）、
+       当时并进去的细节放回来（清晰度不重算：今晚整理时按新规矩重新蒸馏）
+    先整份备份 data/memory → backup_20261024/uidfix_1102_<时间>/memory/；记录 data/uidfix_1102.json（补了哪些、跳过的为什么）
+    放回去：建 data/uidfix_1102.restore（空文件就行）再重启 → 补的号拿掉、归档的那句放回去"""
+    if getattr(memory, "STUB", False) or not hasattr(memory, "uid_safe_plan"):
+        return
+    try:
+        st = safeio.read_json(UIDFIX_FILE, None, log, busy_raise=True)
+    except safeio.Busy:
+        log("[人物卡] uidfix_1102.json 一时打不开 这次开机先不迁名字 → QQ 号")
+        return
+    st = st if isinstance(st, dict) else {}
+    req = DATA / "uidfix_1102.restore"
+    if req.exists() and st.get("done") and not st.get("restored"):
+        n = g = 0
+        for key in sorted({x.get("key") for x in (st.get("items") or []) + (st.get("gists") or []) if x.get("key")}):
+            p = mem_file(key)
+            try:
+                m = json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+            except Exception as e:
+                log("[人物卡] 放回去：读不出", key, repr(e)[:60])
+                continue
+            if not isinstance(m, dict):
+                continue
+            k1 = memory.unassign_uid(m, [x for x in st.get("items") or [] if x.get("key") == key])
+            k2 = memory.gist_unrecheck(m, [x for x in st.get("gists") or [] if x.get("key") == key])
+            if k1 or k2:
+                safeio.write_json(p, m)
+            n, g = n + k1, g + k2
+        st["restored"] = time.time()
+        safeio.write_json(UIDFIX_FILE, st)
+        try:
+            req.replace(req.with_name("uidfix_1102.restore.done"))
+        except OSError:
+            pass
+        log(f"[人物卡] 按 data/uidfix_1102.restore 放回去了：补的号拿掉 {n} 条 · 「记得个大概」放回 {g} 条")
+        return
+    if st.get("done"):
+        return
+    import shutil
+    bdir = ROOT / "backup_20261024" / f"uidfix_1102_{clock.strf('%Y%m%d_%H%M')}" / "memory"
+    bdir.mkdir(parents=True, exist_ok=True)
+    for p in MEM_DIR.glob("*.json"):
+        shutil.copy2(p, bdir / p.name)
+    st["backup"] = str(bdir)
+    safeio.write_json(UIDFIX_FILE, st)
+    conv_names, glob_names, known = _names_map()
+    items, gists, stats_ = [], [], {}
+    people = set()
+    for p in sorted(MEM_DIR.glob("*.json")):
+        try:
+            m = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            log("[人物卡] 迁名字 → QQ 号：读不出", p.name, repr(e)[:60])
+            continue
+        if not isinstance(m, dict):
+            continue
+        key = p.stem
+        partner = key[8:] if key.startswith("private_") else ""
+        plan = memory.uid_safe_plan(m, conv_names.get(key) or {}, glob_names, known, partner)
+        for it in plan:
+            k = ("迁了：" if it["uid"] else "没迁：") + it["why"]
+            stats_[k] = stats_.get(k, 0) + 1
+        done = memory.assign_uid_safe(m, plan)
+        people |= {x["uid"] for x in done}
+        gs = memory.gist_recheck(m)
+        if done or gs:
+            safeio.write_json(p, m)
+        items += [dict(x, key=key) for x in done]
+        gists += [dict(x, key=key) for x in gs]
+    st.update(done=time.time(), items=items, gists=gists, stats=stats_, people=len(people),
+              rule="只迁把握很高的：私聊对面那个人 / 名字只对得上一个号（这个对话里、所有对话里都只有他用过）/ 名字就是 QQ 号的写法")
+    safeio.write_json(UIDFIX_FILE, st)
+    log(f"[人物卡] 名字 → QQ 号（只迁把握很高的）：补了 {len(items)} 条（{len(people)} 个人）· 没迁 "
+        f"{sum(v for k, v in stats_.items() if k.startswith('没迁'))} 条；「记得个大概」按新规矩归档 {len(gists)} 条"
+        f"（备份 {bdir}；放回去：建 data/uidfix_1102.restore 再重启）")
+
+
 async def start_admin(bot):
     P = CFG.get("panel") or {}
     if not P.get("token"):
@@ -9526,6 +13349,14 @@ async def main():
         log("[启动] 已经有一个大肥鱼在运行了（两个一起跑 每句话会回两遍）这个就不启动了")
         return 3                       # 守护循环看到 3 就不再拉起
     cleanup_memories()
+    try:
+        memfix_1102()                  # 11-02 v1.17.5：按北京钟点写的老板的旧记忆（一次性 开机最先做）
+    except Exception as e:
+        log("[记忆] 清北京钟点的旧记忆出错（这次不清 下次开机再试）:", repr(e)[:120])
+    try:
+        uidfix_1102()                  # 11-02 v1.17.7：名字 → QQ 号（只迁把握很高的）+「记得个大概」按新规矩再查（一次性）
+    except Exception as e:
+        log("[人物卡] 迁名字 → QQ 号出错（这次不迁 下次开机再试）:", repr(e)[:150])
     shared.configure(CFG.get("shared") or {}, log)
     bot = FatFish()
     asyncio.get_running_loop().create_task(start_admin(bot))
@@ -9544,7 +13375,7 @@ async def main():
                          bot.slang_loop(), bot.speakup_loop(), bot.rhythm_loop(), bot.heartbeat_loop(),
                          bot.anim_loop(), bot.card_loop(), bot.sweep_loop(), bot.memewiki_loop(), backup_loop(),
                          bot.commit_loop(), forget_loop(bot), bot.qzone_loop(), memhyg_migrate(),
-                         machine_loop())                # 电脑配置在后台读（10-28 Gemini 复查 machine）
+                         machine_loop(), bot.status_loop(), bot.life_loop(), impress_loop(bot))   # 人物卡（11-02 v1.17.7）   # 电脑配置在后台读（10-28 Gemini 复查 machine）；每日生活（11-01 v1.16.4）
 
 
 if __name__ == "__main__":

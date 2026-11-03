@@ -6,7 +6,7 @@
   双击 C:\\QQBot\\大肥鱼.bat → 选数字回车：
     1 启动 QQ 和机器人      2 停止 QQ 和机器人（要管理员）      3 重启机器人（QQ 不掉线）
     4 打开控制台            5 开机自启 / 修复启动（要管理员）
-    6 安装…  首次设置、语音听写、本地 AI、视频支持、导入 / 整理表情包
+    6 安装…  首次设置、语音听写、本地 AI、视频支持、YouTube 点歌支持、导入 / 整理表情包
     7 维护…  导出到 GitHub、打包群文件、跑测试、清理旧的 .bat、看状态
     8 肥鱼声音服务…  启动 / 停止 / 看状态（装了 C:\\QQBot\\feiyu_voice 才有这一项；10-30）
   Windows「智能应用控制」把 .bat 拦了 → 双击 C:\\QQBot\\tools\\fish.py，是同一个菜单（.py 由 Python 运行 不拦）
@@ -19,7 +19,7 @@
 
 命令行（控制台的按钮、首次设置向导也用这些）：
   python tools\\fish.py [start | stop | restart [--hard] | console | autostart [--yes | --no-restart] | status | clean
-                         | setup | voice | localai | video | stickers | curate | export | pack | test | service | loop
+                         | setup | voice | localai | video | youtube | stickers | curate | export | pack | test | service | loop
                          | fyvoice [start | stop | status] | fyd [start | stop | status] [tts | cover | all]]
   --pause：做完停 3 秒再关窗口（出错等回车）—— 控制台点按钮时新开的窗口用
   FATFISH_ROOT=<目录>：换一个「C:\\QQBot」（测试用）
@@ -1236,6 +1236,92 @@ def cmd_video(args):
     return rc
 
 
+DENO_DIR = ROOT / "tools" / "deno"      # winget 不行时 Deno 直接下到这里（11-01 v1.16.1；机器人那边 music.py 也认这里）
+DENO_ZIP = "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip"   # Deno 官方发布的 Windows 版
+
+
+def find_deno():
+    """Deno 在哪（winget 刚装完 这个窗口的 PATH 还没更新 → 再看看几个常见的地方）
+    11-01 v1.16.1：winget 装的是「便携包」—— 只放在 WinGet\\Packages\\DenoLand.Deno_*\\ 里、不一定建 Links 快捷方式 → 以前找不到"""
+    p = shutil.which("deno")
+    if p:
+        return p
+    cands = [DENO_DIR / "deno.exe"]
+    if os.environ.get("USERPROFILE"):
+        cands.append(Path(os.environ["USERPROFILE"]) / ".deno" / "bin" / "deno.exe")
+    la = os.environ.get("LOCALAPPDATA")
+    if la:
+        cands.append(Path(la) / "Microsoft" / "WinGet" / "Links" / "deno.exe")
+        try:
+            cands += sorted((Path(la) / "Microsoft" / "WinGet" / "Packages").glob("DenoLand.Deno*/deno.exe"))
+        except OSError:
+            pass
+    return next((str(q) for q in cands if q.exists()), "")
+
+
+def download_deno():
+    """winget 没装成 / 装了找不到：从 Deno 官方发布页下 Windows 版 zip 解到 C:\\QQBot\\tools\\deno（约 40 MB）→ deno.exe 路径 / ""（11-01 v1.16.1）"""
+    import urllib.request
+    import zipfile
+    DENO_DIR.mkdir(parents=True, exist_ok=True)
+    z = DENO_DIR / "deno.zip"
+    say(f"  直接从 Deno 官方发布页下（约 40 MB）：{DENO_ZIP}")
+    try:
+        with urllib.request.urlopen(DENO_ZIP, timeout=120) as r, open(z, "wb") as f:
+            shutil.copyfileobj(r, f)
+        with zipfile.ZipFile(z) as zf:
+            zf.extract("deno.exe", DENO_DIR)
+    except Exception as e:
+        say(f"  [不行] 下 / 解压 Deno 失败：{repr(e)[:120]}（网络不通的话去 https://deno.com 照着装）")
+        return ""
+    finally:
+        try:
+            z.unlink()
+        except OSError:
+            pass
+    exe = DENO_DIR / "deno.exe"
+    return str(exe) if exe.exists() else ""
+
+
+def cmd_youtube(args):
+    """YouTube 点歌支持（11-01 v1.16.0）：yt-dlp（Python 库 国内镜像装）+ Deno（yt-dlp 现在下 YouTube 要一个 JS 运行时）
+    没装也没事：点歌照样走 QQ 音乐 / 网易云 / 酷狗 / B站，只是 YouTube 这个来源跳过"""
+    say("===== [1/3] yt-dlp（下 YouTube 的库）=====")
+    if call([py_console(), "-m", "pip", "install", "--disable-pip-version-check", "-U", "yt-dlp", "-i", TUNA]) != 0:
+        say("  [不行] 装 yt-dlp 失败：看看网络，再选一次")
+    say("===== [2/3] Deno（yt-dlp 下 YouTube 要用）=====")
+    exe = find_deno()
+    if exe:
+        say(f"  Deno 已经装好了：{exe}")
+    elif shutil.which("winget"):
+        say("  用 winget 装 Deno（官方包 DenoLand.Deno；问你同不同意条款就输入 Y 回车）")
+        call(["winget", "install", "--id", "DenoLand.Deno", "-e"])
+        exe = find_deno()
+        if not exe:                         # 11-01 v1.16.1：winget 装了也找不到 / 没装成 → 直接下官方的 zip
+            say("  winget 装完还是找不到 deno")
+            exe = download_deno()
+    else:
+        say("  这台电脑没有 winget")
+        exe = download_deno()
+    if not exe:
+        say("  还是没装上：去 https://deno.com 照着装（Windows 那一栏），装好再选一次这一项")
+        try:
+            import webbrowser
+            webbrowser.open("https://deno.com")
+        except Exception:
+            pass
+    say("===== [3/3] 试一下 =====")
+    rc_d, out_d = run([exe, "--version"], timeout=30) if exe else (-1, "没找到 deno")
+    say(("  Deno 能用：" + (out_d.strip().splitlines() or [""])[0]) if rc_d == 0 else f"  [不行] Deno 用不了：{out_d.strip()[:120]}")
+    rc_y, out_y = run([py_console(), "-c", "import yt_dlp; print(yt_dlp.version.__version__)"], timeout=60)
+    say(("  yt-dlp 能用：" + out_y.strip()[:40]) if rc_y == 0 else f"  [不行] import yt_dlp 不行：{out_y.strip()[-160:]}")
+    if rc_d == 0 and rc_y == 0:
+        say("  好了：控制台「唱歌」页点「现在自检」能看到 YouTube 这个来源能不能用")
+        offer_restart()
+        return 0
+    return 1
+
+
 def _pillow():
     say("  装图片库 Pillow（装过就跳过）…")
     call([py_console(), "-m", "pip", "install", "pillow", "-q", "-i", TUNA])
@@ -1523,7 +1609,7 @@ def cmd_fyd(args):
 
 COMMANDS = {"start": cmd_start, "stop": cmd_stop, "restart": cmd_restart, "console": cmd_console,
             "autostart": cmd_autostart, "service": cmd_service, "loop": cmd_loop, "status": cmd_status,
-            "clean": cmd_clean, "setup": cmd_setup, "voice": cmd_voice, "localai": cmd_localai, "video": cmd_video,
+            "clean": cmd_clean, "setup": cmd_setup, "voice": cmd_voice, "localai": cmd_localai, "video": cmd_video, "youtube": cmd_youtube,
             "stickers": cmd_stickers, "curate": cmd_curate, "export": cmd_export, "pack": cmd_pack, "test": cmd_test,
             "fyvoice": cmd_fyvoice, "fyd": cmd_fyd}
 
@@ -1558,7 +1644,7 @@ def _items(kind_):
         return [("启动 QQ 和机器人", cmd_start, []), ("停止 QQ 和机器人（要管理员）", cmd_stop, []),
                 ("重启机器人（QQ 不掉线）", cmd_restart, []), ("打开控制台（网页）", None, "console"),
                 ("开机自启 / 修复启动（要管理员）", cmd_autostart, []),
-                ("安装…  首次设置、语音听写、本地 AI、视频支持、表情包", None, "install"),
+                ("安装…  首次设置、语音听写、本地 AI、视频支持、YouTube 点歌、表情包", None, "install"),
                 ("维护…  " + maint, None, "maint")] + (
             [("肥鱼声音服务…  启动 / 停止 / 看状态（本地说话、换声）", None, "fyvoice")] if (fyv_installed() or fyd_any()) else [])
     if kind_ == "fyvoice":
@@ -1572,6 +1658,7 @@ def _items(kind_):
                 ("语音听写（SenseVoice，约 250 MB）", cmd_voice, []),
                 ("本地 AI（Ollama 识图，约 10 GB）", cmd_localai, []),
                 ("视频支持（ffmpeg：唱歌、视频截帧）", cmd_video, []),
+                ("YouTube 点歌支持（yt-dlp + Deno）", cmd_youtube, []),
                 ("导入表情包", cmd_stickers, []),
                 ("整理表情包（本地 AI 过一遍，1~2 小时）", cmd_curate, [])]
     items = [("导出到 GitHub", cmd_export, [])]

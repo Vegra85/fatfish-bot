@@ -9,6 +9,12 @@
   主模型可以是 deepseek-flash（provider openai + use_chat_key：用聊天那把 key 不在 config 里再存一份）
   提示里带上她自己长什么样（anim.self_desc）+ 头像当参考图（self_ref）、谁发的、发之前在聊什么、是不是发给她的
   描述除了画面和字 还要写：梗（出处 / 在玩什么）、跟你（图里有没有像她的、是不是在拿她开涮）、坑（擦边 / 挖坑 / 钓鱼）
+11-02 v1.17.4（小明：「有人给她发了一张很丑的图是ai做的拟真的鱼在吃饭 她好像没法 tell 这个鱼是不是很丑是不是符合她的人设
+  她应该自知自己是可爱的」）：
+  以前「图里出现 …DeepSeek 的鲸鱼 就是在说她本人」——一条写实的蓝鱼也算她，「跟你」只写了「撞了你的外号」，没说像不像、丑不丑；
+  他接着引用那张图问「这不是你是谁」时，引用里的「跟你」又因为提到了群友的名字被去掉了 —— 她两轮都没拿到比对。
+  现在多一项「像你」：图里有被当成她的东西时，对照头像说像不像她（画风、长相）、照实说画得怎么样（可爱 / 丑 / 怪 / 画崩了）；
+  只看图和头像、不看聊天 → 别的对话、引用里也留着（缓存 v8）
   see_all：主模型不是本地的也照样看所有群图（以前只有本地识图才后台看没人找她的群图）
   花的钱记在统计的「看图」下面 不算进省 token 的曲线（stats.llm budget=False）
 """
@@ -41,17 +47,19 @@ BAD_SEC = 900                  # 太大 / 不是图 / 缩完还太大的：这�
 PER_HOUR = int(V.get("max_per_hour", 40))
 
 MAX_CHARS = int(V.get("max_chars", 180))
-HARD_CHARS = MAX_CHARS + 80          # 按句收尾的硬上限（梗 / 跟你 / 坑 在最后 别被砍掉）
+HARD_CHARS = MAX_CHARS + 120         # 按句收尾的硬上限（像你 / 梗 / 跟你 / 坑 别被砍掉；11-02 v1.17.4 多了「像你」+80 → +120）
 SELF_DESC = str((CFG.get("anim") or {}).get("self_desc") or "")
 BOT_NAMES = [x for x in [CFG.get("bot_name"), CFG.get("group_card")] + list(CFG.get("aliases") or []) if x]
-CACHE_VER = "v7:"     # v7（10-28 审查 media-6）：带聊天上下文看的整段只给同一个对话、同一个发图人用 别的对话只用干净的那份（老缓存里混着别的对话的事 作废）；v6（10-28 自检后）：截图里别人 / AI 的话前面写上是谁说的、挡在中间的也标▢；v5（10-28）：字按排版抄、挡住的用▢、截图里别人的回答不当成答案；v4（10-27 晚）：带她的长相和聊天上下文、多写 梗 / 跟你 / 坑；v3：动图看拼帧
+CACHE_VER = "v8:"     # v8（11-02 v1.17.4）：多了「像你」（对照头像：像不像她、画得怎么样）；     # v7（10-28 审查 media-6）：带聊天上下文看的整段只给同一个对话、同一个发图人用 别的对话只用干净的那份（老缓存里混着别的对话的事 作废）；v6（10-28 自检后）：截图里别人 / AI 的话前面写上是谁说的、挡在中间的也标▢；v5（10-28）：字按排版抄、挡住的用▢、截图里别人的回答不当成答案；v4（10-27 晚）：带她的长相和聊天上下文、多写 梗 / 跟你 / 坑；v3：动图看拼帧
 
 
 def _who_line():
     names = "、".join(dict.fromkeys(str(x) for x in BOT_NAMES)) or "大肥鱼"
     return (f"看图的人是「{names}」：一个住在电脑里的 AI 鲸鱼娘（DeepSeek 家的）"
             + (f"，长这样：{SELF_DESC}" if SELF_DESC else "") + "。"
-            "图里出现长得像她的角色（蓝发女仆鲸鱼娘、Q 版小鲸鱼女仆、「肥鱼」「鲸鲸」「欧鲸鲸」、DeepSeek 的鲸鱼）就是在说她本人。")
+            "图里的角色长得跟她一样（蓝发女仆鲸鱼娘、Q 版小鲸鱼女仆）才是画的她本人；"
+            "一条鱼 / 鲸鱼、DeepSeek 的鲸鱼标志、别的角色 —— 就算有人说是她，也只是拿她的名字、外号（「大肥鱼」「肥鱼」「鲸鲸」「欧鲸鲸」）说事，"
+            "长得像不像她要对照着看。")
 
 
 def build_prompt(note="", ctx=None, ref=False):
@@ -70,11 +78,15 @@ def build_prompt(note="", ctx=None, ref=False):
           "截图里的聊天、别人或者别的 AI 的回答：照抄 但每段前面写上是谁说的（「豆包答：…」「某人：…」）—— "
           "那是它说的 不是图上本来印着的字 也不等于正确答案（别写成「本应是…」）\n"
           "画面：有什么、谁在干什么（只写要紧的：动作 表情 姿势 场景）\n"
+          "像你：图里有被当成她的东西才写（长得像她的角色、鱼、鲸鱼、DeepSeek 的鲸鱼，或者冲着她发、像是在说「这就是你」的）："
+          + ("对照第一张头像" if ref else "对照她的样子（上面写的）")
+          + " 说像不像她本人（画风：Q 版二次元 / 写实 / 简笔…；长相、衣服对不对得上）；"
+          "再照实说这张画得怎么样（可爱 / 普通 / 丑 / 怪 / 吓人 / AI 画崩了）。只看图和头像 不看聊天（没有就整项不写）\n"
           "梗：这是什么梗 / 出处 / 在玩什么（影视截图、历史事件、网络模板比如「找一车X来弄你」「给X什么都做」都点名说清；"
           "认不出就写「看不出出处」 别编）\n"
           "跟你：图里真有她 / 像她的角色，或者图里的字明着说 AI、token、DeepSeek、鲸鱼 才写（别从聊天里硬往她身上扯；没关系就整项不写）\n"
           "坑：有擦边、挖坑、钓鱼、等她上当的地方才写（没有就整项不写 别写「坑：没有」）\n"
-          f"格式：字：「…」。画面：…。梗：…。跟你：…。坑：…。总共不超过 {MAX_CHARS} 字。")
+          f"格式：字：「…」。画面：…。像你：…。梗：…。跟你：…。坑：…。总共不超过 {MAX_CHARS} 字。")
     if note:
         p += (f"\n注意：这是一张{note}。画面那项当成一个动作过程来说（一开始…然后…最后…）"
               "不要一格一格分开讲 不要提「拼图」「第几帧」。")
@@ -190,7 +202,7 @@ def _ctx_sig(ctx):
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:10]
 
 
-_SEC = re.compile(r"(字|画面|梗|跟你|坑)[：:]")
+_SEC = re.compile(r"(字|画面|像你|梗|跟你|坑)[：:]")
 
 
 def _plain(cap, ctx=None):
@@ -215,6 +227,8 @@ def _plain(cap, ctx=None):
     def keep(lab, a, b):
         if lab in ("字", "画面"):
             return True
+        if lab == "像你":                  # 只看图和头像比的（11-02 v1.17.4）：没点到人名就留着 —— 引用那张图问「这不是你是谁」时还看得到
+            return not any(n in cap[a:b] for n in names)
         if private:
             return False
         part = cap[a:b]
@@ -454,21 +468,36 @@ async def fetch(url, headers=None):
         return None
 
 
+_SLOT = re.compile(r"\[(?:图片|表情包)\]")
+_QHEAD = re.compile(r"^（回复了 [^「]*?的「[\s\S]*?」）")       # 开头的引用头（跟 bot.own_text 一样切）
+
+
 async def caption_text(text, segs, log=print, primary_only=False, ctx=None):
-    """把文本里的 [图片]/[表情包] 依次换成带描述的版本"""
+    """把文本里的 [图片]/[表情包] 换成带描述的版本 —— 按位置配（11-03 v1.17.13 Codex F8 + Gemini 4-F7）：
+    消息段里第 k 张图 = 文字里第 k 个「[图片]」/「[表情包]」（不分哪种）；看不成的那张也占着它的位置（后面的不往前挪）；
+    开头的引用头「（回复了 X 的「…」）」里的是引用那条的图 不算（切掉 只配后面的）
+    以前：每张都去换第一个「[图片]」（没有再找「[表情包]」）—— 第一张没看成 第二张的描述填到第一张的位置；图和表情包混着发也错位；
+    引用头里还留着「[图片]」时 他这条的图的描述填进了引用里"""
     imgs = image_segments(segs)
     if not imgs:
         return text
+    text = str(text or "")
+    m = _QHEAD.match(text)
+    head, body = (text[:m.end()], text[m.end():]) if m else ("", text)
+    caps = []
     for key, url, summary in imgs[:3]:
-        cap = await describe(key, url, log, primary_only, ctx=ctx)
+        caps.append((await describe(key, url, log, primary_only, ctx=ctx), summary))
+    out, last = [], 0
+    for k, sm in enumerate(_SLOT.finditer(body)):
+        cap, summary = caps[k] if k < len(caps) else (None, "")
         if not cap:
-            continue
-        for tag in ("[图片]", "[表情包]"):
-            if tag in text:
-                label = "表情包" if (tag == "[表情包]" or summary) else "图片"
-                text = text.replace(tag, f"[{label}：{cap}]", 1)
-                break
-    return text
+            continue                       # 这张没看成：占位留着 下一张照样配它自己那个位置
+        label = "表情包" if (sm.group(0) == "[表情包]" or summary) else "图片"
+        out.append(body[last:sm.start()] + f"[{label}：{cap}]")
+        last = sm.end()
+    if not out:
+        return text
+    return head + "".join(out) + body[last:]
 
 
 async def caption_entry(h, log=print, primary_only=False, chat=None, conv=None):

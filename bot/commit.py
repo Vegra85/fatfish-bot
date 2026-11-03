@@ -82,7 +82,19 @@ def tick(now=None, log=print):
     return []
 
 
-def back_call(rec, now=None):
+def back_call(rec, now=None, key=None):
+    return None
+
+
+def sleep_state(now=None):
+    return None
+
+
+def end(key, rec, now=None, how="time", by="", by_uid="", owner=False, log=print, why=""):
+    return None
+
+
+def asleep(now=None):
     return None
 
 

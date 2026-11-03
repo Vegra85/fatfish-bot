@@ -9,7 +9,7 @@
              at_only=只在有人 @/叫名字/引用她时说话  mute=完全不说话（消息照样记）
              mute_until：临时静音到这个时间（过了自动恢复 mode）
              实际生效的 = 控制台的 mode、群管设的 admin、QQ 禁言 三个里最严的那个（group_mode）
-    blocked: {QQ号: 备注}  完全不理（消息也不记）
+    blocked: {QQ号: 备注}  完全不理（消息也不记）—— 11-02 v1.17.6 起 她自己拉黑的（data/blocklist.json 的 blocked）也算（blocked() 一起看）
     bots   : {QQ号: 备注}  别的机器人：只有 @/叫名字/引用她 才回，10 分钟最多回 3 次，不算接话
     self_off: {QQ号: {"until": 时间戳, ...}}  群友说「别接我的话」：到点前不主动接他的话（他 @她 照样回）
     full   : {"until": 时间戳 或 -1(一直开), "since": 开的时间, "by": 谁开的}  火力全开（见下面 full_on）
@@ -257,7 +257,16 @@ def forget_person(uid):
 
 
 def blocked(uid):
-    return str(uid) in (rules().get("blocked") or {})
+    return str(uid) in (rules().get("blocked") or {}) or her_blocked(uid)
+
+
+def her_blocked(uid):
+    """她自己拉黑的（11-02 v1.17.6 C80 blocklist.py：data/blocklist.json 的 blocked；控制台「群和人 → 她拉黑的人」能撤）"""
+    try:
+        import blocklist                # 在函数里 import：blocklist 也 import 了 clock / safeio
+        return blocklist.is_blocked(uid)
+    except Exception:
+        return False
 
 
 def qzone_off(uid):
@@ -294,14 +303,17 @@ def is_human(uid):
 
 
 def _edit(fn):
-    """读 control.json → fn(d) 改 → 原子写回（机器人这边改：自动认出的 AI、火力全开…）"""
-    d = safeio.read_json(FILE, None, print, busy_raise=True)    # 读坏了先另存一份 .bad；被占着就别改（免得冲掉别的设置）
-    if not isinstance(d, dict):
-        # 没有这个文件 → 从空的开始；读坏了（手改多了个逗号 / 写到一半断电）→ 从上次读好的那份开始
-        # （10-28 Gemini 复查：以前从空的开始 自动认出一个 AI 就把拉黑的人、群管档位、叫醒全冲掉了）
-        d = json.loads(json.dumps(_c.get("d") or {})) if FILE.exists() else {}
-    fn(d)
-    safeio.write_json(FILE, d)             # 临时文件带进程号、另一边正开着时等一下再换、fsync（以前 os.replace 一次不成就抛 这次的改动丢了）
+    """读 control.json → fn(d) 改 → 原子写回（机器人这边改：自动认出的 AI、火力全开…）
+    整个读改写包一把跨进程的锁（11-03 v1.17.13 Codex F11）：控制台和机器人两个进程都走这里 —— 以前各读各的、
+    后写的那边把先写的那边刚改的冲掉（比如控制台拉黑一个人的同时 机器人认出一个 AI）。等 3 秒还拿不到 → safeio.Busy（这次不改）"""
+    with safeio.file_lock(FILE):
+        d = safeio.read_json(FILE, None, print, busy_raise=True)    # 读坏了先另存一份 .bad；被占着就别改（免得冲掉别的设置）
+        if not isinstance(d, dict):
+            # 没有这个文件 → 从空的开始；读坏了（手改多了个逗号 / 写到一半断电）→ 从上次读好的那份开始
+            # （10-28 Gemini 复查：以前从空的开始 自动认出一个 AI 就把拉黑的人、群管档位、叫醒全冲掉了）
+            d = json.loads(json.dumps(_c.get("d") or {})) if FILE.exists() else {}
+        fn(d)
+        safeio.write_json(FILE, d)         # 临时文件带进程号、另一边正开着时等一下再换、fsync（以前 os.replace 一次不成就抛 这次的改动丢了）
     _c["m"] = None
     return d
 

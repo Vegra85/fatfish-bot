@@ -26,6 +26,25 @@ def route(kind):
     return "deepseek"
 
 
+def usable(kind, log=print):
+    """公开版：不走别家（11-02 v1.17.9 bot 的读懂层看它）"""
+    return False, "公开版"
+
+
+def last_call():
+    """公开版：没有别家的调用（11-02 v1.17.9）"""
+    return None
+
+
+def conf():
+    """公开版：没有判断模型的设置（11-02 v1.17.8 bot._model_line 看它：没开 = 只有 DeepSeek）"""
+    return {"enabled": False}
+
+
+def has_key():
+    return False
+
+
 def status():
     return {"enabled": False}
 

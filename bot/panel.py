@@ -40,6 +40,14 @@ import qzone  # noqa: E402  （QQ 空间 10-27 v1.3.0：控制台「QQ 空间」
 import prank  # noqa: E402  （恶作剧 / 恶趣味 10-28 v1.10.0：控制台「恶趣味」页）
 import fixup  # noqa: E402  （纠错 10-28 v1.11.0：控制台「纠错」页 —— 教训能看能删）
 import safeio  # noqa: E402  （读改写数据文件：读坏了先另存 .bad、一时打不开就不改 10-28 审查 panel-1）
+try:                                         # 她自己拉黑的人（11-02 v1.17.6 C80：控制台「群和人」能看、能撤）
+    import blocklist  # noqa: E402
+except ImportError:
+    blocklist = None
+try:                                         # 人物卡（11-02 v1.17.7 B6 / C78 私有 不导出：公开版没有 → 页面写「这个版本没有人物卡」）
+    import personcard  # noqa: E402
+except ImportError:
+    personcard = None
 
 ROOT = Path(__file__).resolve().parent
 QQBOT = ROOT.parent
@@ -92,11 +100,8 @@ def jread(p, default=None):
 
 
 def jwrite(p, data, indent=1):
-    p = Path(p)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=indent), encoding="utf-8")
-    os.replace(tmp, p)
+    # （11-03 v1.17.13 Gemini F604）跟机器人一样走 safeio：临时文件带进程号、另一边正开着时等一下再换、fsync（以前裸 os.replace 一次不成就抛）
+    return safeio.write_json(p, data, indent=indent)
 
 
 def backup(p, tag):
@@ -175,6 +180,19 @@ def bot_api(action, params=None, timeout=10):
             return {"ok": False, "error": f"HTTP {e.code}"}
     except Exception:
         return None
+
+
+def bot_busy():
+    """bot_api 没回话（None）时：机器人到底开没开 —— 心跳 60 秒内 = 开着、只是这会儿没回话（11-03 v1.17.13 Gemini 第 6 轮：
+    以前一律当成没开 控制台自己改文件 跟机器人手里那份抢 —— 它下次存盘就把控制台改的冲掉了）"""
+    hb = jread(HEARTBEAT, {}) or {}
+    try:
+        return isinstance(hb, dict) and time.time() - float(hb.get("ts") or 0) < 60
+    except (TypeError, ValueError):
+        return False
+
+
+BUSY_MSG = "机器人开着但这会儿没回话 没改上（等一会儿刷新看看 没变再点一次）"
 
 
 def port_open(host, port, timeout=0.6):
@@ -508,6 +526,8 @@ def task_action(b):
         r = bot_api("prom_del", {"conv": b.get("conv"), "id": b.get("id")}, timeout=10)
         if r is not None:
             return r
+        if bot_busy():                     # （11-03 v1.17.13）开着但没回话：别自己改 commit.json（它手里那份下次存盘会冲掉）
+            return {"ok": False, "error": BUSY_MSG}
         with _lock:
             commit.reload()
             pr = commit.drop_prom(b.get("conv"), b.get("id"), "控制台", plog)
@@ -520,6 +540,8 @@ def task_action(b):
     r = bot_api("task_" + act, params, timeout=10)
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话：别自己改 commit.json（它手里那份下次存盘会冲掉）
+        return {"ok": False, "error": BUSY_MSG}
     with _lock:
         commit.reload()
         why = ""
@@ -547,7 +569,7 @@ def control_data():
 
 
 def save_control(d):
-    with _lock:
+    with _lock, safeio.file_lock(CONTROL):    # （11-03 v1.17.13 Codex F11）跟 control._edit 同一把跨进程锁（现在没人调 留着也排队）
         jwrite(CONTROL, d)
 
 
@@ -590,8 +612,61 @@ def people():
             friends[uid] = next((h.get("name") for h in reversed(m.get("history") or []) if h.get("role") == "user"), "")
     return {"groups": out, "friends": [{"id": k, "name": v} for k, v in friends.items()],
             "blocked": ctl["blocked"], "bots": ctl["bots"], "online": online,
+            "her_blocked": (blocklist.blocked_list() if blocklist is not None else {}),
+            # 冷却中的人、最近的拉黑案（11-02 v1.17.10 阶段1：她写 block 先冷却、法庭另外判）
+            "her_cool": (blocklist.cool_list() if blocklist is not None and hasattr(blocklist, "cool_list") else {}),
+            "her_cases": (list(reversed(blocklist.cases(n=15))) if blocklist is not None and hasattr(blocklist, "cases") else []),
+            # 冷却过的人（11-03 v1.17.13：再被写 block 直接二审；「清掉」= 撤销 —— 记赦免、清掉冷却过）
+            "her_cooled": (blocklist.cooled_list() if blocklist is not None and hasattr(blocklist, "cooled_list") else {}),
             "self_off": control.self_off_list(now),
             "gadm_hours": (cfg().get("group_admin") or {}).get("default_hours", 3)}
+
+
+# ───────────── 人物卡（11-02 v1.17.7 P1）─────────────
+def _gnames():
+    out = {}
+    for gid, g in ((jread(CACHE, {}) or {}).get("groups") or {}).items():
+        if isinstance(g, dict) and g.get("name"):
+            out[str(gid)] = g["name"]
+    out.update({str(k): str(v) for k, v in (jread(DATA / "group_names.json", {}) or {}).items() if v})
+    return out
+
+
+def _pc_ready():
+    if personcard is None or getattr(memory, "STUB", False):
+        return False
+    personcard.configure(cfg().get("personcard") or {}, data_dir=DATA)
+    _fg_cfg()
+    return True
+
+
+def person_list():
+    """「群和人 → 人物卡」的名单（按圈排）"""
+    if not _pc_ready():
+        return {"ok": False, "error": "这个版本没有人物卡（公开版的记忆是空壳）"}
+    c = cfg() or {}
+    return personcard.panel_list(DATA, str(c.get("owner_qq") or ""), set((control_data().get("bots") or {}).keys()), _gnames())
+
+
+def person_view(uid):
+    """点一个人：她知道的他的全部（印象 / 他的事按私聊和每个群分 / 禁忌 / 答应他的 / 挂念…）"""
+    if not _pc_ready():
+        return {"ok": False, "error": "这个版本没有人物卡（公开版的记忆是空壳）"}
+    c = cfg() or {}
+    return personcard.panel_view(uid, DATA, str(c.get("owner_qq") or ""), set((control_data().get("bots") or {}).keys()),
+                                 _gnames())
+
+
+def person_edit(b):
+    """改 / 删印象（机器人开着没开都直接改 data/personcard.json：机器人那边按文件修改时间重读）"""
+    if not _pc_ready():
+        return {"ok": False, "error": "这个版本没有人物卡"}
+    with _lock:
+        r = personcard.panel_edit(str(b.get("uid") or ""), str(b.get("which") or ""), str(b.get("action") or ""),
+                                  b.get("text") or "", b.get("basis") or "", str(b.get("where") or ""), b.get("idx"))
+    if r.get("ok"):
+        plog(f"[人物卡] 控制台 {b.get('which')} {b.get('action')}（{b.get('uid')}）")
+    return r
 
 
 # ───────────── 记忆和好感 ─────────────
@@ -658,6 +733,8 @@ def memory_edit(action, key, **kw):
     r = bot_api(action, dict(kw, key=key))
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话：别自己改记忆文件（它拿着锁 下次存盘会冲掉）
+        return {"ok": False, "error": BUSY_MSG}
     p = MEM_DIR / f"{key}.json"            # 机器人没开：直接改文件
     with _lock:
         m = jread(p)
@@ -732,6 +809,8 @@ def favor_set(uid, value):
     r = bot_api("favor", {"uid": uid, "favor": value})
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话：别自己改 favor.json（它一直在写 下次存盘会冲掉）
+        return {"ok": False, "error": BUSY_MSG}
     with _lock:
         try:                               # 读坏了先另存 .bad；一时打不开就不改（10-28 审查 panel-1：以前当成空的写回 所有人的好感、外号全没）
             d = safeio.read_json(FAVOR, {}, plog, busy_raise=True) or {}
@@ -1308,7 +1387,7 @@ def forget_view(soon_days=7):
     return {"ok": True, "on": on and bool(c.get("enabled", True)), "totals": tot, "levels": levels,
             "soon": soon[:60], "faded": faded[:60], "last": last, "runs": (fl.get("runs") or [])[-14:],
             "dreams": dr[-5:], "half_life": {str(k): v for k, v in (FG.get("half_life") or {}).items()},
-            "fuzzy": FG.get("fuzzy", 0.5), "faint": FG.get("faint", 0.2), "night_hours": c.get("night_hours") or [5, 9],
+            "fuzzy": FG.get("fuzzy", 0.5), "faint": FG.get("faint", 0.2), "night_hours": c.get("night_hours") or [4, 7],
             "consolidating": bool(hb.get("fresh") and hb.get("consolidating"))}
 
 
@@ -1321,6 +1400,8 @@ def memory_edit2(action, key, fid):
     r = bot_api("mem_" + action, {"key": key, "id": fid})
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话：别自己改记忆文件
+        return {"ok": False, "error": BUSY_MSG}
     _fg_cfg()                                  # 离线「取消钉住」「找回」按 config 的半衰期给 S（10-28 审查 panel-6）
     p = MEM_DIR / f"{key}.json"
     with _lock:
@@ -1342,6 +1423,8 @@ def taboo_del(uid, i):
     r = bot_api("taboo_del", {"uid": uid, "i": i})
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话：别自己改 favor.json
+        return {"ok": False, "error": BUSY_MSG}
     with _lock:
         d = jread(FAVOR, {}) or {}
         u = d.get(uid) or {}
@@ -1501,21 +1584,63 @@ def prank_view():
     return r
 
 
+def life_view():
+    """控制台「她 → 今天的日程」（11-01 v1.16.4 C39 每日生活）：读 data/life（机器人没开也能看）；公开版的空壳 → stub"""
+    try:
+        import life
+    except ImportError:
+        return {"ok": False, "error": "这个版本没有每日生活"}
+    life.configure(cfg().get("life") or {}, data_dir=DATA)
+    return life.view()
+
+
+def life_replan():
+    """「重新排今天」：写请求文件（data/life/replan.request）→ 机器人 30 秒内重排"""
+    try:
+        import life
+    except ImportError:
+        return {"ok": False, "error": "这个版本没有每日生活"}
+    life.configure(cfg().get("life") or {}, data_dir=DATA)
+    if getattr(life, "STUB", False) or not life.on():
+        return {"ok": False, "error": "每日生活关着（config → life.enabled）"}
+    life.request_replan("控制台")
+    return {"ok": True, "msg": "记下了：机器人 30 秒内重排（机器人得开着）"}
+
+
+def _court_mod():
+    """纠错的「有人说她错了」那一半（court.py 私有 不导出；11-02 v1.17.0）：公开版没有 → None"""
+    try:
+        import court
+    except ImportError:
+        return None
+    import shadowlog
+    shadowlog.configure(DATA)
+    court.configure(cfg().get("court") or {})
+    return court
+
+
 def fixup_view():
-    """控制台「纠错」页（10-28 v1.11.0）：机器人开着 → 问它（这一阵谁在纠错 / 停着只有它知道）；没开 → 读 data/fixup.json"""
+    """控制台「纠错」页（10-28 v1.11.0；11-02 v1.17.0 法庭 + 纠错 合成一页）：机器人开着 → 问它（这一阵谁在纠错 / 停着只有它知道）；
+    没开 → 读 data/fixup.json + data/court/lessons.json"""
     fixup.configure(cfg().get("fixup") or {})
     r = bot_api("fixup", {"op": "status"}, timeout=8)
     online = r is not None
     if not online:
         r = fixup.status()
         r["ok"] = True
+        cm = _court_mod()
+        if cm is not None and hasattr(cm, "lessons_view"):
+            try:
+                r["court"] = dict(cm.lessons_view(), recent=cm.recent(), check=bool(cm.C.get("check", True)))
+            except Exception as e:
+                r["court"] = {"error": repr(e)[:100]}
     r["online"] = online
     return r
 
 
 def fixup_act(b):
     op = str(b.get("op") or "")
-    if op not in ("del", "clear"):
+    if op not in ("del", "clear", "fx_edit", "cl_del", "cl_edit"):
         return {"ok": False, "error": "不认识的操作"}
     r = bot_api("fixup", {k: v for k, v in b.items() if k != "token"}, timeout=10)
     if r is not None:
@@ -1525,8 +1650,18 @@ def fixup_act(b):
         return {"ok": False, "error": "机器人开着但这会儿没回话 等一会儿再点"}
     if op == "clear":
         return {"ok": False, "error": "机器人没开：没有人在纠错"}
+    if op in ("cl_del", "cl_edit"):        # 有人纠正她、核对过的那种教训（court.py）：机器人没开 直接改 data/court/lessons.json
+        cm = _court_mod()
+        if cm is None or not hasattr(cm, "del_lesson"):
+            return {"ok": False, "error": "这一版没有核对 / 教训（公开版）"}
+        with _lock:
+            ok = cm.del_lesson(str(b.get("id") or "")) if op == "cl_del" else cm.edit_lesson(str(b.get("id") or ""), b.get("fields") or {})
+        return {"ok": ok, "error": "" if ok else "没找到这条（或者 lessons.json 正被占着）"}
     with _lock:                            # 机器人没开：直接改文件（读坏了先另存 .bad、打不开就不改）
-        ok = fixup.del_lesson(str(b.get("id") or ""))
+        if op == "fx_edit":
+            ok = fixup.edit_lesson(str(b.get("id") or ""), str(b.get("text") or ""))
+        else:
+            ok = fixup.del_lesson(str(b.get("id") or ""))
     return {"ok": ok, "error": "" if ok else "没找到这条（或者 fixup.json 正被占着）"}
 
 
@@ -1568,6 +1703,8 @@ def qzone_act(b):
     r = bot_api("qzone", {"what": what, "tid": b.get("tid")}, timeout=150)
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话（刷空间慢）：别自己改空间的状态文件
+        return {"ok": False, "error": BUSY_MSG}
     if what == "resume":
         with _lock:
             try:                           # 读坏了先另存 .bad；一时打不开就不改（10-28 审查 panel-1：以前当成空的 写回只剩 pause_until）
@@ -1588,6 +1725,8 @@ def quick_action(b):
     r = bot_api("quick", {"what": what, "hours": b.get("hours")})
     if r is not None:
         return r
+    if bot_busy():                         # （11-03 v1.17.13）开着但没回话：别自己改文件（心情 / 静音 / 叫醒 它那边手里也有一份）
+        return {"ok": False, "error": BUSY_MSG}
     if what == "brakes_clear":
         return {"ok": False, "error": "机器人没开：对聊刹车本来就不在了（只在机器人运行时有）"}
     with _lock:
@@ -1766,6 +1905,191 @@ def song_preview(b):
     if not p:
         return {"ok": False, "error": "剪不出来（文件坏了？）"}
     return {"ok": True, "url": f"/songclip?f={p.name}", "start": a, "end": e}
+
+
+# ───────────── 唱歌：音乐平台扫码登录 / 找歌来源 / 自检（11-01 v1.16.0） ─────────────
+# 登录态（cookie）只在 musiclogin 自己那儿（data\music_login.json）：这里返回给网页的一律按白名单挑字段、
+# 最后再把所有 cookie 值在返回里搜一遍 有就换成 *** —— cookie 绝不出现在页面上
+MUSIC_PLAT = {"netease": "网易云", "qq": "QQ 音乐", "kugou": "酷狗"}
+MUSIC_SRC = {"qq": "QQ 音乐", "netease": "网易云", "kugou": "酷狗", "bili": "B站", "youtube": "YouTube"}
+MUSIC_DEFAULT = ["qq", "netease", "kugou", "bili", "youtube"]
+_COOKIEISH = re.compile(r"cookie|token|sess|csrf|ticket|secret|key$|^key", re.I)
+_mtest = {"running": False, "t": 0, "done": 0, "result": None, "log": [], "error": ""}
+_mtest_lock = threading.Lock()
+_qrkeys = {}                          # 平台 -> 这次二维码的 key（留在控制台这边 网页只说平台 不经手）
+
+
+def _music_mods():
+    """(music, musiclogin)：import 不到（还没装上 / 这个版本没有）→ None"""
+    out = []
+    for name in ("music", "musiclogin"):
+        try:
+            out.append(__import__(name))
+        except Exception as e:
+            plog(f"[唱歌] 控制台 import {name} 不行：{repr(e)[:100]}")
+            out.append(None)
+    return tuple(out)
+
+
+def _plain(v, n=120):
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    return str(v)[:n]
+
+
+def _pick(d, keys):
+    """只挑这几个字段、只要简单值（cookie 那种整块的 dict 一律不要）"""
+    d = d if isinstance(d, dict) else {}
+    return {k: _plain(d.get(k)) for k in keys if k in d and not isinstance(d.get(k), (dict, list, tuple)) and not _COOKIEISH.search(k)}
+
+
+def _cookie_vals(ml):
+    vals = set()
+    for pf in MUSIC_PLAT:
+        try:
+            ck = ml.cookies(pf) if ml else {}
+        except Exception:
+            ck = {}
+        for v in (ck or {}).values() if isinstance(ck, dict) else []:
+            if isinstance(v, str) and len(v) >= 6:
+                vals.add(v)
+    return vals
+
+
+def _scrub(obj, ml):
+    """返回给网页之前最后查一遍：任何一个 cookie 值出现在里面 → 换成 ***"""
+    vals = _cookie_vals(ml)
+    if not vals:
+        return obj
+
+    def go(o):
+        if isinstance(o, dict):
+            return {k: go(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [go(x) for x in o]
+        if isinstance(o, str):
+            for v in vals:
+                if v in o:
+                    o = o.replace(v, "***")
+        return o
+    return go(obj)
+
+
+def music_view():
+    """「唱歌」页上半截：各平台登录卡片、找歌来源顺序和状态、上次自检"""
+    sing.configure(cfg().get("sing") or {})
+    music, ml = _music_mods()
+    order = [x for x in (sing.cfg().get("sources") or MUSIC_DEFAULT) if isinstance(x, str)]
+    login = {}
+    try:
+        st = ml.status() if ml and hasattr(ml, "status") else {}
+    except Exception as e:
+        st, login["_why"] = {}, f"读登录状态出错：{repr(e)[:80]}"
+    plats = [x for x in (getattr(ml, "PLATFORMS", None) or MUSIC_PLAT) if x in MUSIC_PLAT] if ml else list(MUSIC_PLAT)
+    cards = []
+    for pf in plats:
+        x = _pick((st or {}).get(pf), ("login", "nick", "since", "last_ok", "vip", "expires", "why", "uin"))
+        cards.append(dict(x, platform=pf, label=MUSIC_PLAT[pf], login=bool(x.get("login"))))
+    srcs = []
+    try:
+        ss = music.sources_status() if music and hasattr(music, "sources_status") else None
+    except Exception as e:
+        ss = None
+        plog(f"[唱歌] 读找歌来源状态出错：{repr(e)[:100]}")
+    for name in order + [k for k in (ss or {}) if k not in order]:
+        x = _pick((ss or {}).get(name), ("enabled", "ok", "why", "login"))
+        srcs.append(dict(x, name=name, label=MUSIC_SRC.get(name, name), listed=name in order))
+    with _mtest_lock:
+        mt = {k: _mtest[k] for k in ("running", "t", "done", "error")}
+        mt["log"] = list(_mtest["log"][-40:])
+        mt["result"] = _mtest["result"]
+    out = {"ok": True, "has_login": bool(ml), "has_status": bool(ss is not None), "has_selftest": bool(music and hasattr(music, "selftest")),
+           "cards": cards, "sources": srcs, "order": order, "selftest": mt,
+           "ask_choice": bool(sing.cfg().get("ask_choice", True)), "choice_sec": sing.choice_sec()}
+    return _scrub(out, ml)
+
+
+def music_login(b):
+    """扫码登录：start（要二维码）/ poll（扫了没有）/ check（登录还有效吗）/ logout（退出）"""
+    music, ml = _music_mods()
+    act, pf = str(b.get("action") or ""), str(b.get("platform") or "")
+    if pf not in MUSIC_PLAT:
+        return {"ok": False, "error": "不认识的平台"}
+    if not ml:
+        return {"ok": False, "error": "这个版本还没有扫码登录（bot\\musiclogin.py 不在）"}
+    try:
+        if act == "start":
+            r = ml.qr_start(pf) or {}
+            img = str(r.get("img") or "")
+            out = dict(_pick(r, ("why",)), ok=bool(r.get("ok")) and img.startswith("data:image/"),
+                       img=img if img.startswith("data:image/") else "")
+            if out["ok"]:
+                _qrkeys[pf] = str(r.get("key") or "")
+            else:
+                out["error"] = str(r.get("why") or "二维码没拿到")[:120]
+        elif act == "poll":
+            if pf not in _qrkeys:
+                return {"ok": True, "state": "expired", "why": "没有在扫的二维码（控制台重开过？）重来一次"}
+            r = ml.qr_poll(pf, _qrkeys[pf]) or {}
+            out = dict(_pick(r, ("state", "nick", "why")), ok=True)
+            if out.get("state") not in ("wait", "scanned", "ok", "expired", "error"):
+                out["state"] = "error"
+            if out["state"] in ("ok", "expired", "error"):
+                _qrkeys.pop(pf, None)
+        elif act == "check":
+            fn = getattr(ml, "check", None)
+            if not callable(fn):
+                return {"ok": False, "error": "这个版本还不能检查登录"}
+            r = fn(pf)                     # {"ok": 问通了没有, "login": 还登着吗（问不通 None）, "nick", "vip", "why"}
+            r = r if isinstance(r, dict) else {"ok": True, "login": bool(r)}
+            valid = r.get("login") if "login" in r else (True if r.get("ok") else None)
+            out = dict(_pick(r, ("nick", "vip", "why")), ok=True, asked=bool(r.get("ok")),
+                       valid=None if (valid is None or not r.get("ok")) else bool(valid))
+        elif act == "logout":
+            ml.logout(pf)
+            _qrkeys.pop(pf, None)
+            out = {"ok": True}
+        else:
+            return {"ok": False, "error": "不认识的操作"}
+    except Exception as e:
+        return _scrub({"ok": False, "error": f"{MUSIC_PLAT[pf]}出错了：{repr(e)[:120]}"}, ml)
+    return _scrub(out, ml)
+
+
+def music_selftest():
+    """「现在自检」：后台跑 music.selftest（每个来源搜一首常见歌、试拿音频）；网页每 2 秒来看一次结果"""
+    music, ml = _music_mods()
+    if not music or not hasattr(music, "selftest"):
+        return {"ok": False, "error": "这个版本的 music.py 还不会自检"}
+    with _mtest_lock:
+        if _mtest["running"]:
+            return {"ok": True, "running": True, "msg": "已经在自检了"}
+        _mtest.update(running=True, t=time.time(), done=0, result=None, log=[], error="")
+
+    def lg(*a, **k):
+        line = " ".join(str(x) for x in a)
+        with _mtest_lock:
+            _mtest["log"].append(line[:300])
+            del _mtest["log"][:-200]
+
+    def go():
+        try:
+            sing.configure(cfg().get("sing") or {})
+            sing.SESSDATA["v"] = (cfg().get("bili") or {}).get("sessdata") or ""
+            r = music.selftest(lg)
+            res = {str(k): _pick(v, ("ok", "why", "enabled", "found", "pick", "sec", "took")) if isinstance(v, dict)
+                   else _plain(v) for k, v in (r.items() if isinstance(r, dict) else [])}
+            with _mtest_lock:
+                _mtest["result"] = _scrub(res, ml) if isinstance(r, dict) else _plain(r, 400)
+        except Exception as e:
+            with _mtest_lock:
+                _mtest["error"] = repr(e)[:200]
+        finally:
+            with _mtest_lock:
+                _mtest.update(running=False, done=time.time())
+                _mtest["log"] = _scrub(_mtest["log"], ml)
+    threading.Thread(target=go, daemon=True).start()
+    return {"ok": True, "running": True}
 
 
 # ───────────── 版本 / 自动更新 ─────────────
@@ -2023,9 +2347,15 @@ def shadow_view(days=3):
         import court
     except ImportError:
         court = None
+    try:
+        import social                      # 社交细节（11-01 影子；私有 不导出）
+    except ImportError:
+        social = None
     shadowlog.configure(DATA)
     if attention is not None:
         attention.configure({}, data_dir=DATA)
+    if social is not None:
+        social.configure((cfg() or {}).get("social") or {}, data_dir=DATA)
     days = max(1, min(14, int(days or 3)))
     now = time.time()
     out = []
@@ -2047,12 +2377,23 @@ def shadow_view(days=3):
                               for r in shadowlog.read("court", day) if r.get("ev") == "reject"][-10:],
             "amb": {"n": len(amb), "ne": sum(1 for r in amb if r.get("src") == "网易云"),
                     "ex": [{"title": r.get("title", ""), "src": r.get("src", ""), "options": (r.get("options") or [])[:3]} for r in amb[-8:]]},
+            "soc": social.summary(day) if social is not None else None,
             "cool": {"n": len(cool), "would": sum(1 for r in cool if r.get("cand")),
                      "me": sum(1 for r in cool for x in r.get("cand") or [] if x.get("k") == "个人"),
                      "grp": sum(1 for r in cool for x in r.get("cand") or [] if x.get("k") == "群"),
                      "avg": round(sum(int(r.get("n") or 0) for r in cool) / len(cool), 1) if cool else 0},
         })
-    return {"ok": True, "days": out, "has": {"attention": attention is not None, "court": court is not None}}
+    circ, orig = None, []
+    if social is not None:
+        try:
+            c = cfg() or {}
+            fav = jread(FAVOR, {}) or {}
+            circ = social.circle_view(fav, str(c.get("owner_qq") or ""), set((control_data().get("bots") or {}).keys()))
+            orig = social.orig_preview(DATA / "memory", factor=float(((c.get("forget") or {}).get("orig_factor")) or 0.4))
+        except Exception as e:
+            circ = {"error": repr(e)[:120]}
+    return {"ok": True, "days": out, "has": {"attention": attention is not None, "court": court is not None,
+                                              "social": social is not None}, "circles": circ, "orig": orig}
 
 
 def court_ctx(cid):
@@ -2195,8 +2536,14 @@ def followup_view(days=2, limit=60, only=""):
     agree = {"n": 0, "ok": 0, "yes_bad": 0, "no_bad": 0}
     for day, r in rows:
         g, t, uid = str(r.get("g")), float(r.get("t") or 0), str(r.get("uid"))
-        ch = chat_of(day, g)
-        idx = next((k for k in range(len(ch)) if str(ch[k].get("uid")) == uid and abs(float(ch[k].get("ts") or 0) - t) < 3), None)
+        # 11-02 v1.17.1：注意力存档按这台电脑的日期分文件（attention.py）、聊天存档按北京日期（archive_append）——
+        # 北京 0 点到这台电脑 0 点之间（英国冬天 = 北京 0~8 点）的那几句以前在同一个「日期」里找存档 一句都对不上、页面上不显示
+        ch, idx = [], None
+        for aday in dict.fromkeys((clock.strf("%Y-%m-%d", t), day)):
+            ch = chat_of(aday, g)
+            idx = next((k for k in range(len(ch)) if str(ch[k].get("uid")) == uid and abs(float(ch[k].get("ts") or 0) - t) < 3), None)
+            if idx is not None:
+                break
         if idx is None:
             continue
         hk = next((k for k in range(idx + 1, min(len(ch), idx + 12)) if ch[k].get("role") == "assistant"
@@ -2277,7 +2624,7 @@ def stickerdict_view(limit=200, q=""):
     days = (stickerdict.load().get("days") or {})
     return {"ok": True, "items": items[:int(limit)], "total": len(items),
             "deep_n": sum(1 for it in items if it.get("deep")), "fix_n": sum(1 for it in items if it.get("fix")),
-            "today": days.get(time.strftime("%Y-%m-%d"), 0), "cap": stickerdict.C.get("deep_daily")}
+            "today": days.get(clock.strf("%Y-%m-%d"), 0), "cap": stickerdict.C.get("deep_daily")}   # 北京时间（11-03 v1.17.13 跟机器人扣名额同一天）
 
 
 def stickerlib_view(limit=60):
@@ -2370,6 +2717,8 @@ class H(BaseHTTPRequestHandler):
                 return self._json(version_info())
             if u.path == "/api/songs":
                 return self._json(songs_view())
+            if u.path == "/api/music":             # 唱歌页：平台登录 / 来源 / 自检（11-01 v1.16.0）
+                return self._json(music_view())
             if u.path == "/songclip":
                 name = re.sub(r"[^\w.\-]", "", q.get("f") or "")
                 if not name.startswith("song_"):
@@ -2438,6 +2787,11 @@ class H(BaseHTTPRequestHandler):
                 return self._json(prank_view())
             if u.path == "/api/fixup":
                 return self._json(fixup_view())
+            if u.path == "/api/life":              # 今天的日程（11-01 v1.16.4 每日生活）
+                try:
+                    return self._json(life_view())
+                except Exception as e:
+                    return self._json({"ok": False, "error": repr(e)[:200]})
             if u.path == "/api/memory/forget":
                 return self._json(forget_view())
             if u.path == "/api/memory/detail":
@@ -2445,6 +2799,10 @@ class H(BaseHTTPRequestHandler):
                 return self._json({"ok": bool(d), "data": d})
             if u.path == "/api/favor":
                 return self._json({"ok": True, "data": favor_list()})
+            if u.path == "/api/persons":           # 人物卡名单（11-02 v1.17.7）
+                return self._json(person_list())
+            if u.path == "/api/person":            # 点一个人：她知道的他的全部（11-02 v1.17.7）
+                return self._json(person_view(q.get("uid") or ""))
             if u.path == "/api/wipe/preview":
                 return self._json(wipe_preview(q.get("uid") or ""))
             if u.path == "/api/stats":
@@ -2603,6 +2961,22 @@ class H(BaseHTTPRequestHandler):
             if kind == "full":
                 return {"ok": True, "full": control.full_state(), "text": control.full_left_text()}
             return {"ok": True}
+        if u == "/api/her_blocked":         # 她自己拉黑 / 冷却的人：撤销（11-02 v1.17.6 C80；v1.17.10 阶段1 冷却也能撤、记赦免时间；
+            #                                   11-03 v1.17.13 冷却过的「清掉」也走这里：冷却早就到期的也能撤 Gemini 2-F1）
+            uid = str(b.get("id") or "").strip()
+            if blocklist is None or not uid.isdigit() or not b.get("remove"):
+                return {"ok": False, "error": "QQ 号不对" if blocklist is not None else "这一版没有拉黑名单"}
+            r = bot_api("her_unblock", {"uid": uid})     # 机器人开着：交给机器人写 blocklist.json（免得两边同时读改写 B17）
+            if r is not None and not str(r.get("error") or "").startswith("不认识的操作"):
+                return r
+            if r is None and bot_busy():                  # 机器人开着但这会儿没回话：别直接改（会跟它同时读改写 blocklist.json）（11-03 合并复查）
+                return {"ok": False, "error": BUSY_MSG}
+            e = blocklist.unblock(uid, "控制台")          # 机器人没开（或者是老版本）：直接改；文件读坏了不会拿空表覆盖（blocklist._update）
+            if e is None:
+                return {"ok": False, "error": "名单里没有他、也没在冷却（或者 blocklist.json 一时打不开 / 读坏了）"}
+            return {"ok": True, "entry": e}
+        if u == "/api/person/impression":   # 人物卡：改 / 删印象（11-02 v1.17.7）
+            return person_edit(b)
         if u == "/api/tasks":
             return task_action(b)
         if u == "/api/send":
@@ -2626,6 +3000,10 @@ class H(BaseHTTPRequestHandler):
             return qzone_act(b)
         if u == "/api/prank":
             return prank_act(b)
+        if u == "/api/life":               # 今天的日程：重新排今天（11-01 v1.16.4）
+            if b.get("op") == "replan":
+                return life_replan()
+            return {"ok": False, "error": "不认识的操作"}
         if u == "/api/fixup":
             return fixup_act(b)
         if u == "/api/favor":
@@ -2664,6 +3042,10 @@ class H(BaseHTTPRequestHandler):
                 backup(CONFIG, "config")
                 jwrite(CONFIG, c)
             return {"ok": True}
+        if u == "/api/music/login":        # 扫码登录 / 检查 / 退出（11-01 v1.16.0）
+            return music_login(b)
+        if u == "/api/music/selftest":
+            return music_selftest()
         if u == "/api/songs/save":
             return song_save(b)
         if u == "/api/songs/upload":

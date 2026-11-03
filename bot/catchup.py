@@ -56,20 +56,27 @@ def _span(sec):
     return f"{sec // 86400} 天"
 
 
-def _slept(t_from, t_to, tz=None, sleep=(5, 12)):
-    """这段时间里有没有她的睡觉时间（按她的时区）"""
+def _slept(t_from, t_to, tz=None, sleep=(3, 8)):
+    """这段时间里有没有她的睡觉时间（按她的时区）
+    sleep：几点到几点（11-03 v1.17.13：bot.py 传 config 的 behavior.quiet_hours；默认跟它一样 3–8 点 以前写死 5–12；
+    前面的比后面的大 = 跨午夜（23~7）跟 bot.in_hours 一样认；写坏了按 3–8）"""
+    try:
+        s0, s1 = int(sleep[0]), int(sleep[1])
+    except (TypeError, ValueError, IndexError):
+        s0, s1 = 3, 8
     t = t_from
     while t <= t_to:
         h = datetime.fromtimestamp(t, tz).hour if tz else datetime.fromtimestamp(t).hour
-        if sleep[0] <= h < sleep[1]:
+        if (s0 <= h < s1) if s0 <= s1 else (h >= s0 or h < s1):
             return True
         t += 1800
     return False
 
 
-def late_note(oldest, newest, now=None, scene="private", tz=None, cause="offline"):
+def late_note(oldest, newest, now=None, scene="private", tz=None, cause="offline", sleep=(3, 8)):
     """回得晚的时候加进提示词的一段话（没晚就返回空）
-    cause：offline = 下线期间的（可以说刚才掉线了）；missed = 在线但漏回的（别说掉线 就说刚看到）"""
+    cause：offline = 下线期间的（可以说刚才掉线了）；missed = 在线但漏回的（别说掉线 就说刚看到）
+    sleep：她的睡觉时间（几点到几点；11-03 v1.17.13 Gemini R1-F6：bot.py 传 config 的 quiet_hours 以前写死 5–12 点）"""
     now = now or time.time()
     wait = now - oldest
     if wait < float(_cfg["late_min"]) * 60:
@@ -89,7 +96,7 @@ def late_note(oldest, newest, now=None, scene="private", tz=None, cause="offline
     else:
         s = (f"\n【隔了很久才回】这几条消息{when} 现在才看到。"
              "简短说一句才看到 再回一句就好 别像刚收到一样热情地展开。")
-    if wait >= 1800 and _slept(oldest, now, tz):
+    if wait >= 1800 and _slept(oldest, now, tz, sleep):
         s += "那段时间正好是你睡觉的点 也可以说刚睡醒。"
     s += "别说具体是什么故障。"
     if scene == "group":

@@ -18,7 +18,9 @@ key 只放在 config.json 的 anim.api_key，日志里不出现
 import asyncio
 import base64
 import io
+import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -55,13 +57,25 @@ DEFAULTS = {
     "poll_sec": 8,
     "timeout_min": 12,
     "keep": 60,                  # data/anim 里最多留几个 mp4
+    "shrink": True,              # 发 QQ 之前用 ffmpeg 压小（11-03 v1.17.14：QQ 上传慢 NapCat 只等 10 秒 + 大小 ÷ 256 KB/秒 → 2 MB 等 18 秒就报超时）
+    "shrink_crf": 28,            # 压的时候的画质（越大越小越糊；28：2 MB → 约 360 KB、跟原来几乎看不出差别 SSIM 0.97）
+    "shrink_maxrate": "900k",    # 码率上限（5 秒 ≈ 0.6 MB）
+    "shrink_min_kb": 600,        # 比这个小的不压
 }
 A = dict(DEFAULTS)
 
 # 有人想让她做动画/视频（只是聊到别人的视频不算）
 ASK = re.compile(r"(做|生成|制作|创作|整|弄|搞)(?![了过的得])(个|一个|段|一段|条|一条|点)?[^。！？!?\n]{0,8}?(动画|视频|短片)"
-                 r"|(来|画|拍|剪)(个|一个|段|一段|条|一条)[^。！？!?\n]{0,8}?(动画|视频|短片)"
+                 r"|(来|画|拍|剪|录)(个|一个|段|一段|条|一条)[^。！？!?\n]{0,8}?(动画|视频|短片)"
+                 r"|(?:给我|(?<![转我]))发(?![了过的得])(个|一个|段|一段|条|一条|点)?[^。！？!?\n]{0,10}?(动画|视频|短片)"
                  r"|动起来|动一动")
+# （11-03 v1.17.14）上面第三支：「发一条你跑马拉松的视频」「给我发个视频」—— 以前没有「发」 老板要了她也拿不到「可以做」；
+#   「我发了个视频」「我发个视频给你」「转发个视频」不算。下面：不要她做的（「别发视频了」「不用做动画」）不算
+ASK_NEG = re.compile(r"(别|不要|不用|甭|不许|不准)(再|给我)?(发|做|整|弄|搞|来|录|拍)[^。！？!?\n]{0,6}?(动画|视频|短片)")
+# 有人在跟她聊她的视频 / 动画（「有人说你在群里发了视频」「你会做视频吗」「给你加过视频功能」）→ talk_block（11-03 v1.17.14）
+TALK = re.compile(r"你[^。！？!?\n]{0,12}?(视频|动画|短片)|(视频|动画|短片)[^。！？!?\n]{0,8}?你")
+QQ_ZH = {"ok": "QQ 确认发出去了", "slow": "QQ 当时没确认收到（多半传得慢、晚一点才到，也可能没到）", "fail": "QQ 没发出去",
+         "late": "QQ 当时没确认，后来翻到已经发出去了（晚了一会儿才到）", "lost": "QQ 当时没确认，过了几分钟也没在聊天记录里翻到（多半没发出去）"}
 MARK = re.compile(r"\[\[动画[:：]\s*([^\[\]\n]{2,300}?)\s*\]\]")
 def _cfg_names():
     """config 里她的名字（bot_name / group_card / profile.nickname）—— 改名了不用改代码"""
@@ -166,7 +180,7 @@ def busy(conv):
 
 
 def asked(texts):
-    return any(ASK.search(t or "") for t in texts or [])
+    return any(ASK.search(t or "") and not ASK_NEG.search(t or "") for t in texts or [])
 
 
 def plan(conv, uid, is_owner, favor, texts):
@@ -563,9 +577,105 @@ def done(tid, res=None, ok=True, why=""):
     wiped = bool(t.get("wiped"))           # 做的时候他删了数据：记录里不留他（10-28 Gemini 第三轮复查）
     s["history"].append({"t": int(time.time()), "ok": ok, "conv": "" if wiped else t.get("conv"),
                          "uid": "" if wiped else t.get("uid"), "prompt": "" if wiped else (t.get("prompt") or "")[:80],
-                         "tokens": tokens, "cny": cny if ok or t.get("charge") else 0, "why": why[:60]})
+                         "tokens": tokens, "cny": cny if ok or t.get("charge") else 0, "why": why[:60],
+                         "pro": bool(t.get("proactive"))})      # 她自己想做的（11-03 v1.17.14：聊到她的视频时告诉她）
     _save()
     return cny, tokens
+
+
+def note_qq(conv, status, now=None, force=False):
+    """发完以后记一笔 QQ 那边收没收（11-03 v1.17.14）：ok = 确认发出去了 / slow = QQ 没确认（多半还在传）/ fail = 没收
+    记在这个对话最近那条做好的动画上（15 分钟内、还没记过的）→ 记上了没有
+    force：回头查过了（late = 后来翻到发出去了 / lost = 几分钟后还是没有）→ 只改「slow」的那条（30 分钟内）"""
+    now = float(now or time.time())
+    s = _load()
+    for h in reversed(s["history"]):
+        if not conv or h.get("conv") != conv or not h.get("ok"):
+            continue
+        if now - float(h.get("t") or 0) >= (1800 if force else 900):
+            return False
+        if (force and h.get("qq") != "slow") or (not force and "qq" in h):
+            return False
+        h["qq"] = str(status)
+        _save()
+        return True
+    return False
+
+
+async def _ffmpeg(args, timeout=60):
+    """跑一次 ffmpeg → 退出码（Windows 上不弹黑窗口）；测试里换掉它"""
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}      # CREATE_NO_WINDOW
+    p = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE, **kw)
+    try:
+        await asyncio.wait_for(p.communicate(), timeout)
+    except asyncio.TimeoutError:
+        try:
+            p.kill()
+        except Exception:
+            pass
+        raise
+    return p.returncode
+
+
+async def shrink(path, log=print):
+    """发 QQ 之前把视频压小（11-03 v1.17.14）→ 压好的那个文件 / 原文件
+    10-28 起每条都是 QQ 超时：NapCat 只等 10 秒 + 大小 ÷ 256 KB/秒（2 MB = 18 秒）、电脑往 QQ 传得比这慢 → 小一点传得快、等得过来
+    没开 / 没装 ffmpeg / 本来就小 / 压完没小多少 / 出错 → 原文件（原文件留着）"""
+    path = Path(path)
+    try:
+        kb = path.stat().st_size / 1024
+    except OSError:
+        return path
+    ff = shutil.which("ffmpeg")
+    if not A.get("shrink", True) or not ff or kb < float(A.get("shrink_min_kb") or 600):
+        return path
+    out = path.with_name(path.stem + "-s.mp4")
+    rate = str(A.get("shrink_maxrate") or "900k")
+    bufsize = (str(int(rate[:-1]) * 2) + rate[-1]) if rate[:-1].isdigit() else rate
+    args = [ff, "-y", "-loglevel", "error", "-i", str(path), "-c:v", "libx264", "-preset", "veryfast",
+            "-crf", str(int(A.get("shrink_crf") or 30)), "-maxrate", rate, "-bufsize", bufsize, "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", str(out)]
+    try:
+        rc = await _ffmpeg(args)
+        nk = out.stat().st_size / 1024 if out.exists() else 0
+    except Exception as e:
+        log("[动画] 压小视频出错（发原来的）:", repr(e)[:100])
+        return path
+    if rc != 0 or not nk or nk > kb * 0.85:
+        log(f"[动画] 压小视频没压成（退出码 {rc}、{kb:.0f} KB → {nk:.0f} KB）→ 发原来的")
+        try:
+            out.unlink()
+        except OSError:
+            pass
+        return path
+    log(f"[动画] 压小了再发：{kb:.0f} KB → {nk:.0f} KB")
+    return out
+
+
+def talk_block(texts, conv, asked=False, gnames=None, n=3):
+    """有人在跟她聊她的视频 / 动画（TALK）→ 她会做动画这件事 + 最近做过的几条（11-03 v1.17.14；只给状态 E1）
+    11-03 现场：有人说她在群里发了视频 她私聊里说「视频真发不了」—— 做动画的说明只在有人要的那一轮出现（10-26 定的 不往人设里加）、
+    「发了个动画」只记在那个群的聊天记录里。私聊里做的只在那个私聊里列（别的私聊、群里都不提）"""
+    if not any(TALK.search(t or "") for t in texts or []):
+        return ""
+    gnames = gnames or {}
+    items = []
+    for h in reversed(_load()["history"]):
+        c = str(h.get("conv") or "")
+        if not h.get("ok") or not c or (c.startswith("private_") and c != str(conv)):
+            continue
+        where = "在这个私聊里" if c.startswith("private_") else f"在「{str(gnames.get(c.split('_', 1)[-1]) or '').strip() or '一个群'}」"
+        who = "你自己想做的" if (h.get("pro") or h.get("uid") == "") else ("有人让你做的" if h.get("uid") else "")
+        qq = QQ_ZH.get(str(h.get("qq") or ""), "")
+        items.append(f"- {clock.strf('%m-%d %H:%M', h.get('t'))} {where}" + (f" {who}" if who else "")
+                     + f"：{h.get('prompt') or '（画的什么没记）'}" + (f"；{qq}" if qq else ""))
+        if len(items) >= n:
+            break
+    head = ("\n# 你做的动画（视频）\n你会做 5 秒的小动画视频（系统拿一个视频模型画，一条要花钱；有人要你做的那一轮、"
+            "或者你自己在群里想做的时候，系统才会告诉你怎么写）。" + ("" if asked else "这一轮没人要你做（他是在聊你的视频）。") + "\n")
+    if not items:
+        return head + "系统里没有你最近做过的记录。\n"
+    return head + "你最近做过的（系统记的，新的在前）：\n" + "\n".join(items) + "\n"
 
 
 def running():

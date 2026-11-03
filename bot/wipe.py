@@ -15,6 +15,7 @@
     - 调模型的记录 data/trace/（10-29 判断模型实验 最多留 3 天）：跟他有关的整行删
     - 注意力存档 data/attention/（10-30 影子模式）：带他 QQ 号的行删
     - 影子日志 data/court、data/ambiguity、data/cooling（10-30 阶段 0：法庭 / 歧义 / 冷却）：带他 QQ 号或名字的行删
+    - 每日生活 data/life（日程里写着的他的名字、等着回他的那一轮）、qqevents.json / sing_state.json / announce.json 里他的那项（11-02 v1.17.1）
     - 每天的 data 包（daily/data_*.zip）、记忆卫生迁移前的整份备份（memhyg_*）、迁移记录和报告、读坏另存的 .bad-*：
       按上面一样的规矩改一遍（10-28 审查 memory-3：以前这些里他的东西原样都在 拿出来放回 data 就全回来了）
   记一笔什么时候删的（data/wiped.json 只有 QQ 号和时间）：重启补看漏掉的消息时 不会把删之前的又捡回来
@@ -334,8 +335,24 @@ def conv_mem(m, uid, names, texts, mids=None):
                 if t2 != t:
                     h["text"] = t2
                     rep["scrubbed"] += 1
+            if h.get("sys"):               # 她那句旁边的系统记录（11-02 v1.17.3：给她看过的余额 / 翻到的原话 / 核对结果）
+                if str(h.get("to") or "") == uid:
+                    h.pop("sys", None)     # 回他那句的：整条拿掉（里面多半是他的原话）
+                    rep["scrubbed"] += 1
+                else:
+                    s2 = scrub(str(h["sys"]), names, texts)
+                    if s2 != h["sys"]:
+                        h["sys"] = s2
+                        rep["scrubbed"] += 1
             keep.append(h)
         m[fld] = keep
+    cs = m.get("corrections")              # 本人更正过的事（11-02 v1.17.3 挂在前情提要后面的）：他说的 / 提到他的 删掉
+    if isinstance(cs, list) and cs:
+        keepc = [c for c in cs if isinstance(c, dict) and str(c.get("uid") or "") != uid
+                 and not mentions(c.get("text"), names, loose=True)]
+        if len(keepc) != len(cs):
+            m["corrections"] = keepc
+            rep["scrubbed"] += 1
     rep["facts"] = facts_about(m, names, uid, set(mids or ()) | own)
     if m.get("summary") and mentions(m["summary"], names, loose=True):
         # 群：整段删（会重写）；别人的私聊：正常名字换「某人」、只有叠词 / 常用词名字对上的 整段删（会重写）——
@@ -464,7 +481,26 @@ def traces(data, uid, names):
         if len(out) != len(lines):
             rep["attention_lines"] = rep.get("attention_lines", 0) + len(lines) - len(out)
             _write_lines(p, out)
-    for kind in ("court", "ambiguity", "cooling"):    # 影子日志（10-30 阶段 0：法庭 / 歧义 / 冷却）：带着他的 QQ 号 / 名字的行删掉
+    for fn in ("social_seen.json", "social_active.json"):     # 社交细节（11-01 影子）：新人名单 / 说话天数里的他
+        p = data / fn
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        hit = 0
+        if fn == "social_seen.json" and isinstance(d, dict):
+            for g in d.values():
+                if isinstance(g, dict) and g.pop(str(uid), None) is not None:
+                    hit += 1
+        elif isinstance(d, dict) and d.pop(str(uid), None) is not None:
+            hit = 1
+        if hit:
+            try:
+                p.write_text(json.dumps(d, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+                rep["social"] = rep.get("social", 0) + hit
+            except OSError:
+                pass
+    for kind in ("court", "ambiguity", "cooling", "social"):    # 影子日志（10-30 阶段 0：法庭 / 歧义 / 冷却；11-01 社交细节）：带着他的 QQ 号 / 名字的行删掉
         for p in sorted((data / kind).glob("*.jsonl")):
             lines = _read_lines(p)
             if lines is None:
@@ -551,9 +587,12 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
             rep["img_captions"] = n
     # 心情记录里的名字
     md = _rj(data / "mood2.json")
-    if md and names:
-        n = 0
-        for e in md.get("timeline") or []:
+    if md:
+        # 他私聊里的事整条删（11-03 v1.17.13 Gemini 3-F2：以前只换名字、而且得有名字才换 —— 他私聊里说的事留在时间线上 他再私聊时又给她看）
+        tl = md.get("timeline") or []
+        md["timeline"] = [e for e in tl if not (isinstance(e, dict) and str(e.get("conv") or "") == f"private_{uid}")]
+        n = len(tl) - len(md["timeline"])
+        for e in (md["timeline"] if names else []):
             for fld in ("why", "ev", "names"):              # ev / names：10-27 记忆卫生 心情时间线里记的「谁做了什么」
                 w = e.get(fld) or ""
                 if isinstance(w, list):                     # 名字列表：一个个比（整个就是他的名字 → 去掉）
@@ -657,6 +696,15 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
         if d is not None and _drop_keys(d, {uid, f"private_{uid}"}):
             _wj(data / f, d)
     rep.update(traces(data, uid, names))          # 调模型的记录（10-29）
+    rep.update(lessons(data, uid, names))         # 纠错的教训（11-02 v1.17.0 法庭 + 纠错 合成一套）
+    rep.update(newer_state(data, uid, names))     # 每日生活 / 回赞 / 整首名额 / 版本播报 里的他（11-02 v1.17.1）
+    try:                                          # 他要过的自拍（11-03 v1.17.13）：图 + data/selfie/log.json 里他那几条；公开版没有 selfie.py → 跳过
+        import selfie
+        rep.update(selfie.forget_uid(uid, data_dir=data) or {})
+    except ImportError:
+        pass
+    except Exception:
+        rep["selfie_err"] = 1
     if with_anim:
         st = _rj(data / "anim_state.json")
         if st and anim_state(st, uid):
@@ -679,6 +727,134 @@ def misc(data, uid, names, texts, imgs, backup_dirs=(), with_anim=True):
                 pass
     if n:
         rep["backups"] = n
+    return rep
+
+
+def lessons(data, uid, names):
+    """纠错的教训（11-02 v1.17.0）：data/court/lessons.json（有人纠正她、核对过的）和 data/fixup.json（验证程序判她不对的）——
+    他纠正过的 / 他私聊里记的 / 回他时记的、提到他名字的：整条删（每天的备份包里那份也按这个删）。在线删时 fixup 那份 bot 另外删一遍（内存里的也清）"""
+    data, uid = Path(data), str(uid)
+    rep = {}
+    num = re.compile(r"(?<!\d)" + re.escape(uid) + r"(?!\d)")
+    strong = [n for n in (names or ()) if n and not _weak_name(n)]
+
+    def about(x):
+        if str(x.get("uid") or "") == uid or str(x.get("conv") or x.get("key") or "") == f"private_{uid}":
+            return True
+        blob = json.dumps({k: v for k, v in x.items() if k not in ("id", "keys")}, ensure_ascii=False)
+        return bool(num.search(blob)) or mentions(blob, strong)
+    p = data / "court" / "lessons.json"
+    d = _rj(p)
+    if isinstance(d, dict) and isinstance(d.get("lessons"), list):
+        keep = [x for x in d["lessons"] if not (isinstance(x, dict) and about(x))]
+        if len(keep) != len(d["lessons"]):
+            rep["lessons"] = len(d["lessons"]) - len(keep)
+            d["lessons"] = keep
+            _wj(p, d)
+    p = data / "fixup.json"
+    d = _rj(p)
+    if isinstance(d, dict):
+        n = 0
+        for k in ("lessons", "events"):
+            if isinstance(d.get(k), list):
+                keep = [x for x in d[k] if not (isinstance(x, dict) and about(x))]
+                n += len(d[k]) - len(keep)
+                d[k] = keep
+        if n:
+            rep["fixup"] = n
+            _wj(p, d)
+    return rep
+
+
+def newer_state(data, uid, names):
+    """10-31 ~ 11-02 新加的几个文件里的他（11-02 v1.17.1 —— 以前删数据没管到）：
+    - 每日生活 data/life/YYYY-MM-DD.json：真发生的事（「给他唱了整首」「做了答应他的…」）、今天定好的事（「给他」）、昨天、她改过的、
+      各段在干什么、今天大概 里写着的名字 → 换成「某人」（她自己的日子 按「她自己的东西」的规矩 loose）；周模板 week.json 没有人 不动
+    - data/life/pending.json（她在忙、等着回的那一轮）：他的私聊那条 / 等的人里有他的 整条删
+    - qqevents.json（今天回赞过谁）、sing_state.json（整首的名额 按 QQ 号记）、announce.json（版本播报说给了谁）：他的 QQ 号 / 私聊那一项删
+    - memfix_1102.json（11-02 v1.17.5 清掉的北京钟点旧记忆的备份）：他的私聊里的、记的是他（QQ 号）、写着他名字的 整条删
+    - blocklist.json（11-02 v1.17.6 她拉黑 / 删好友）：记账里他的整条删；拉黑名单里他那一项留着（不然删数据 = 解封）但名字、原因、原话抹掉；
+      别人那几条里出现他的名字换「某人」
+    - personcard.json（11-02 v1.17.7 人物卡：她对他的第一印象 / 现在的印象 / 来往次数）：他那一项整个删；
+      别人的印象和依据里出现他的名字换「某人」（公开版没有人物卡 → 不管）"""
+    data, uid = Path(data), str(uid)
+    rep = {}
+    ld = data / "life"
+    n = 0
+    for p in (sorted(ld.glob("*.json")) if ld.is_dir() else []):
+        d = _rj(p)
+        if not isinstance(d, dict) or p.name == "week.json":
+            continue
+        if p.name == "pending.json":
+            keep = {k: v for k, v in d.items()
+                    if not (k == f"private_{uid}" or (isinstance(v, dict) and uid in [str(u) for u in v.get("uids") or []]))}
+            if len(keep) != len(d):
+                n += len(d) - len(keep)
+                _wj(p, keep)
+            continue
+        if not names:
+            continue
+        ch = 0
+
+        def sc(v):
+            nonlocal ch
+            if isinstance(v, str):
+                v2 = scrub(v, names, loose=True)
+                if v2 != v:
+                    ch += 1
+                return v2
+            return v
+        for fld in ("events", "edits", "segments"):
+            for e in d.get(fld) or []:
+                if isinstance(e, dict):
+                    for k in ("text", "what", "where"):
+                        if k in e:
+                            e[k] = sc(e[k])
+                    if isinstance(e.get("dropped"), list):
+                        e["dropped"] = [sc(x) for x in e["dropped"]]
+        for fld in ("tasks", "carry"):
+            if isinstance(d.get(fld), list):
+                d[fld] = [sc(x) for x in d[fld]]
+        for fld in ("yesterday", "summary", "why"):
+            if fld in d:
+                d[fld] = sc(d[fld])
+        if ch:
+            n += ch
+            _wj(p, d)
+    if n:
+        rep["life"] = n
+    for f in ("qqevents.json", "sing_state.json", "announce.json"):
+        d = _rj(data / f)
+        if isinstance(d, dict) and _drop_keys(d, {uid, f"private_{uid}"}):
+            _wj(data / f, d)
+            rep["small_state"] = rep.get("small_state", 0) + 1
+    mf = _rj(data / "memfix_1102.json")        # 11-02 v1.17.5 清掉的北京钟点旧记忆的备份
+    if isinstance(mf, dict) and isinstance(mf.get("items"), list):
+        keep = [it for it in mf["items"] if isinstance(it, dict) and it.get("key") != f"private_{uid}"
+                and str((it.get("fact") or {}).get("uid") or "") != uid
+                and not (names and mentions(str((it.get("fact") or {}).get("text") or ""), names, loose=True))]
+        if len(keep) != len(mf["items"]):
+            rep["memfix"] = len(mf["items"]) - len(keep)
+            mf["items"] = keep
+            _wj(data / "memfix_1102.json", mf)
+    if (data / "blocklist.json").exists():     # 她拉黑 / 删好友（11-02 v1.17.6）
+        try:
+            import blocklist
+            k = blocklist.forget(uid, [x for x in names or () if not _weak_name(x)], data_dir=data)   # 弱名字（叠词 / 常用词）不拿去全文换（11-03 v1.17.13 Gemini 3-F4）
+            if k:
+                rep["blocklist"] = k
+        except Exception:
+            rep["blocklist_err"] = 1
+    if (data / "personcard.json").exists():    # 人物卡：她对他的印象（11-02 v1.17.7）
+        try:
+            import personcard
+            k = personcard.forget_uid(uid, [x for x in names or () if not _weak_name(x)], data_dir=data)   # 同上：他那项照删 别人印象里的字不换（11-03 v1.17.13）
+            if k:
+                rep["personcard"] = k
+        except ImportError:
+            pass
+        except Exception:
+            rep["personcard_err"] = 1
     return rep
 
 
@@ -934,6 +1110,8 @@ def preview(data, uid):
                             if isinstance(f, dict) and f.get("status") == "active" and _about(f, c["names"]))
     rep["archive_lines"] = sum(1 for p in (data / "archive").glob("*/group_*.jsonl") for e in _jl(p)
                                if e.get("role") == "user" and str(e.get("uid")) == uid)
+    pc = ((_rj(data / "personcard.json", {}) or {}).get("people") or {}).get(uid) or {}    # 人物卡（11-02 v1.17.7）
+    rep["impressions"] = 1 if (pc.get("first") or pc.get("now")) else 0
     return rep
 
 
@@ -950,6 +1128,8 @@ def describe(r):
         bits.append(f"记下的关于你的 {nf} 件事")
     if r.get("favor"):
         bits.append("好感度和外号")
+    if r.get("impressions"):
+        bits.append("她对你的印象")
     return "、".join(bits) or "没多少东西（本来就没记什么）"
 
 

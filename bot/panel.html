@@ -354,7 +354,7 @@ body.compact .sub{margin-bottom:8px}
 // 侧边栏：分四组（10-27 她的名字主题）
 const NAV = [
   ["概况", [["overview", "总览", "home"], ["calendar", "日历", "calendar"], ["stats", "统计", "chart"]]],
-  ["她", [["memory", "记忆和好感", "heart"], ["persona", "人设", "card"], ["stickers", "表情包", "smile"], ["stickerdict", "表情包词典", "smile"], ["sing", "唱歌", "music"], ["qzone", "QQ 空间", "star"], ["prank", "恶趣味", "mask"], ["fixup", "纠错", "pulse"]]],
+  ["她", [["memory", "记忆和好感", "heart"], ["persona", "人设", "card"], ["stickers", "表情包", "smile"], ["stickerdict", "表情包词典", "smile"], ["life", "今天的日程", "clock"], ["sing", "唱歌", "music"], ["qzone", "QQ 空间", "star"], ["prank", "恶趣味", "mask"], ["fixup", "纠错", "pulse"]]],
   ["聊天", [["people", "群和人", "users"], ["send", "代发消息", "send"]]],
   ["设置", [["settings", "功能开关", "sliders"], ["usage", "用量和余额", "wallet"], ["sources", "来源健康", "pulse"], ["shadow", "影子模式", "gauge"], ["logs", "日志", "list"], ["tools", "工具", "wrench"]]],
 ];
@@ -1043,7 +1043,7 @@ const SETTINGS = [
     ["memory2.reinforce.enabled", "记忆强化", "别人再提起同一件事（+1）、她回复里真用上了（+0.5）→ 记得更久、想起来时排前面一点；提过好几次的她会知道「他提过好几次」。病、感情、钱、家里这类只记得久 不往前排", "bool"],
     ["memory2.reinforce.growth", "每强化一次 半衰期至少 ×几", "半衰期至少 = 等级的初始半衰期 × 这个数的 n 次方", "num", 1, 3, 0.1],
     ["memory2.reinforce.max_half_life", "强化撑着的半衰期最多几天", "", "num", 30, 3650, 5],
-    ["forget.gist", "快忘的蒸馏成一句印象", "同一个人有好几件事快忘了 → 合成一句「大概印象」（新的取代旧的 一层层蒸馏）细节归档（能找回）；关掉 = 直接归档", "bool"],
+    ["forget.gist", "快忘的蒸馏成一句「记得个大概」", "同一个人有好几件事快忘了 → 合成一句「记得个大概」（只写他的事 不写性格和她的感觉；新的取代旧的 一层层蒸馏）细节归档（能找回）；写了性格 / 判断的不蒸馏 细节照旧留着；关掉 = 直接归档", "bool"],
     ["forget.max_gist_per_night", "一晚最多蒸馏几个人", "每个人调一次模型（约 ¥0.002）", "num", 0, 200, 1],
     ["forget.dream", "做梦", "夜里整理完 拿当天的日记和一件快忘的旧事做个梦 第二天可能说「昨晚梦到…」（梦到的旧事算想起一次）", "bool"],
     ["forget.wander", "突然想起来", "聊天时偶尔冒出一件快模糊了的事（「诶 你上次是不是说过…」）她说出口了 这件事就记得更牢", "bool"],
@@ -1052,6 +1052,15 @@ const SETTINGS = [
     ["forget.archive_search", "想不起来就翻聊天记录", "有人问「还记得吗」、记忆里又没想起来 → 去原始聊天存档里找原话（群里只翻他自己说过的）照实说「我翻了下记录」", "bool"],
     ["forget.archive_days", "往回翻几天", "", "num", 1, 365, 1],
   ]],
+  ["人物卡", [   // 11-02 v1.17.7 personcard.py 私有：config 里有 personcard 这一节才显示（公开版没有）；改了要重启
+    ["personcard.enabled", "人物卡", "她对每个人的印象（第一印象 + 现在的印象 标明是她的感觉、带依据）+ 当前说话的人一张小卡（好感 / 认识多久 / 圈 / 印象 / 他的事）；关掉 = 跟以前一样（两条常驻 + 好感一行 不写印象）", "bool"],
+    ["personcard.inject", "人物卡：小卡放进提示", "关掉 = 印象照写、她看不到（只在控制台看）", "bool"],
+    ["personcard.impress", "人物卡：自动写印象", "第一次像样的来往以后写第一印象、夜里更新现在的印象（每个人调一次模型）；关掉 = 不写新的 已有的照用", "bool"],
+    ["personcard.first_private", "第一印象：私聊里她回过他几次", "", "num", 1, 50, 1],
+    ["personcard.first_group", "第一印象：同一个群里她回过他几次", "", "num", 1, 100, 1],
+    ["personcard.update_days", "现在的印象：至少隔几天更新", "", "num", 1, 90, 1],
+    ["personcard.now_half_life", "现在的印象：半衰期（天）", "第一印象不忘；现在的印象太久没确认就淡了（< 20% 不再给她看）", "num", 7, 3650, 1],
+  ], "personcard"],
   ["QQ 空间", [
     ["qzone.enabled", "QQ 空间", "她自己刷好友的说说（看、点赞、偶尔评论）、发自己的说说、回说说下面的评论；有人叫她看空间就当场去看。关掉 = 都不做（聊天不受影响）", "bool"],
     ["qzone.read_every_min", "多久刷一次（分钟）", "她醒着的时候 带一点随机", "num", 30, 1440, 10],
@@ -1115,6 +1124,8 @@ const SETTINGS = [
     ["sing.daily_max", "每天最多唱几次", "", "num", 0, 500, 5],
     ["sing.online", "没学过的歌上网找", "点了歌单里没有的歌：先找网易云 不行再找 B站 要歌名（和歌手）完全对得上的原唱 唱十来秒高潮；找不到就说没找着 不拿别的歌顶替（VIP/版权限制的歌唱不了）", "bool"],
     ["sing.online_sec", "网上找的歌唱几秒", "", "num", 5, 30, 1],
+    ["sing.ask_choice", "拿不准先问", "网上找到好几个版本、拿不准他要哪个：先问他（他回数字 / 歌手就唱那个）", "bool"],
+    ["sing.choice_sec", "问了多久没人选就唱第一个", "秒", "num", 20, 600, 10],
   ]],
   ["表情包", [
     ["behavior.sticker_gap_sec", "两张表情包至少隔几秒", "同一个聊天里", "num", 0, 3600, 10],
@@ -1398,7 +1409,21 @@ VIEWS.shadow = async main => {
     const amb = `<table><tr><th>日期</th><th>次数</th><th>网易云 / B站</th></tr>${D.map(x => `<tr><td>${x.day}</td><td>${x.amb.n}</td><td>${x.amb.ne} / ${x.amb.n - x.amb.ne}</td></tr>`).join("")}</table>
       ${(() => { const ex = D.flatMap(x => x.amb.ex || []).slice(-8).reverse(); return ex.length ? `<h3>例子</h3><ul class="small">${ex.map(e => `<li>「${esc(e.title)}」${esc(e.src)}：${e.options.map(o => esc(String(o))).join(" / ")}</li>`).join("")}</ul>` : ""; })()}`;
     const cool = `<table><tr><th>日期</th><th>冷掉的场次</th><th>会提炼的</th><th>候选句（个人 / 群）</th><th>平均一场几句</th></tr>${D.map(x => `<tr><td>${x.day}</td><td>${x.cool.n}</td><td>${x.cool.would}</td><td>${x.cool.me} / ${x.cool.grp}</td><td>${x.cool.avg}</td></tr>`).join("")}</table>`;
+    const LV = ["很感兴趣", "感兴趣", "有点腻", "腻了", "很腻"];
+    const soc = has.social ? `<table><tr><th>日期</th><th>别人说的</th><th>冲她 / 可以接 / 不关她的事</th><th>「不关她的事」里她还回了</th><th>不关她的事：为什么</th><th>新人说话（她接了）/ 进群</th><th>兴趣（人次：${LV.join(" / ")}）</th><th>好几段在聊 / 会降权</th></tr>${D.map(x => { const c = x.soc || {}, t = c.tier || {}, lv = c.lv || {};
+        return `<tr><td>${x.day}</td><td>${n(c.lines)}</td><td>${t.to_her || 0} / ${t.open || 0} / ${t.not_mine || 0}</td><td>${n(c.not_mine_rep)}</td><td class="small">${top(c.tw)}</td><td>${n(c.new)}（${n(c.new_rep)}）/ ${n(c.join)}</td><td>${LV.map(k => lv[k] || 0).join(" / ")}</td><td>${n(c.th_multi)} / ${n(c.th_down)}</td></tr>`; }).join("")}</table>
+      ${(() => { const ex = D.flatMap(x => (x.soc || {}).it_ex || []).slice(-10).reverse(); return ex.length ? `<h3>兴趣变了的时候（以后她会怎么做）</h3><table><tr><th>时间</th><th>对话</th><th>谁</th><th>值</th><th>档</th><th>这句</th><th>以后会</th></tr>${ex.map(r => `<tr><td class="small">${hm(r.t)}</td><td class="small">${esc(r.conv || "")}</td><td class="small">${esc(r.uid || "")}</td><td>${r.b}</td><td>${esc(({"-2": "很感兴趣", "-1": "感兴趣", "1": "有点腻", "2": "腻了", "3": "很腻"})[String(r.lv)] || "")}</td><td class="small">${esc(r.w || "")}${r.cap ? `<div class="muted">${esc(r.cap)}</div>` : ""}</td><td class="small">${esc(r.would || "")}</td></tr>`).join("")}</table>` : ""; })()}`
+      : '<div class="muted">这个版本没有社交细节</div>';
+    const ci = d.circles;
+    const circ = !ci ? '<div class="muted">这个版本没有关系分圈</div>' : ci.error ? `<div class="muted">${esc(ci.error)}</div>` : `
+      <p class="small muted">${esc(ci.rule || "")}</p><div class="row" style="flex-wrap:wrap;gap:10px">${Object.entries(ci.count || {}).map(([k, v]) => `<span class="badge">${esc(k)} ${v}</span>`).join("")}</div>
+      ${(ci.close || []).length ? `<table><tr><th>谁</th><th>QQ</th><th>好感</th><th>最近 30 天说过话（天）</th></tr>${ci.close.map(r => `<tr><td><a href="#people" onclick="goPerson('${esc(r.uid)}');return false" title="打开人物卡">${esc(String(r.name))}</a></td><td class="small">${esc(r.uid)}</td><td>${n(r.favor)}</td><td>${n(r.days)}</td></tr>`).join("")}</table>` : ""}`;
+    const og = (d.orig || []).length ? `<table><tr><th>记忆（大意）</th><th>原话</th><th>半衰期 大意 / 原话（天）</th><th>第 3 天</th><th>第 7 天</th><th>第 14 天</th></tr>${d.orig.map(r => `<tr><td class="small">${esc(r.text)}</td><td class="small">${esc(r.orig)}</td><td>${r.S} / ${r.So}</td>${r.c.map(c => `<td class="small">大意 ${c[1]}<br>原话 ${c[2]}</td>`).join("")}</tr>`).join("")}</table>`
+      : '<div class="muted small">还没有存了原话的新记忆（11-01 之后新记的才有）</div>';
     $("#sh").innerHTML = `<div class="card"><h2>注意力存档（引力 / 每人热度 / 接话日志）</h2>${att}</div>
+      <div class="card"><h2>社交细节（装没看见 / 新人 / 兴趣 / 小圈）</h2><p class="small muted">只记、不改她的行为。「不关她的事」= 在跟别人说、两个人在吵、跟别人说的私事 —— 以后这档基本不接；兴趣：一直拉着她说同一件没新东西的事会腻、聊到她感兴趣的会来劲（只算冲她说的）；好几段在聊：她只跟着自己在的那段</p>${soc}</div>
+      <div class="card"><h2>关系分圈</h2>${circ}</div>
+      <div class="card"><h2>原话 / 大意（凭感觉看：太快还是太慢）</h2><p class="small muted">清晰度 1 = 记得很清楚、0.5 = 模糊（她会说「好像」）、0.2 以下 = 快想不起来；原话的半衰期 = 大意的 × 0.4</p>${og}</div>
       <div class="card"><h2>法庭（她给过答案、有人说不对）</h2><p class="small muted">「光说不对就改口」多 → 该让她先核对再改口；「能核对」的才是以后要复核的</p>${ct}</div>
       <div class="card"><h2>接话标注（没人叫她的时候 她该不该接这句）</h2><p class="small muted">接话判断跑过的句子 + 她没被叫自己接了的。黄底那句是要你判断的；你标「该接 / 不该接」，跟她实际接没接对一下，就知道判断准不准、错在哪边。「接了这句」= 她 90 秒内那句回的就是这句（引用了它 / 回的是这个人）；她回的是别人 / 别的话会写出来、不算接。图：10-31 起的才显示（QQ 的图链接几个小时后失效）</p>
         <div class="row"><select id="fuOnly"><option value="todo">只看没标的</option><option value="">全部</option></select><span class="spacer"></span><span id="fuAgree" class="small"></span></div><div id="fuList"><div class="empty">读取中…</div></div></div>
@@ -1510,8 +1535,97 @@ VIEWS.stickerdict = async main => {
   await draw();
 };
 
+/* ───────── 人物卡（11-02 v1.17.7 P1）：点一个人 看她知道的他的全部 ───────── */
+let NEXT_PERSON = "";             // 从「好感度」「关系分圈」点过来：到「群和人」直接打开这个人
+function goPerson(uid) { NEXT_PERSON = String(uid || ""); if (location.hash === "#people") render(); else location.hash = "people"; }
+const PC_STATE = {pinned: "钉住", clear: "清楚", fuzzy: "模糊", faint: "快想不起来"};
+function impRow(r, which, uid) {
+  if (!r) return "";
+  const lab = which === "first" ? "第一印象" : which === "now" ? "现在的印象" : (r.was || "以前的印象");
+  const cl = which === "now" ? ` · 还剩 ${Math.round((r.clarity || 0) * 100)}%${r.clarity < 0.2 ? "（太淡了 不再给她看）" : ""}` : which === "first" ? " · 不会忘" : "";
+  const meta = `${esc(r.date || "")} · ${esc(r.where_label || "")}${r.by && r.by !== "auto" ? " · " + esc(r.by) + "改的" : ""}${cl}${r.until ? " · 到 " + hm(r.until) : ""}`;
+  const acts = which === "old" ? `<button class="btn small danger" data-pi="old" data-pa="delete" data-idx="${r._i}">删掉</button>`
+    : `<button class="btn small" data-pi="${which}" data-pa="edit" data-pw="${esc(r.conv || r.where || "")}">改</button> <button class="btn small danger" data-pi="${which}" data-pa="delete" data-pw="${esc(r.conv || r.where || "")}">删掉</button>`;
+  return `<div class="fact ${which === "old" ? "faded" : ""}"><span class="badge ${which === "first" ? "acc" : ""}">${esc(lab)}</span><span class="t">${esc(r.text || "")}<div class="small muted">依据：${esc(r.basis || "")}</div><div class="small muted">${meta}</div></span><span class="acts">${acts}</span></div>`;
+}
+function personHTML(d) {
+  const day = ts => ts ? Math.max(0, Math.floor((Date.now() / 1000 - ts) / 86400)) : null;
+  const known = day(d.first_seen);
+  const basic = [
+    d.names && d.names.length ? `用过的名字：${d.names.map(esc).join(" / ")}` : "",
+    d.call ? `她叫他「${esc(d.call)}」` : "",
+    d.circle ? `圈：${esc(d.circle)}` : "",
+    d.favor != null ? `好感 ${d.favor}/100` : "",
+    known != null ? (known < 1 ? "今天刚认识" : `认识 ${known} 天`) : "",
+    d.days30 != null ? `30 天里说过话 ${d.days30} 天` : "",
+    d.private ? "私聊过" : "没私聊过",
+    d.place ? `时区 / 在哪：${esc(d.place)}` : "",
+    d.birthday ? `生日：${esc(d.birthday)}` : ""].filter(Boolean);
+  const prog = (d.progress || []).map(p => `${esc(p.label)} ${p.n}${p.n >= p.need ? "" : "/" + p.need}`).join(" · ");
+  const firstBox = d.first ? impRow(d.first, "first", d.uid)
+    : `<div class="muted small" style="padding:6px 0">还没有第一印象${d.owner ? "（老板默认不写：跟老板的关系人设里定好了）" : d.is_bot ? "（别人家的鱼不写）" : d.first_skip ? "（你在控制台删过 不会自动重写）" : ""}。她回过他几次 / 门槛：${prog || "还没来往过"}${d.tries ? ` · 上次没写成：${esc(d.tries.why || "")}` : ""}</div>
+       ${d.first_skip ? `<button class="btn small" data-pi="first" data-pa="redo">让她重新写</button>` : ""} <button class="btn small" data-pi="first" data-pa="edit">手写一条</button>`;
+  const nows = (d.now || []).map(r => impRow(r, "now", d.uid)).join("") || '<div class="muted small" style="padding:6px 0">还没有（第一印象以后：一个场合又来往够了、隔了一周 夜里整理时更新）</div>';
+  const olds = (d.old || []).map((r, i) => impRow(Object.assign({}, r, {_i: i}), "old", d.uid)).join("");
+  const fact = f => `<div class="fact"><span class="badge">${f.gist ? "记得个大概" : ({fact: "事实", recent: "近况", episode: "一起"}[f.kind] || "事实")}</span><span class="t">${esc(f.text)}<div class="small muted">${esc(f.date || "")}${f.state ? " · " + (PC_STATE[f.state] || f.state) + (f.state !== "pinned" ? " " + Math.round((f.clarity || 0) * 100) + "%" : "") : ""}${f.src_n ? " · 依据 " + f.src_n + " 条消息" : ""}${f.speaker ? " · 说的人 QQ " + esc(f.speaker) : ""}${f.uid_by ? " · 11-02 迁移补的号" : ""}${f.superseded_ts ? " · " + ago(f.superseded_ts) + "被新说法取代" : ""}</div></span></div>`;
+  const groups = (d.groups || []).map(g => `<div class="card"><h2>${esc(g.label)}<span class="small muted" style="font-weight:normal"> · ${g.facts.length} 件${g.said ? " · 最近聊天里他说了 " + g.said + " 句" : ""}</span></h2>
+      ${g.facts.map(fact).join("") || '<div class="muted small">这里没记他什么</div>'}
+      ${g.old.length ? `<details class="more"><summary>被取代的旧说法（${g.old.length}）</summary>${g.old.map(fact).join("")}</details>` : ""}</div>`).join("");
+  const li = (xs, f) => xs && xs.length ? `<ul class="small">${xs.map(f).join("")}</ul>` : '<div class="muted small">（没有）</div>';
+  return `<div class="card"><div class="row"><h2 style="margin:0">${esc(d.name || d.uid)}</h2><span class="badge">${esc(d.uid)}</span>${d.circle ? `<span class="badge acc">${esc(d.circle)}</span>` : ""}<span class="spacer"></span>
+      <button class="btn small" data-pclose="1">收起</button> <button class="btn small danger" data-pwipe="${esc(d.uid)}" data-pwn="${esc(d.name || "")}" title="私聊、群里说过的话、记下的关于他的事、好感度、印象 全删">删数据</button></div>
+      <div class="small" style="margin-top:8px;line-height:1.9">${basic.map(x => `<span class="badge" style="margin-right:4px">${x}</span>`).join("")}</div></div>
+    <div class="card"><h2>她的印象</h2><p class="small muted" style="margin-top:0">印象是她自己的感觉 不是关于他的事实：不进记忆、不会被当成「他是什么样的人」去回答别人，只在他本人跟她说话时放进他的小卡（私聊里全给；群里只给在这个群形成的）。第一印象不会被自动取代、不会忘；现在的印象按场合各一份 慢慢更新、半衰期 ${esc(String((d.rule || {}).now_half_life || 120))} 天</p>
+      ${firstBox}${nows}${olds ? `<details class="more"><summary>以前的印象（${(d.old || []).length}）</summary>${olds}</details>` : ""}</div>
+    ${groups || '<div class="card"><div class="muted">她没记他什么事</div></div>'}
+    <div class="cols"><div class="card"><h2>他说过别提的（${(d.taboos || []).length}）</h2>${(d.taboos || []).map((x, i) => `<div class="fact"><span class="t">${x.kind === "call" ? "别叫他「" + esc(x.text) + "」" : "别再" + esc(x.verb || "提") + "他" + esc(x.text)}<div class="small muted">${esc(x.date || "")} 他说的 · 跟这件事有关的记忆、印象都不拿出来</div></span><span class="acts"><button class="btn small danger" data-ptb="${i}">删掉</button></span></div>`).join("") || '<div class="muted small">（没有）</div>'}</div>
+      <div class="card"><h2>答应他的 / 欠他的 / 挂念</h2>
+        <h3>到点要做的</h3>${li(d.tasks, t => `<li>#${esc(String(t.n || ""))} ${esc(t.what || "")}${t.due ? " · " + hm(t.due) : ""}</li>`)}
+        <h3>欠他的道歉</h3>${li(d.apologies, t => `<li>${esc(t.what || "")}${t.why ? "（" + esc(t.why) + "）" : ""}</li>`)}
+        <h3>没说时间的答应</h3>${li(d.promises, t => `<li>${esc(t.what || "")}${t.t0 ? " · " + ago(t.t0) : ""}</li>`)}
+        <h3>心里挂着的（私聊）</h3>${li(d.loops, l => `<li>${esc(l.text || "")}${l.due ? " · 打算 " + hm(l.due) + " 以后问" : ""}</li>`)}</div></div>`;
+}
+async function personPanel(box, uid) {
+  const d = await api(`/api/person?uid=${encodeURIComponent(uid)}`);
+  if (!d.ok) { box.innerHTML = `<div class="card">${esc(d.error || "读不到")}</div>`; return; }
+  box.innerHTML = personHTML(d);
+  box.scrollIntoView({behavior: "smooth", block: "start"});
+  box.onclick = async e => {
+    const t = e.target.dataset;
+    if (t.pclose) { box.innerHTML = ""; return; }
+    if (t.pwipe) { if (await wipeFlow(t.pwipe, t.pwn)) box.innerHTML = ""; return; }
+    if (t.ptb != null) { if (!confirm("删掉这条？以后跟他聊就不带着它了")) return; const r = await api("/api/memory/taboo_del", {uid, i: +t.ptb}); toast(r.ok ? "删掉了" : (r.error || "没成功"), !r.ok); personPanel(box, uid); return; }
+    if (!t.pi) return;
+    const body = {uid, which: t.pi, action: t.pa, where: t.pw || "", idx: t.idx};
+    if (t.pa === "edit") {
+      const cur = t.pi === "first" ? (d.first || {}) : (d.now || []).find(r => r.conv === t.pw) || {};
+      const text = prompt("她的印象（「她觉得…」开头；只写她的感觉 不写性格诊断）", cur.text || "她觉得"); if (text == null) return;
+      const basis = prompt("依据（哪天 什么事 只写真发生的）", cur.basis || ""); if (basis == null) return;
+      Object.assign(body, {text, basis});
+    } else if (t.pa === "delete" && !confirm("删掉这条印象？" + (t.pi === "first" ? "（第一印象删了不会自动重写；想让她重新写 点「让她重新写」）" : ""))) return;
+    const r = await api("/api/person/impression", body);
+    toast(r.ok ? "改好了" : (r.error || "没成功"), !r.ok); personPanel(box, uid);
+  };
+}
+async function drawPersons(wrap) {
+  const L = await api("/api/persons");
+  if (!L.ok) { wrap.innerHTML = `<div class="card"><h2>人物卡</h2><div class="muted small">${esc(L.error || "读不到")}</div></div>`; return; }
+  const rule = L.rule || {};
+  const row = p => `<div class="row" data-puid="${esc(p.uid)}" data-ptxt="${esc((p.uid + " " + (p.name || "") + " " + (p.circle || "")).toLowerCase())}" style="padding:5px 0;border-top:1px solid var(--line);cursor:pointer">
+      <b>${esc(p.name || p.uid)}</b><span class="muted small">${esc(p.uid)}</span>${p.circle ? `<span class="badge">${esc(p.circle)}</span>` : ""}<span class="spacer"></span>
+      <span class="small muted">${p.favor != null ? "好感 " + p.favor + " · " : ""}她回过他 ${p.rounds} 次${p.first ? " · 有第一印象" : ""}${p.now ? " · 现在的印象 " + p.now : ""}</span></div>`;
+  wrap.innerHTML = `<div class="card"><h2>人物卡</h2><p class="small muted" style="margin-top:-4px">点一个人：她知道的他的全部 —— 名字、圈、好感、认识多久、她的印象（第一印象 + 现在的）、他的事（按私聊 / 每个群分 带清晰度和出处 被取代的旧说法也在）、别提的、答应他的、挂念；能改 / 删印象、删数据。第一印象：私聊里她回过他 ${esc(String(rule.first_private ?? 3))} 次、或同一个群里回过他 ${esc(String(rule.first_group ?? 4))} 次以后形成</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">${Object.entries(L.count || {}).map(([k, v]) => `<span class="badge">${esc(k)} ${v}</span>`).join("")}</div>
+      <input type="search" id="pcq" placeholder="搜名字 / QQ 号 / 圈" style="width:100%;margin-bottom:6px">
+      <div id="pclist" style="max-height:420px;overflow:auto">${(L.people || []).map(row).join("") || '<div class="muted small">（还没有）</div>'}</div></div><div id="pcbox"></div>`;
+  $("#pcq", wrap).oninput = e => { const q = e.target.value.trim().toLowerCase(); wrap.querySelectorAll("[data-ptxt]").forEach(r => { r.style.display = !q || r.dataset.ptxt.includes(q) ? "" : "none"; }); };
+  $("#pclist", wrap).onclick = e => { const r = e.target.closest("[data-puid]"); if (r) personPanel($("#pcbox", wrap), r.dataset.puid); };
+  if (NEXT_PERSON) { const u = NEXT_PERSON; NEXT_PERSON = ""; personPanel($("#pcbox", wrap), u); }
+}
+
 VIEWS.people = async main => {
-  main.innerHTML = `<h1>群和人</h1><p class="sub">哪些群她说话、哪些人不理。这里改了马上生效 不用重启。群主/管理员在群里让鱼们安静（少说两句 / 关一关 / 闭嘴）她会自己降档，到点自动恢复，这里能看到也能撤销</p><div id="pp"><div class="empty">读取群列表…</div></div>`;
+  main.innerHTML = `<h1>群和人</h1><p class="sub">哪些群她说话、哪些人不理。这里改了马上生效 不用重启。群主/管理员在群里让鱼们安静（少说两句 / 关一关 / 闭嘴）她会自己降档，到点自动恢复，这里能看到也能撤销</p><div id="pcw"></div><div id="pp"><div class="empty">读取群列表…</div></div>`;
+  drawPersons($("#pcw"));
   const draw = async () => {
     const d = await api("/api/people");
     const MODES = [["normal", "正常"], ["quiet", "少说（不主动插话）"], ["at_only", "只在被@时说话"], ["mute", "静音（完全不说）"]];
@@ -1546,6 +1660,14 @@ VIEWS.people = async main => {
               <input type="search" data-q="${kind}" placeholder="搜 QQ 号 / 备注（谁、哪天、谁加的）" style="width:100%;margin:8px 0">
               <div>${list}</div><div class="muted small" data-qnone="${kind}" style="display:none;padding:6px 0">没搜到</div></details>`; })()}
           <div class="row" style="margin-top:10px"><input type="text" placeholder="QQ 号" id="${kind}_id" style="width:130px"><input type="text" placeholder="备注（谁）" id="${kind}_note" style="width:150px"><button class="btn" data-add="${kind}">添加</button></div></div>`).join("")}
+      </div>
+      <div class="card"><h2>她自己拉黑的人</h2><p class="small muted" style="margin-top:-4px">她在状态行里写了不想再理的人（11-03 v1.17.13）：先不回他、等法庭（一审）判放过（马上恢复）或冷却（所有群和私聊 24 小时不理他，到点自动恢复）；冷却期间他冲她说的话只当证据收着，说完安静 5 分钟再审（最多 3 次），还越线就删除；冷却过的人再被写 block 直接二审：删除 / 保留。删除 = 永久拉黑（消息不进记忆、再加她好友自动拒绝）+ 删好友 + 清他的数据（影子模式只告诉你「本来会删 / 本来会清」）。最亲的人 / 好感 ≥ 60 只走一审、不会被删除。每个案子都会私聊告诉你。撤销 / 清掉 = 解除冷却和拉黑、清掉「冷却过」、之前的线索和案子不再算（删掉的好友要他重新加；清掉的数据回不来）</p>
+        ${Object.entries(d.her_blocked || {}).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · 拉黑 ${hm(e.t)} · ${esc(e.why || "")}${(e.cites || []).length ? " · 核实引用 " + (e.cites || []).length + " 条" : ((e.marks || []).length ? " · 记过 " + (e.marks || []).length + " 次" : "")}${e.deleted ? " · 删了好友" : ""}</span><span class="spacer"></span><button class="btn small" data-hb="${uid}">撤销</button></div>`).join("")}
+        ${Object.entries(d.her_cool || {}).filter(([uid]) => !(d.her_blocked || {})[uid]).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${esc(e.name || uid)}</b><span class="muted">${uid} · 冷却到 ${hm(e.until)} · ${esc(e.why || "")}</span><span class="spacer"></span><button class="btn small" data-hb="${uid}">撤销</button></div>`).join("")}
+        ${(Object.keys(d.her_blocked || {}).length || Object.keys(d.her_cool || {}).length) ? "" : '<div class="muted small">（没有）</div>'}
+        ${Object.keys(d.her_cooled || {}).length ? `<h3 style="margin:12px 0 4px">冷却过的人（再被写 block 直接二审）</h3>` + Object.entries(d.her_cooled || {}).filter(([uid]) => !(d.her_blocked || {})[uid]).reverse().map(([uid, e]) => `<div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><b>${uid}</b><span class="muted">冷却过 ${Number(e.n || 1)} 次 · 最近一次到 ${hm(e.last)}</span><span class="spacer"></span><button class="btn small" data-hb="${uid}">清掉</button></div>`).join("") : ""}
+        ${(d.her_cases || []).length ? `<h3 style="margin:12px 0 4px">最近的拉黑案</h3><table><tr><th>时间</th><th>名片</th><th>她的原因</th><th>法庭判词</th><th>理由</th><th>结果</th></tr>
+          ${(d.her_cases || []).map(c => `<tr><td>${hm(c.t)}</td><td>${esc(c.name || c.uid || "")}</td><td>${esc(c.why || "")}</td><td>${c.stage ? esc(c.stage) + " " : ""}${esc(c.verdict || (c.state === "审理中" ? "审理中" : "—"))}${c.kind ? " · " + esc(c.kind) : ""}</td><td class="small">${esc(c.reason || "")}</td><td class="small">${esc(c.result || "")}${c.state === "冷却中" && (c.cool_until || 0) * 1000 > Date.now() ? "（冷却中）" : ""}${(c.retrials || []).length ? " · 再审 " + (c.retrials || []).length + " 次（" + esc((c.retrials || []).map(r => r.result).join(" / ")) + "）" : ""}${c.end ? " · " + esc(c.end) : ""}${c.result_why ? "（" + esc(c.result_why) + "）" : ""}</td></tr>`).join("")}</table>` : ""}
       </div>`;
   };
   await draw();
@@ -1566,6 +1688,7 @@ VIEWS.people = async main => {
     if (t.ca) { const r = await api("/api/control", {kind: "group", id: t.ca, clear_admin: true}); toast(r.ok ? "撤销了 群管设的档位" : r.error, !r.ok); draw(); }
     if (t.cb) { const r = await api("/api/control", {kind: "group", id: t.cb, clear_ban: true}); toast(r.ok ? "清掉了" : r.error, !r.ok); draw(); }
     if (t.so) { const r = await api("/api/control", {kind: "self_off", id: t.so}); toast(r.ok ? "放开了" : r.error, !r.ok); draw(); }
+    if (t.hb) { const r = await api("/api/her_blocked", {id: t.hb, remove: true}); toast(r.ok ? "撤销了（冷却 / 拉黑都解除了、冷却过清掉了；删掉的好友要他重新加）" : r.error, !r.ok); draw(); }
     if (t.add) { const id = $(`#${t.add}_id`).value.trim(), note = $(`#${t.add}_note`).value.trim(); const r = await api("/api/control", {kind: t.add, id, note}); toast(r.ok ? "加好了" : r.error, !r.ok); if (r.ok) draw(); }
   });
 };
@@ -1652,7 +1775,7 @@ function provHTML(f) {      /* 10-27 记忆卫生：这条从哪来 —— 依�
   return bits.length ? " · " + bits.join(" · ") : "";
 }
 function factRow(f, conv, {faded = false, showConv = false} = {}) {
-  const kind = f.impression ? "印象" : ({fact: "事实", recent: "近况", episode: "经历"}[f.kind] || f.kind || "事实");
+  const kind = f.impression ? "记得个大概" : ({fact: "事实", recent: "近况", episode: "经历"}[f.kind] || f.kind || "事实");   // 夜里蒸馏的那句（11-02 v1.17.7 只写他的事；她的感觉在人物卡）
   const acts = faded ? `<button class="btn small" data-act="restore" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="拿回来 从现在开始重新算（清晰度回到 100%）">找回</button>`
     : (f.lvl === 0 ? `<button class="btn small" data-act="unpin" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="回到按类型算的等级 从现在开始算">取消钉住</button>`
       : `<button class="btn small" data-act="pin" data-k="${esc(conv)}" data-id="${esc(f.id)}" title="钉住：不会忘">钉住</button>`)
@@ -1759,7 +1882,7 @@ VIEWS.memory = async main => {
       <div class="cols"><div class="card"><div class="row"><h2 style="margin:0">${icon("moon")}昨晚整理</h2><span class="spacer"></span>
           <button class="btn small" id="cons" ${F.consolidating ? "disabled" : ""} title="不等今晚 现在就整理一次（要蒸馏的话每个人调一次模型）">${F.consolidating ? "正在整理…" : "现在整理一次"}</button></div>
           ${lr ? `<div class="small muted" style="margin:6px 0 8px">${esc(lr.why || "")} · ${hm(lr.ts)} · 蒸馏 ${(lr.gists || []).length} 个印象 · 归档 ${num(lr.archived)} 条 · 调模型 ${num(lr.calls)} 次</div>
-            ${(lr.gists || []).map(g => `<div class="fact"><span class="badge acc">印象</span><span class="t">${esc(g.text)}<div class="small muted">${esc(g.who || "群")} · ${esc(g.conv_name || g.conv)} · ${num(g.n)} 件快忘的事并进来${g.active ? "" : " · 已经被更新的印象取代"}</div></span></div>`).join("") || '<div class="muted small">没有要蒸馏的（还没有谁的事快忘了）</div>'}`
+            ${(lr.gists || []).map(g => `<div class="fact"><span class="badge acc">记得个大概</span><span class="t">${esc(g.text)}<div class="small muted">${esc(g.who || "群")} · ${esc(g.conv_name || g.conv)} · ${num(g.n)} 件快忘的事并进来${g.active ? "" : " · 已经被更新的印象取代"}</div></span></div>`).join("") || '<div class="muted small">没有要蒸馏的（还没有谁的事快忘了）</div>'}`
             : `<div class="muted small" style="margin-top:8px">还没整理过：每天北京时间 ${nh[0]}~${nh[1]} 点她睡着后整理一次</div>`}</div>
         <div class="card"><h2>${icon("sparkle")}她做的梦</h2>${(F.dreams || []).slice().reverse().map((x, i) => `<div class="${i ? "small muted" : "dream"}" style="${i ? "margin-top:8px" : ""}">${esc(x.text)}<div class="small muted">${esc(x.day || "")}${i ? "" : " · 今天醒来还记得（聊天时可能提一句）"}</div></div>`).join("") || '<div class="muted small">还没做过梦（夜里整理完会做一个）</div>'}</div></div>
       <div class="card"><h2>快忘掉的（7 天内）</h2><p class="small muted" style="margin-top:0">再没人提 这些很快就会变模糊 / 想不起来。想让她一直记得就「钉住」；也可以「现在忘」</p>
@@ -1781,9 +1904,9 @@ VIEWS.memory = async main => {
     const L = (await api("/api/favor")).data || [];
     $("#mm").innerHTML = `<div class="card"><p class="small muted" style="margin-top:0">好感度 0~100：0 陌生人 · 20 认识的人 · 40 熟人（可以互骂了 关于他的事记得更久）· 60 好朋友 · 80 特别的人。每跨过一档 她会做一件那一档才做的小事</p>
       <table><tr><th>谁</th><th>现在</th><th>好感度</th><th>聊过</th><th>认识多久</th><th></th></tr>${L.map(u => `<tr><td><b>${esc(u.name || "—")}</b><div class="small muted">${u.uid}</div></td><td><span class="badge acc">${u.stage}</span></td>
-      <td><input type="range" min="0" max="100" value="${u.favor}" data-u="${u.uid}" style="width:180px"> <b data-v="${u.uid}">${u.favor}</b></td><td>${u.chats} 次</td><td>${ago(u.first)}</td><td><button class="btn small" data-s="${u.uid}">保存</button> <button class="btn small danger" data-w="${u.uid}" data-wn="${esc(u.name || "")}" title="私聊、群里说过的话、记下的关于他的事、好感度 全删">删数据</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">还没有</td></tr>'}</table></div>`;
+      <td><input type="range" min="0" max="100" value="${u.favor}" data-u="${u.uid}" style="width:180px"> <b data-v="${u.uid}">${u.favor}</b></td><td>${u.chats} 次</td><td>${ago(u.first)}</td><td><button class="btn small" data-s="${u.uid}">保存</button> <button class="btn small" data-pc="${u.uid}" title="她知道的他的全部（印象、他的事、别提的、答应他的）">人物卡</button> <button class="btn small danger" data-w="${u.uid}" data-wn="${esc(u.name || "")}" title="私聊、群里说过的话、记下的关于他的事、好感度 全删">删数据</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">还没有</td></tr>'}</table></div>`;
     $("#mm").oninput = e => { const u = e.target.dataset.u; if (u) $(`[data-v="${u}"]`).textContent = e.target.value; };
-    $("#mm").onclick = async e => { if (e.target.dataset.w) { if (await wipeFlow(e.target.dataset.w, e.target.dataset.wn)) drawFav(); return; } const u = e.target.dataset.s; if (!u) return; const v = $(`[data-u="${u}"]`).value; const r = await api("/api/favor", {uid: u, favor: Number(v)}); toast(r.ok ? `好感度改成 ${r.favor}` : (r.error || "没成功"), !r.ok); };
+    $("#mm").onclick = async e => { if (e.target.dataset.pc) { goPerson(e.target.dataset.pc); return; } if (e.target.dataset.w) { if (await wipeFlow(e.target.dataset.w, e.target.dataset.wn)) drawFav(); return; } const u = e.target.dataset.s; if (!u) return; const v = $(`[data-u="${u}"]`).value; const r = await api("/api/favor", {uid: u, favor: Number(v)}); toast(r.ok ? `好感度改成 ${r.favor}` : (r.error || "没成功"), !r.ok); };
   };
   const go = t => { tab = t; main.querySelectorAll("#mtabs .chip").forEach(c => c.classList.toggle("on", c.dataset.t === t)); $("#mm").onclick = null; $("#mm").oninput = null; tab === "mem" ? drawMem() : tab === "fg" ? drawForget() : drawFav(); };
   $("#mtabs").onclick = e => { const t = e.target.dataset.t; if (t) go(t); };
@@ -1793,7 +1916,8 @@ VIEWS.memory = async main => {
 /* ───────── 唱歌 ───────── */
 function mmss(sec) { sec = Math.max(0, Math.round(sec || 0)); return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`; }
 VIEWS.sing = async main => {
-  main.innerHTML = `<h1>唱歌</h1><p class="sub">她唱的是这里的歌：录好的歌放一段，当 QQ 语音发出去（不是合成的 不花 MiniMax 的钱）。有人说「唱首歌」「唱个试试」「来首歌」她就挑一首唱，点名要的歌没有她会说还不会</p><div id="sg2"></div>`;
+  main.innerHTML = `<h1>唱歌</h1><p class="sub">她唱的是这里的歌：录好的歌放一段，当 QQ 语音发出去（不是合成的 不花 MiniMax 的钱）。有人说「唱首歌」「唱个试试」「来首歌」她就挑一首唱，点名要的歌没有她会说还不会</p><div id="sgm"></div><div id="sg2"></div>`;
+  musicCards(RENDER);
   const draw = async () => {
     const d = await api("/api/songs");
     const box = $("#sg2"); if (!box) return;
@@ -1882,6 +2006,115 @@ VIEWS.sing = async main => {
   await draw();
 };
 
+/* ───────── 唱歌：音乐平台登录 / 找歌来源 / 自检（11-01 v1.16.0）───────── */
+// 网上现找的歌从哪找：登录了的国内平台（用你自己的账号 你有权限的才放）→ B站 → YouTube。cookie 只在机器人那边 页面上看不到
+const when = v => typeof v === "number" ? new Date(v * 1000).toLocaleString() : String(v);   // 秒数时间戳 → 本地时间（是字符串就照写）
+const QR_TXT = {wait: "用手机 App 扫这个码", scanned: "扫到了：在手机上点「确认登录」", ok: "登录好了", expired: "二维码过期了", error: "出错了"};
+function musicCards(my) {
+  const box = () => $("#sgm");
+  const qr = {};                    // 平台 -> {img, state, why, nick}：正在扫的
+  const draw = async () => {
+    const d = await api("/api/music");
+    if (my !== RENDER || !box()) return;
+    if (!d.ok) { box().innerHTML = `<div class="card">读不到找歌设置：${esc(d.error || "")}</div>`; return; }
+    const card = c => {
+      const q = qr[c.platform];
+      let body;
+      if (q) {
+        body = `<div class="row" style="align-items:flex-start;gap:14px">
+          ${q.img && q.state !== "expired" ? `<img src="${esc(q.img)}" alt="二维码" style="width:150px;height:150px;border-radius:8px;background:#fff;padding:6px">` : ""}
+          <div><div class="small">${esc(QR_TXT[q.state] || q.state || "")}${q.nick ? "：" + esc(q.nick) : ""}</div>
+            ${q.why ? `<div class="small muted">${esc(q.why)}</div>` : ""}
+            <div class="row small" style="margin-top:8px">${q.state === "expired" || q.state === "error" ? `<button class="btn small primary" data-mu="start" data-pf="${esc(c.platform)}">重来</button>` : ""}
+            <button class="btn small" data-mu="cancel" data-pf="${esc(c.platform)}">${q.state === "ok" ? "好了" : "不扫了"}</button></div></div></div>`;
+      } else if (c.login) {
+        body = `<div class="small">${esc(c.nick || "（没拿到昵称）")}${c.vip === true ? ' <span class="badge good">会员</span>' : c.vip === false ? ' <span class="badge">不是会员</span>' : ""}</div>
+          <div class="small muted">${c.uin ? "QQ " + esc(c.uin) + " · " : ""}${c.since ? "登录于 " + esc(when(c.since)) : ""}${c.last_ok ? " · 上次确认还登着 " + esc(when(c.last_ok)) : ""}</div>
+          ${c.why ? `<div class="small" style="color:var(--warn)">${esc(c.why)}</div>` : ""}
+          <div class="row small" style="margin-top:8px"><button class="btn small" data-mu="check" data-pf="${esc(c.platform)}">检查一下</button>
+            <button class="btn small danger" data-mu="logout" data-pf="${esc(c.platform)}">退出</button></div>`;
+      } else {
+        body = `<div class="small muted">没登录：找歌时跳过${esc(c.label)}${c.label === "网易云" ? "（不登录只能放免费歌）" : ""}</div>
+          ${c.why ? `<div class="small" style="color:var(--warn)">${esc(c.why)}</div>` : ""}
+          <div class="row small" style="margin-top:8px"><button class="btn small primary" data-mu="start" data-pf="${esc(c.platform)}">扫码登录</button></div>`;
+      }
+      return `<div class="mucard" style="flex:1;min-width:220px;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--panel2)">
+        <div class="row"><b>${esc(c.label)}</b>${c.login ? '<span class="badge good">已登录</span>' : '<span class="badge">没登录</span>'}</div>
+        <div style="margin-top:8px">${body}</div></div>`;
+    };
+    const st = s => s.ok === true ? '<span class="badge good">能用</span>' : s.ok === false ? '<span class="badge bad">用不了</span>' : '<span class="badge">还不知道</span>';
+    const t = d.selftest || {};
+    const res = t.result && typeof t.result === "object" ? Object.entries(t.result) : [];
+    box().innerHTML = `
+      <div class="card"><h2>音乐平台登录</h2>
+        <div class="small muted" style="margin-bottom:10px">用你自己的音乐 App 扫码登录（网易云 / QQ 音乐 / 酷狗）：点歌时先去登录了的平台找，你账号能听的她才能唱（会员歌、地区限制都不绕过）。登录信息只存在这台电脑的 bot\\data 里 不上传</div>
+        ${d.has_login ? `<div class="row" style="gap:12px;align-items:stretch">${d.cards.map(card).join("")}</div>` : '<div class="empty">这个版本还没有扫码登录</div>'}
+      </div>
+      <div class="card"><h2>找歌的来源（按顺序找）</h2>
+        ${d.sources.map((x, i) => `<div class="row small" style="border-top:1px solid var(--line);padding:8px 0">
+          <b style="width:20px">${x.listed ? i + 1 : "-"}</b><b style="width:80px">${esc(x.label)}</b>
+          ${x.enabled === false || !x.listed ? '<span class="badge">没开</span>' : st(x)}<span class="muted">${esc(x.why || "")}</span><span class="spacer"></span>
+          ${x.listed ? `<button class="btn small" data-mu="up" data-i="${i}"${i ? "" : " disabled"}>上移</button><button class="btn small" data-mu="down" data-i="${i}"${i < d.order.length - 1 ? "" : " disabled"}>下移</button>` : ""}</div>`).join("")}
+        <div class="small muted" style="margin-top:6px">${d.has_status ? "" : "这个版本的 music.py 还报不了每个来源的状态。"}没登录 / 用不了的自动跳过；歌名是外文的 YouTube 会排到 B站 前面。改了顺序重启一下机器人才生效。拿不准是哪个版本：${d.ask_choice ? `先问他（${d.choice_sec} 秒没人选就唱第一个）` : "不问 直接唱最像的"}（功能开关 → 唱歌）</div>
+        <div class="row" style="margin-top:10px"><button class="btn primary" data-mu="selftest"${d.has_selftest && !t.running ? "" : " disabled"}>${t.running ? "自检中…" : "现在自检"}</button>
+          <span class="small muted">每个来源搜一首常见的歌、试着拿音频（不剪不存，要一会儿）${t.done ? " · 上次 " + new Date(t.done * 1000).toLocaleTimeString() : ""}</span></div>
+        ${t.error ? `<div class="card alert small" style="margin-top:8px">自检出错：${esc(t.error)}</div>` : ""}
+        ${res.length ? `<div style="margin-top:8px">${res.map(([k, v]) => `<div class="row small"><b style="width:80px">${esc(({qq: "QQ 音乐", netease: "网易云", kugou: "酷狗", bili: "B站", youtube: "YouTube"})[k] || k)}</b>${v && typeof v === "object" ? (v.enabled === false ? '<span class="badge">没开</span>' : st(v)) + `<span class="muted">${esc(v.why || [v.pick, v.sec ? Math.round(v.sec) + " 秒" : "", v.took ? "用了 " + v.took + "s" : ""].filter(Boolean).join(" · "))}</span>` : esc(String(v))}</div>`).join("")}</div>`
+          : (t.result ? `<div class="small" style="margin-top:8px">${esc(String(t.result))}</div>` : "")}
+        ${t.log && t.log.length ? `<details style="margin-top:8px"${t.running ? " open" : ""}><summary class="small muted">自检记录</summary><pre class="small" style="white-space:pre-wrap;max-height:220px;overflow:auto">${esc(t.log.join("\n"))}</pre></details>` : ""}
+      </div>`;
+    if (t.running) setTimeout(() => { if (my === RENDER) draw(); }, 2000);
+  };
+  const poll = async pf => {                 // 每 2 秒问一次扫了没有
+    while (my === RENDER && qr[pf] && !["ok", "expired", "error"].includes(qr[pf].state)) {
+      await new Promise(ok => setTimeout(ok, 2000));
+      if (my !== RENDER || !qr[pf]) return;
+      const r = await api("/api/music/login", {action: "poll", platform: pf});
+      if (my !== RENDER || !qr[pf]) return;
+      Object.assign(qr[pf], {state: r.ok ? r.state : "error", nick: r.nick || "", why: r.why || r.error || ""});
+      if (qr[pf].state === "ok") toast("登录好了" + (r.nick ? "：" + r.nick : ""));
+      await draw();
+    }
+  };
+  const onclick = async e => {
+    const b = e.target.closest("[data-mu]"); if (!b || b.hasAttribute("disabled")) return;
+    const a = b.dataset.mu, pf = b.dataset.pf;
+    if (a === "start") {
+      b.setAttribute("disabled", "");
+      const r = await api("/api/music/login", {action: "start", platform: pf});
+      if (!r.ok) { b.removeAttribute("disabled"); toast(r.error || "二维码没拿到", true); return; }
+      qr[pf] = {img: r.img, state: "wait", why: "", nick: ""};
+      await draw(); poll(pf); return;
+    }
+    if (a === "cancel") { delete qr[pf]; return draw(); }
+    if (a === "check") {
+      b.setAttribute("disabled", ""); b.textContent = "检查中…";
+      const r = await api("/api/music/login", {action: "check", platform: pf});
+      toast(!r.ok ? (r.error || "没检查成") : r.valid ? "登录还有效" + (r.nick ? "：" + r.nick : "") + (r.vip === true ? "（会员）" : "")
+        : r.valid === false ? "登录失效了：" + (r.why || "重新扫码登录一次") : "没问通平台：" + (r.why || "过会儿再试") + "（登录先留着）", !(r.ok && r.valid));
+      return draw();
+    }
+    if (a === "logout") {
+      if (!confirm("退出这个平台的登录？（以后点歌不从这里找 要用再扫码）")) return;
+      const r = await api("/api/music/login", {action: "logout", platform: pf});
+      toast(r.ok ? "退出了" : (r.error || "没退出"), !r.ok); return draw();
+    }
+    if (a === "up" || a === "down") {
+      const d = await api("/api/music"); const o = (d.order || []).slice(), i = Number(b.dataset.i), j = a === "up" ? i - 1 : i + 1;
+      if (j < 0 || j >= o.length) return;
+      [o[i], o[j]] = [o[j], o[i]];
+      const r = await api("/api/config", {changes: [{path: "sing.sources", value: o}]});
+      toast(r.ok ? "顺序改好了（重启一下机器人才生效）" : (r.error || "没改上"), !r.ok); return draw();
+    }
+    if (a === "selftest") {
+      const r = await api("/api/music/selftest", {});
+      if (!r.ok) { toast(r.error || "没开始", true); return; }
+      return draw();
+    }
+  };
+  setTimeout(() => { const el = box(); if (el && my === RENDER) { el.onclick = onclick; draw(); } }, 0);
+}
+
 /* ───────── QQ 空间（10-27 v1.3.0）───────── */
 VIEWS.qzone = async main => {
   main.innerHTML = `<h1>QQ 空间</h1><p class="sub">她自己会刷好友的说说（看、点赞、偶尔评论），也会发自己的说说、回说说下面的评论；有人叫她看空间就当场去看。规矩和上限在「功能开关 → QQ 空间」</p><div id="qz"></div>`;
@@ -1946,35 +2179,99 @@ VIEWS.qzone = async main => {
   await draw();
 };
 
-/* ───────── 纠错（10-28 v1.11.0 fixup.py）───────── */
+/* ───────── 今天的日程（11-01 v1.16.4 C39 每日生活 life.py）───────── */
+VIEWS.life = async main => {
+  main.innerHTML = `<h1>今天的日程</h1><p class="sub">她每天醒来（12 点睡觉段结束后）自己排一天：在干什么、在哪、回消息方不方便（空闲 = 随时回 / 慢 = 过几分钟才回 / 忙 = 十几分钟才回）。
+    忙的时候别人找她会晚几分钟回（急事、验证题不等；到点答应的事照常做）、不插话不冒泡不主动找人，QQ 在线状态跟着变；她聊着聊着也会自己改。
+    睡觉那段（05–12）固定照作息。周模板在 bot\\data\\life\\week.json（可以改）。</p><div id="lf"><div class="empty">读取中…</div></div>`;
+  const MODE = {free: ["空闲", ""], slow: ["慢", "warn"], busy: ["忙", "warn"], sleep: ["睡觉", ""]};
+  const mn = m => (MODE[m] || [m || ""])[0];
+  const draw = async () => {
+    const D = await api("/api/life");
+    const box = $("#lf"); if (!box) return;
+    if (D.ok === false) { box.innerHTML = `<div class="card">${esc(D.error || "读不到")}</div>`; return; }
+    if (D.stub) { box.innerHTML = '<div class="card">这个版本没有每日生活（公开版是空壳）</div>'; return; }
+    const segs = D.segments || [];
+    box.innerHTML = `
+      ${D.enabled === false ? '<div class="card alert">每日生活关着（config → life.enabled，改了要重启机器人）</div>' : ""}
+      <div class="card"><div class="row"><h2 style="margin:0">${esc(D.day || "")}${D.has ? "" : "（还没排）"}</h2><span class="spacer"></span>
+        ${D.replan_pending ? '<span class="badge warn">等机器人重排…</span>' : ""}
+        <button class="btn small" id="lfRe" title="写个请求文件 机器人 30 秒内重排（机器人得开着）">重新排今天</button></div>
+        ${D.has ? `<p class="small muted">${esc(D.summary)} · ${esc(D.how)}${D.made ? " · " + hm(D.made) + " 排的" : ""}${D.why ? "（" + esc(D.why) + "）" : ""}${D.mode ? " · 现在：" + esc(mn(D.mode)) : ""}</p>`
+          : '<p class="small muted">机器人开着的话 她醒着时会自己排；也可以点「重新排今天」</p>'}
+        ${segs.length ? `<table><tr><th>时间</th><th>在干什么</th><th>在哪</th><th>回消息</th></tr>${segs.map(s => `<tr${s.now ? ' style="background:var(--soft);font-weight:600"' : s.past ? ' class="muted"' : ""}>
+          <td>${esc(s.start)}–${esc(s.end)}${s.now ? " ◀ 现在" : ""}</td><td>${esc(s.what)}${s.edit ? ' <span class="badge">她改的</span>' : ""}${s.gap ? ' <span class="small muted">（空档补的）</span>' : ""}</td>
+          <td>${esc(s.where || "")}</td><td><span class="badge ${(MODE[s.mode] || ["", ""])[1]}">${esc(mn(s.mode))}</span></td></tr>`).join("")}</table>` : ""}</div>
+      <div class="card"><h2>今天她改过的（${(D.edits || []).length}）</h2>${(D.edits || []).map(e => `<div class="fact"><span class="t">${hm(e.t)} ${esc(e.act)}：${esc(e.start)}–${esc(e.end)} ${esc(e.what)}
+          <span class="small muted">${esc(mn(e.mode))}${(e.dropped || []).length ? " · 原来的「" + esc(e.dropped.join("、")) + "」挪掉了" : ""}</span></span></div>`).join("") || '<div class="empty">还没改过</div>'}</div>
+      <div class="card"><h2>今天真发生的事</h2>${(D.events || []).map(e => `<div class="fact"><span class="t">${hm(e.t)} ${esc(e.text)}</span></div>`).join("")
+          || '<div class="empty">还没有（唱歌、做东西、答应的事做没做 会记在这；第二天排日程时带上）</div>'}</div>
+      <div class="card"><h2>排的时候参考的</h2><div class="small"><b>昨天：</b>${esc(D.yesterday || "（没有记录）").replace(/\n/g, "<br>")}</div>
+        <div class="small"><b>没做完的：</b>${esc((D.carry || []).join("、") || "（没有）")}</div>
+        <div class="small"><b>今天定好的事：</b>${esc((D.tasks || []).join("；") || "（没有）")}</div>
+        ${(D.fixes || []).length ? `<div class="small muted">校验修了：${esc(D.fixes.join("；"))}</div>` : ""}</div>`;
+  };
+  $("#lf").onclick = async e => {
+    if (!e.target.closest("#lfRe")) return;
+    if (!confirm("重新排今天的日程？（她今天改过的会没了）")) return;
+    const r = await api("/api/life", {op: "replan"});
+    toast(r.ok ? (r.msg || "记下了") : (r.error || "没成"), !r.ok);
+    await draw();
+  };
+  await draw();
+};
+
+/* ───────── 纠错（10-28 v1.11.0 fixup.py；11-02 v1.17.0 法庭 + 纠错 合成一页）───────── */
 VIEWS.fixup = async main => {
-  main.innerHTML = `<h1>纠错</h1><p class="sub">只管验证程序 / 机器人那种场合（对方在机器人名单里、她刚回的就是验证题、对方的话是验证程序的口气）：她连着被判「不对」（验证失败、被撤回、被踢）时下一条换个做法；
-    验证题（「请在 60 秒内发送 X 的运算结果 否则移出」这种）只发一个数字 —— 发之前用代码查一遍，只从她自己写的里面取、不替她算。真人跟她玩猜数字、你说的都不算。
-    改了还是不行就先停一阵、私聊告诉你；事后记一条教训，以后同一个号再出题 / 再判她时带上。教训只从系统看到的失败里来，群友嘴上说「记住」不算。</p><div id="fx"></div>`;
+  main.innerHTML = `<h1>纠错</h1><p class="sub">目标两条：她答错了能被纠正；同样的错不再犯。两个入口进同一个流程（认出来 → 核对 → 当场 → 教训）：
+    ① <b>有人说她错了 / 纠正她</b>：规则立案 → 判断模型看前后文核对（他是真在纠正、还是抬杠 / 开玩笑 / 他自己错了；对的是什么、依据是什么）→ 她回他那一轮把核对结果当状态给她（认不认、怎么说她自己定）→ 真错了记一条教训，以后聊到类似的事给她看「这类事你以前说错过」。
+    ② <b>她的回答没过格式 / 验证要求</b>（验证程序那种场合）：连着被判不对时下一条换个做法；验证题只发一个数字 —— 发之前用代码查，只从她自己写的里面取、不替她算；改了还是不行就先停一阵、私聊告诉你；事后记一条教训。
+    教训都能看、能改、能删；删数据时他相关的整条删。立案的细节和「该立 / 不该立」的标注在「设置 → 影子模式」。</p><div id="fx"></div>`;
   const KIND = {mode: "开始纠错", fail: "又被判不对", stop: "停下了", pass: "过了", kick: "被移出群"};
   const SRC = {pass: "改了以后过了", stop: "连着失败停下了", kick: "被移出群"};
+  const VD = {"她错了": "--bad", "她没错": "--good", "说不准": "--warn"};
   const where = k => !k ? "" : k.startsWith("group_") ? "群 " + k.slice(6) : "私聊";
   const draw = async () => {
     const D = await api("/api/fixup");
     const box = $("#fx"); if (!box) return;
     if (D.ok === false) { box.innerHTML = `<div class="card">${esc(D.error || "读不到")}</div>`; return; }
+    const CT = D.court || null;
+    const cl = (CT && CT.lessons) || [];
     box.innerHTML = `
-      ${D.enabled === false ? '<div class="card alert">纠错关着（config → fixup.enabled，改了要重启机器人）</div>' : ""}
-      ${D.online ? "" : '<div class="card alert">机器人没开：只能看和删教训；「这一阵」要机器人开着才看得到</div>'}
+      ${D.enabled === false ? '<div class="card alert">格式那半关着（config → fixup.enabled，改了要重启机器人）</div>' : ""}
+      ${D.online ? "" : '<div class="card alert">机器人没开：只能看、改、删教训；「这一阵」要机器人开着才看得到</div>'}
       ${D.busy ? '<div class="card alert">fixup.json 一时打不开（被别的程序占着）—— 等一下刷新</div>' : ""}
-      <div class="card"><h2>这一阵</h2>${(D.live || []).length ? D.live.map(x => `<div class="fact"><span class="t"><b>${esc(x.name || x.uid)}</b> <span class="small muted">${esc(where(x.key))} · 最近 ${num(x.fails)} 次被判不对${x.con ? " · 格式：" + esc(x.con) : ""}</span>
+      <div class="card"><h2>这一阵（格式 / 验证）</h2>${(D.live || []).length ? D.live.map(x => `<div class="fact"><span class="t"><b>${esc(x.name || x.uid)}</b> <span class="small muted">${esc(where(x.key))} · 最近 ${num(x.fails)} 次被判不对${x.con ? " · 格式：" + esc(x.con) : ""}</span>
           <div class="small">${esc(x.last || "")}</div></span>
           <span class="acts">${x.stop_left ? `<span class="badge warn">停着 还有 ${Math.ceil(x.stop_left / 60)} 分钟</span>` : x.mode ? '<span class="badge">纠错中</span>' : ""}
           <button class="btn small" data-clr="${esc(x.key)}|${esc(x.uid)}" title="放开：下一条照常回">解除</button></span></div>`).join("") : '<div class="empty">现在没有</div>'}</div>
-      <div class="card"><h2>教训（${(D.lessons || []).length}）</h2><p class="small muted" style="margin-top:0">回这个号时她会看到；${num(D.lesson_days || 30)} 天没再碰到就不带了</p>
+      ${CT ? `<div class="card"><h2>教训 · 有人纠正、核对过的（${cl.length}）</h2><p class="small muted" style="margin-top:0">她以后聊到对得上的事（话题词 / 关键词至少两个对上）会看到「这类事你以前说错过」，每轮最多 2 条；${num(CT.lesson_days || 45)} 天没碰到、没给她看过就淡出（灰的）${CT.check === false ? "；<b>核对关着</b>（config → court.check）" : ""}</p>
+        ${cl.map(x => `<div class="fact"${x.faded ? ' style="opacity:.55"' : ""}><span class="t">${x.when ? esc(x.when) + "：" : ""}她说「${esc(x.wrong || "")}」→ 对的是「${esc(x.right || "（没写）")}」
+          <div class="small muted">${x.basis ? "依据：" + esc(x.basis) + " · " : ""}${esc(x.src || "")} · ${esc(where(x.conv))}${(x.n || 1) > 1 ? " · 纠正过 " + num(x.n) + " 次" : ""} · 给她看过 ${num(x.used || 0)} 次 · ${hm(x.last || x.t)}${x.faded ? " · 淡出了" : ""}${x.edited ? " · 你改过" : ""}</div></span>
+          <span class="acts"><button class="btn small" data-cedit="${esc(x.id)}">改</button><button class="btn small danger" data-cdel="${esc(x.id)}">删</button></span></div>`).join("") || '<div class="empty">还没有（有人纠正她、核对下来她真错了才记）</div>'}</div>` : ""}
+      <div class="card"><h2>教训 · 格式要求（验证程序）（${(D.lessons || []).length}）</h2><p class="small muted" style="margin-top:0">回这个号时她会看到；${num(D.lesson_days || 30)} 天没再碰到就不带了</p>
         ${(D.lessons || []).map(x => `<div class="fact"><span class="t">${esc(x.text)} <span class="small muted">${esc(where(x.key))} · ${esc(x.uid)} · ${SRC[x.src] || esc(x.src || "")}${(x.n || 1) > 1 ? " · " + num(x.n) + " 次" : ""} · ${hm(x.last || x.t)}</span></span>
-          <span class="acts"><button class="btn small danger" data-del="${esc(x.id)}">删</button></span></div>`).join("") || '<div class="empty">还没有</div>'}</div>
-      <div class="card"><h2>最近的事</h2>${(D.events || []).map(e => `<div class="fact"><span class="t"><b>${esc(e.name || e.uid || "")}</b> <span class="small muted">${hm(e.t)} · ${esc(where(e.key))} · ${KIND[e.kind] || esc(e.kind)}</span><div class="small">${esc(e.text || "")}</div></span></div>`).join("") || '<div class="empty">还没有</div>'}</div>`;
+          <span class="acts"><button class="btn small" data-fedit="${esc(x.id)}" data-text="${esc(x.text)}">改</button><button class="btn small danger" data-del="${esc(x.id)}">删</button></span></div>`).join("") || '<div class="empty">还没有</div>'}</div>
+      ${CT ? `<div class="card"><h2>最近的核对</h2>${(CT.recent || []).map(r => `<div class="fact"><span class="t"><b>${esc(r.name || "")}</b>${r.owner ? ' <span class="badge">老板</span>' : ""} <span class="small muted">${hm(r.t)} · ${esc(where(r.conv))} · ${esc(r.inst || "")}</span>
+          <div class="small">他说「${esc(r.his || "")}」 ← 她那句「${esc(r.her || "")}」</div>
+          <div class="small">${r.check ? (r.check.real ? `核对：<b style="color:var(${VD[r.check.verdict] || "--warn"})">${esc(r.check.verdict || "说不准")}</b>${r.check.right ? " · 对的是「" + esc(r.check.right) + "」" : ""}${r.check.basis ? " · 依据：" + esc(r.check.basis) : ""}` : `<span class="muted">不算纠正（${esc(r.check.why || "")}）</span>`) : '<span class="muted">没核对（没出结果 / 关着）</span>'}${r.stance ? " · 她：" + esc(r.stance) : ""}</div></span></div>`).join("") || '<div class="empty">最近两天没有</div>'}</div>` : ""}
+      <div class="card"><h2>最近的事（格式 / 验证）</h2>${(D.events || []).map(e => `<div class="fact"><span class="t"><b>${esc(e.name || e.uid || "")}</b> <span class="small muted">${hm(e.t)} · ${esc(where(e.key))} · ${KIND[e.kind] || esc(e.kind)}</span><div class="small">${esc(e.text || "")}</div></span></div>`).join("") || '<div class="empty">还没有</div>'}</div>`;
   };
   $("#fx").onclick = async e => {
     const t = e.target;
     const d = t.closest("[data-del]"); if (d) { if (!confirm("删掉这条教训？")) return; const r = await api("/api/fixup", {op: "del", id: d.dataset.del}); toast(r.ok ? "删了" : r.error || "没删成", !r.ok); return draw(); }
     const c = t.closest("[data-clr]"); if (c) { const [key, uid] = c.dataset.clr.split("|"); const r = await api("/api/fixup", {op: "clear", key, uid}); toast(r.ok ? "放开了" : r.error || "没改成", !r.ok); return draw(); }
+    const cd = t.closest("[data-cdel]"); if (cd) { if (!confirm("删掉这条教训？")) return; const r = await api("/api/fixup", {op: "cl_del", id: cd.dataset.cdel}); toast(r.ok ? "删了" : r.error || "没删成", !r.ok); return draw(); }
+    const fe = t.closest("[data-fedit]"); if (fe) { const v = prompt("这条教训改成：", fe.dataset.text || ""); if (v === null || !v.trim()) return; const r = await api("/api/fixup", {op: "fx_edit", id: fe.dataset.fedit, text: v.trim()}); toast(r.ok ? "改了" : r.error || "没改成", !r.ok); return draw(); }
+    const ce = t.closest("[data-cedit]"); if (ce) {
+      const D = await api("/api/fixup"); const x = (((D.court || {}).lessons) || []).find(y => y.id === ce.dataset.cedit); if (!x) return toast("没找到这条", true);
+      const f = {};
+      for (const [k, label] of [["wrong", "她错的说法"], ["right", "对的说法"], ["when", "什么情况（她在回什么）"], ["basis", "依据"], ["topic", "话题词（空格隔开 用来认「类似的事」）"]]) {
+        const v = prompt(label + "：", x[k] || ""); if (v === null) return; if (v.trim() !== (x[k] || "")) f[k] = v.trim();
+      }
+      if (!Object.keys(f).length) return toast("没改");
+      const r = await api("/api/fixup", {op: "cl_edit", id: x.id, fields: f}); toast(r.ok ? "改了" : r.error || "没改成", !r.ok); return draw();
+    }
   };
   await draw();
 };
@@ -2177,7 +2474,7 @@ VIEWS.stats = async main => {
     curvechart($("#c4"), s.budget);
     const pts = moodPts(s.mood);
     linechart($("#c3"), pts.length ? pts : (s.timeline || []).map(x => [x.t, x.mood, x.why]));
-    $("#sp").onclick = async () => { const p = {}; document.querySelectorAll("[data-k]").forEach(x => p[x.dataset.k] = x.value); const r = await api("/api/prices", {prices: p}); toast(r.ok ? "价格存好了" : (r.error || "没存上"), !r.ok); draw(days); };
+    $("#sp").onclick = async () => { const p = {}; document.querySelectorAll("[data-k]").forEach(x => p[x.dataset.k] = x.value); const r = await api("/api/prices", {prices: p}); toast(r.ok ? "价格存好了（机器人那边下一轮自动换上 不用重启）" : (r.error || "没存上"), !r.ok); draw(days); };
   };
   main.querySelector(".row").onclick = e => { const d = e.target.dataset.d; if (!d) return; main.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", c.dataset.d === d)); draw(Number(d)); };
   draw(14);

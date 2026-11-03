@@ -43,7 +43,7 @@ STRONG = re.compile(r"LLM ?(响应|请求)(错误|失败)|All chat models fail|�
                     r"Insufficient Balance|agent 处理出错|未找到任何可用的对话模型|未配置 AI 接口|系统服务重启中|"
                     r"Error code: ?\d{3}|context_length_exceeded|SnowLuma 状态|NapCat 信息|运行时[长间]: ?\d|"
                     r"版本: ?\d+\.\d+\.\d+ ?平台|权限不足以使用此指令|/sid 获取 ID", re.I)
-BOTNAME = re.compile(r"肥鱼|鲸|鱼丸|bot|ai|助手|机器人|gpt|豆包|kimi|元宝|千问|deepseek|小冰|claude", re.I)
+BOTNAME = re.compile(r"肥鱼|鲸|鱼[丸]|bot|ai|助手|机器人|gpt|豆包|kimi|元宝|千问|deepseek|小冰|claude", re.I)
 SELFISH = re.compile(r"本鲸|本鱼|本(大)?小姐|本姑娘|本宝宝|本喵|本仙女|本鲸鲸|只能打字|发不了语音|看不了图|没法出声|我(是|只是|就是)(一个|一条|一只)?.{0,4}(ai|人工智能|机器人|大模型|胖鱼|鲸鱼娘)|"
                      r"作为(一个)?ai|住在(电脑|这框|屏幕|服务器|机房)里|被主人@|主人@了", re.I)
 BRACKET = re.compile(r"[（(](?!回复了)[^（）()]{4,30}[）)]")      # 括号动作「（尾巴一摆，缩回屏幕后面去了）」

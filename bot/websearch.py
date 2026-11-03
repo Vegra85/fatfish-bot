@@ -270,11 +270,13 @@ async def search(q, log=print, want=8, ori=None):
         return hit[1]
     c = await client()
     res = []
+    ran = False                            # （11-03 v1.17.13 Gemini R5-4）有没有一个来源真跑通了（搜了但 0 条也算）
     stats.clear()
     for name, fn in SOURCES:
         try:
             got = await (fn(c, q, ori) if fn is _deepseek else fn(c, q))
             stats[name] = len(got)
+            ran = True
             res += [dict(x, src=name) for x in got]
         except SourceOff as e:
             stats[name] = f"跳过（{e}）"
@@ -288,7 +290,8 @@ async def search(q, log=print, want=8, ori=None):
     elif stats and not any(isinstance(v, int) for v in stats.values()):
         outage.setdefault("since", time.time())     # 一个来源都没跑通（不是「搜了但 0 条」）
     log(f"[搜索] 「{q}」→ " + " ".join(f"{k}:{v}" for k, v in stats.items()))
-    _cache[q] = (time.time(), res)
+    if res or ran:                         # 全都没跑通（断网 / 全被拦）：不缓存空的（以前缓存 30 分钟 网好了也一直「没查到」）
+        _cache[q] = (time.time(), res)
     return res
 
 

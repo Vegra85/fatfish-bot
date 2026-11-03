@@ -42,11 +42,11 @@ BOT_FILES = ["bot.py", "budget.py", "catchup.py", "clock.py", "control.py", "fol
              "bili.py", "bili2.py", "panel.py", "panel.html", "persona.md", "setup_voice.py",
              "apply_stickers.py", "import_nekowhale.py", "sticker_curate.py", "anim.py", "cross.py", "wipe.py", "sing.py",
              "music.py", "aidetect.py", "memewiki.py", "groupadmin.py", "safeio.py", "commit.py",
-             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py", "prank.py", "fixup.py", "judge.py", "outage.py", "shadowlog.py", "congrats.py", "stickerdict.py", "announce.py", "stickerlib.py"]   # fixup.py：纠错（10-28 v1.11.0 公开）；version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）
+             "version.py", "qzone.py", "humor.py", "maker.py", "worldclock.py", "prank.py", "fixup.py", "judge.py", "outage.py", "shadowlog.py", "congrats.py", "stickerdict.py", "announce.py", "stickerlib.py", "musiclogin.py", "qqevents.py", "life.py", "balance.py", "docmaker.py", "fishlore.py", "blocklist.py"]   # blocklist.py：她能拉黑 / 删好友（11-02 v1.17.6 公开：名单、记账、门槛）；fishlore.py：网上说的「大肥鱼」（11-02 v1.17.5 公开：只有公开的网上事实）；balance.py：余额（11-02 v1.17.0 工具类 公开：DeepSeek 官方余额接口 + Claude 自己记的账 空壳 judge 下不提 Claude）；life.py：每日生活（11-01 v1.16.4 私有 导出空壳）；qqevents.py：QQ 事件感知（11-01 v1.16.3 公开）；fixup.py：纠错（10-28 v1.11.0 公开）；version.py：发布用的版本号（10-27 v1.0.0）；qzone.py：QQ 空间（10-27 v1.3.0）；humor.py：幽默（10-27 v1.5.0 空壳）；maker.py：做网页 / 代码发文件（10-28 v1.7.0）；worldclock.py：别的地方几点（10-28 v1.8.1）；musiclogin.py：点歌用的音乐平台扫码登录（11-01 v1.16.0 公开 登录态存在 data 里 不导出）
 # 不公开的「灵魂」：导出的是 tools/public_stubs/ 里同名的空壳（10-26）
 # judge.py：判断模型实验 + 调用记录 trace（10-29 v1.12.1 小明：只是实验 不发到公开仓库 —— 空壳 = 全走 DeepSeek、不记 trace）
 PRIVATE = {"persona.md", "soul.py", "memory.py", "mood2.py", "galgame.py", "cross.py", "slang.py", "style.py", "shared.py",
-           "commit.py", "humor.py", "prank.py", "judge.py"}   # commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）；prank.py 恶作剧（10-28 v1.10.0）
+           "commit.py", "humor.py", "prank.py", "judge.py", "life.py"}   # life.py 每日生活（11-01 v1.16.4 C39 灵魂类）；commit.py 说到做到（10-26 晚 先不公开 要公开就从这里拿掉）；humor.py 幽默（10-27 晚）；prank.py 恶作剧（10-28 v1.10.0）
 STUBS = HERE / "public_stubs"
 PUBLIC_AS = {"persona.md": "persona.example.md"}   # 空壳换个名字导出（v1.2.0：人设模板 → 升级不冲掉用户的 persona.md）
 TOOL_FILES = ["export_github.py", "setup_wizard.py", "fish.py"]   # setup_wizard.py：首次设置向导（v1.2.0）；fish.py：大肥鱼菜单（v1.12.0）；pack_qqbot.py 只给群主用 不导出
@@ -120,7 +120,7 @@ def secret_values(o, out=None):
 
 
 # 她自己的名字和 QQ 资料（属于「灵魂」那部分 不公开）：导出时换成通用的
-PRIVATE_CFG = {"judge"}   # config 里整节不导出的（10-29 判断模型实验 私有）
+PRIVATE_CFG = {"judge", "life", "court", "personcard", "selfie"}   # config 里整节不导出的（10-29 判断模型实验 私有；life 每日生活 11-01 v1.16.4 私有；court 纠错的核对 / 教训 11-02 v1.17.0 私有；selfie 自拍 11-03 v1.17.13 私有 不进公开仓库）
 PERSONAL = {"bot_name": "大肥鱼", "group_card": "", "strong_aliases": [], "bot_qq": "",
             "profile": {"nickname": "", "note_suffix": ""}}
 
@@ -143,6 +143,9 @@ def example_config(cfg, nums):
             return ""
         return o
     out = clean({k: v for k, v in cfg.items() if k not in PRIVATE_CFG})
+    rl = (out.get("behavior") or {}).get("read_layer")
+    if isinstance(rl, dict):               # 读懂层（11-02 v1.17.9）：作者那边开着（回复多半是 Claude 回、只在退回 DeepSeek 的那一轮读）；
+        rl["enabled"] = False              # 公开版每一轮都是 DeepSeek 回 开了每条被叫到的回复多一次 deepseek-v4-pro → 示例里默认关 让用户自己开
     for k, v in PERSONAL.items():
         if k not in out:
             continue

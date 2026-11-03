@@ -213,6 +213,12 @@ def _permit(conv, n):
     _permits[conv] = {"until": time.time() + 240, "left": n}
 
 
+def _muted(conv, now=None):
+    """这个对话还在「别发语音」里（11-03 v1.17.13 Codex F6：render 发之前再看一眼）"""
+    cs = (_state().get("conv") or {}).get(conv)
+    return float(now or time.time()) < float((cs if isinstance(cs, dict) else {}).get("mute_until") or 0)
+
+
 def note_line(conv):
     """她打字发出去一条（用来算「隔了几句该来一条语音了」）"""
     if not conv or not conv.startswith("private_"):
@@ -252,6 +258,7 @@ def plan(conv, scene, texts, last_is_voice=False, context=None):
     if NEG.search(joined):
         cs["mute_until"] = time.time() + 12 * 3600
         _save(s)
+        _permits.pop(conv, None)       # 剩下的语音许可也收掉（11-03 v1.17.13 Codex F6：以前要了两条、发了一条、说别发了 剩那条照样合成）
         return "muted" if tts_ready() else "off"
     asked = asked_for(texts, context)
     if not tts_ready():
@@ -558,8 +565,8 @@ async def render(seg, conv, log=log_default):
     plain = strip_tags(said)
     fallback = "\n".join(x for x in (before, plain, after) if x)
     pm = _permits.get(conv)
-    if not plain or not pm or pm["until"] < time.time() or pm["left"] <= 0 or not tts_ready():
-        return fallback, None, "", "", ""
+    if not plain or not pm or pm["until"] < time.time() or pm["left"] <= 0 or not tts_ready() or _muted(conv):
+        return fallback, None, "", "", ""       # 还在「别发语音」里也当文字发（11-03 v1.17.13）
     if len(plain) > MAX_CHARS * 1.5:
         log(f"[语音] 这句太长（{len(plain)} 字）改打字")
         return fallback, None, "", "", ""

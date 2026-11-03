@@ -22,6 +22,8 @@ import threading
 import time
 from pathlib import Path
 
+import clock             # 按她的时区（北京时间）分天（11-03 v1.17.13）
+
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 DEFAULTS = {"enabled": True, "deep_after": 3, "deep_daily": 30, "near_bits": 6, "max_entries": 3000}
@@ -30,6 +32,19 @@ _lock = threading.Lock()
 _D = {"d": None}
 _inflight = set()
 _pending = {}        # 对话 → (id, 时间)：发完这张以后别人接的那句 记进这次的上下文
+
+
+def _day(ts):
+    """哪一天（深度认的每天名额按这个算）：北京时间（11-03 v1.17.13 Gemini 4-F9：以前按电脑本机时间 —— 英国的晚上已经是北京的第二天）"""
+    return clock.strf("%Y-%m-%d", ts)
+
+
+def _charge(now):
+    """深度认真去看图了：今天的名额 +1（只留最近 7 天）"""
+    d = load()
+    d["days"] = {x: v for x, v in (d.get("days") or {}).items() if x >= _day(now - 7 * 86400)}
+    d["days"][_day(now)] = int(d["days"].get(_day(now), 0)) + 1
+    save()
 
 
 def configure(cfg=None, data_dir=None):
@@ -265,7 +280,7 @@ def seen(sid, conv, uid, summary="", before=(), said="", to_her=False, sticker=F
     if k in _inflight:
         return ""
     if e.get("redo") or e["n"] >= int(C["deep_after"]) or (to_her and e.get("sticker")):
-        day = time.strftime("%Y-%m-%d", time.localtime(now))
+        day = _day(now)                  # 北京时间（11-03 v1.17.13：跟 deep 扣名额同一个日子）
         if int(d["days"].get(day, 0)) >= int(C["deep_daily"]):
             return ""
         return "deep"
@@ -327,10 +342,6 @@ async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None
     now = float(now or time.time())
     d = load()
     e = d["items"].setdefault(k, {"n": 0, "first": round(now), "convs": [], "ctx": []})
-    day = time.strftime("%Y-%m-%d", time.localtime(now))
-    d["days"] = {x: v for x, v in d["days"].items() if x >= time.strftime("%Y-%m-%d", time.localtime(now - 7 * 86400))}
-    d["days"][day] = int(d["days"].get(day, 0)) + 1
-    save()
     try:
         url = url or e.get("url") or ""
         if not url or fetch is None:
@@ -349,6 +360,7 @@ async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None
             e["dh"] = dh
         _thumb(k, data)
         pdata, pmime, note = imgprep.prep(data, mime, 1280)
+        _charge(now)       # 名额到这儿才扣：下载到了、认出是图（11-03 v1.17.13 Gemini 4-F9：以前一进来就扣 链接过期 / 下不来 / 不是图也算一张）
         seen_raw = await look(base64.b64encode(pdata).decode(), pmime, DEEP_LOOK.format(frames=note or "静态图"))
         seen_raw = str(seen_raw or "").strip()
         if not seen_raw:

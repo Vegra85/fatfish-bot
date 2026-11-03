@@ -8,7 +8,7 @@ DeepSeek 当脑子，[NapCat](https://github.com/NapNeko/NapCatQQ) 接 QQ（OneB
 > **这不是一个下载就能用的成品 AI。** 仓库里是思路、工具和集成：怎么接 QQ、怎么在群里接话、掉线了怎么补回、怎么看图 / 唱歌 / 做东西、怎么省 token、怎么做本机控制台……
 > **她是谁、记得什么、心情怎么变、跟谁有多熟 —— 这些「灵魂」不公开**，仓库里是能跑的空壳，要你自己造一个你自己的 AI。
 >
-> 当前版本 **v1.16.2**（2026-11-01）· [更新日志](CHANGELOG.md) · 作者每天在跑：Windows 11 + Python 3.15 · API key、聊天记录、记忆都不在仓库里
+> 当前版本 **v1.17.14**（2026-11-03）· [更新日志](CHANGELOG.md) · 作者每天在跑：Windows 11 + Python 3.15 · API key、聊天记录、记忆都不在仓库里
 
 ![控制台总览（演示数据）](docs/screenshots/overview.png)
 
@@ -251,7 +251,7 @@ flowchart LR
 | 本地识图兜底 | Ollama + `qwen3-vl`（菜单里「本地 AI」） |
 | 梗百科离线词库 | 从 [astrbot_plugin_memewiki](https://github.com/in1t1a1/astrbot_plugin_memewiki) 下载 `data/memes.db` 放到 `bot\data\memewiki\memes.db`（没有也能跑：只用在线接口） |
 | 表情包 | 仓库里不带图：`bot/stickers/` 放图片和 `index.json`（格式见 `stickers.py` 开头）。nekowhale 动图的标注来自 dsh-nekowhale-stickers（CC BY-NC 4.0）：把它的 `meta/nekowhale.json` 放到 `bot/stickers/nekowhale.json`，再在菜单里选「导入表情包」 |
-| 读懂层（实验） | `behavior.read_layer.enabled`：被叫到时先让判断模型写几行理解笔记再回 |
+| 读懂层（实验） | `behavior.read_layer.enabled`：被叫到、这一轮由 DeepSeek 回的时候，先写几行理解笔记（默认 `deepseek-v4-pro` 不思考）再回 |
 
 ---
 

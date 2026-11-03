@@ -260,6 +260,54 @@ def _remember(conv, name):
         pass
 
 
+def _save_st():
+    try:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_st, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, STATE)
+    except Exception:
+        pass
+
+
+_LABEL = re.compile(r"^\s*\[\[(表情|照片)[:：]\s*(.+?)\s*\]\]\s*$")
+
+
+def last_at(conv):
+    """这个对话上一张表情包是什么时候发的（say 在 resolve2 之前记下：核对没过 undo 用来恢复冷却 11-03 v1.17.13）"""
+    return _last.get((str(conv), "表情"), 0)
+
+
+def undo(conv, name, prev):
+    """resolve2 已经记了账（冷却 / 最近发过 / 用了几次）、这张最后没发（发之前核对判不搭）→ 还回去（11-03 v1.17.13 Gemini 4-F8）
+    name：名字或 [[表情:名字]]；prev：resolve2 之前 last_at 的值（None = 不知道 冷却不动）
+    记的最后一张不是它（中间又发了别的）→ 冷却也不动 → 还了 True"""
+    m = _LABEL.match(str(name or ""))
+    if m and m.group(1) != "表情":
+        return False
+    name = (m.group(2) if m else str(name or "")).strip()
+    if not name:
+        return False
+    r = _st["recent"].get(str(conv)) or []
+    if prev is not None and r and r[-1] == name:
+        k = (str(conv), "表情")
+        if prev:
+            _last[k] = prev
+        else:
+            _last.pop(k, None)
+    for i in range(len(r) - 1, -1, -1):
+        if r[i] == name:
+            del r[i]
+            break
+    u = int(_st["uses"].get(name, 0) or 0)
+    if u > 1:
+        _st["uses"][name] = u - 1
+    else:
+        _st["uses"].pop(name, None)
+    _save_st()
+    return True
+
+
 def _log(*a):
     print(clock.strf("[%H:%M:%S]"), *a, flush=True)
 

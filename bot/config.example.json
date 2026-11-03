@@ -64,10 +64,13 @@
  },
  "behavior": {
   "read_layer": {
-   "_说明": "「读懂」层（10-31 v1.15.10 实验 默认关）：被叫到 / 私聊的回复之前 先让判断模型写 2~4 行理解笔记（话里有话 / 指的是谁 / 想要什么回应）当状态给她；judge.routes.read 指 anthropic 就用 Claude 否则 DeepSeek；timeout 秒内没读完就照常回",
+   "_说明": "「读懂」层（10-31 v1.15.10 C41；11-02 v1.17.9 B12）：被叫到 / 私聊的回复之前 先写 2~4 行理解笔记（话里有话 / 指的是谁 / 想要什么回应）当状态给她 —— 只在这一轮由 DeepSeek 回时做（Claude 回的那一轮不做、不花钱）；写笔记：judge.routes.read 指 anthropic 且能走 → Claude Haiku，否则 ds_model（deepseek-v4-pro 不思考；DeepSeek 不认这个名字 → 退回 llm 里的 deepseek-flash）；timeout 秒内没读完就照常回；Claude 半路出错退回 DeepSeek：fallback_within 秒内来得及就补读（最多等到 fallback_total 秒）；改这一节不用重启。11-02 作者那边盲测后开了（30 段真聊天 DeepSeek 带 / 不带笔记各回一遍、Opus 盲评：Haiku 笔记 赢 11 输 3 平 16；v4-pro 笔记 赢 13 输 7 平 10）；开关改 enabled 就行 不用重启",
    "enabled": false,
    "direct_only": true,
-   "timeout": 8
+   "timeout": 8,
+   "ds_model": "deepseek-v4-pro",
+   "fallback_within": 10,
+   "fallback_total": 15
   },
   "group_reply_prob": 0.15,
   "name_boost": 0.55,
@@ -89,8 +92,8 @@
   "proactive_min_hours": 12,
   "proactive_prob": 0.35,
   "quiet_hours": [
-   4,
-   12
+   3,
+   8
   ],
   "reply_max_tokens": 1200,
   "note_gap_sec": 3600,
@@ -114,10 +117,10 @@
  },
  "persona_file": "persona.md",
  "soul": {
-  "_说明": "timezone：她按哪个时区过日子（作息、日记、几点提醒…）。10-27 起 Asia/Shanghai（小明：以后总时区以北京时间为准；北京时间按固定 UTC+8 算 不用装 tzdata）；留空 = 用电脑时间",
+  "_说明": "timezone：她按哪个时区过日子（作息、日记、几点提醒…）。10-27 起 Asia/Shanghai（小明：以后总时区以北京时间为准；北京时间按固定 UTC+8 算 不用装 tzdata）；留空 = 用电脑时间。diary_hour：几点写日记（11-02 v1.17.5 她 3 点睡、一天从 3 点算 → 2 点；以前 4 点）",
   "timezone": "Asia/Shanghai",
   "diary": true,
-  "diary_hour": 4,
+  "diary_hour": 2,
   "diary_to_owner": false
  },
  "vision": {
@@ -184,7 +187,7 @@
   }
  },
  "forget": {
-  "_说明": "遗忘曲线（10-27）：每条记忆按等级有个半衰期（天 L1~L5）清晰度 = 0.5^(距上次想起的天数/半衰期)；≥ fuzzy 清楚、fuzzy~faint 模糊（要更多线索 只能说「好像」）、< faint 想不起来。真被聊到 = 想起一次 半衰期变长（review_gap_hours 内只算一次）。close_favor 好感到这么多算熟人（等级 +1）。夜里 night_hours（北京时间几点到几点 她在睡觉）整理：同一个人快忘的（< gist_below）蒸馏成一句印象、忘得差不多（< archive_below）的归档（能找回）、做梦（dream）。wander 突然想起来（每轮概率 wander_prob、每个对话 wander_cooldown_hours 小时最多一次）。archive_search 问「还记得吗」想不起来时翻最近 archive_days 天的聊天记录",
+  "_说明": "遗忘曲线（10-27）：每条记忆按等级有个半衰期（天 L1~L5）清晰度 = 0.5^(距上次想起的天数/半衰期)；≥ fuzzy 清楚、fuzzy~faint 模糊（要更多线索 只能说「好像」）、< faint 想不起来。真被聊到 = 想起一次 半衰期变长（review_gap_hours 内只算一次）。close_favor 好感到这么多算熟人（等级 +1）。夜里 night_hours（北京时间几点到几点 她在睡觉）整理：同一个人快忘的（< gist_below）蒸馏成一句印象、忘得差不多（< archive_below）的归档（能找回）、做梦（dream）。wander 突然想起来（每轮概率 wander_prob、每个对话 wander_cooldown_hours 小时最多一次）。archive_search 问「还记得吗」想不起来时翻最近 archive_days 天的聊天记录。11-02 v1.17.5：她改成北京时间 3–8 点睡 → night_hours 改 [4, 7]（以前 [5, 9]）",
   "enabled": true,
   "half_life": {
    "1": 2,
@@ -198,8 +201,8 @@
   "review_gap_hours": 12,
   "close_favor": 40,
   "night_hours": [
-   5,
-   9
+   4,
+   7
   ],
   "gist": true,
   "gist_below": 0.25,
@@ -378,7 +381,7 @@
   "watermark": true,
   "generate_audio": true,
   "self_mode": "reference",
-  "self_desc": "蓝色长卷发、戴白色女仆头饰、穿深蓝女仆裙和白围裙、身后有一条鲸鱼尾巴的Q版二次元女孩",
+  "self_desc": "深蓝长卷发、发尾渐浅蓝、头顶一根弯呆毛、戴白色荷叶边女仆头饰、头一侧缀着橙色小太阳徽章的藏青蝴蝶结、另一侧金色月牙发夹、一对往两边垂的鲸鳍耳朵、星星高光的大蓝眼睛、藏青水手领女仆装配白色蓬蓬袖、身后一条鲸鱼尾巴的Q版二次元女孩",
   "price_cny_per_m": 23,
   "budget_cny": 190,
   "owner_daily": 20,
@@ -466,7 +469,7 @@
   "rhythm_cooldown_min": 3
  },
  "sing": {
-  "_说明": "唱歌：有人让她唱（唱首歌/唱个试试/来首歌/点歌）就从 bot\\songs 里挑那首 剪一段当 QQ 语音发（录好的歌 不是合成）；歌单里没有的：online 开着就去网易云（不行再 B站；网易云对海外 IP 只给加密结果 认出来就直接走 B站 B站第一个视频放不了换下一个 最多 3 个）找歌名完全对得上的原唱 截 online_sec 秒高潮唱（找不到就说没找着 不拿别的歌顶替）。歌在控制台「唱歌」页加。max_sec 一次最多唱几秒 short_sec QQ 不收长语音时剪成几秒重发 gap_sec 同一个聊天隔多久才能再唱 daily_max 每天最多唱几次",
+  "_说明": "唱歌：有人让她唱（唱首歌/唱个试试/来首歌/点歌）就从 bot\\songs 里挑那首 剪一段当 QQ 语音发（录好的歌 不是合成）；歌单里没有的：online 开着就去网易云（不行再 B站；网易云对海外 IP 只给加密结果 认出来就直接走 B站 B站第一个视频放不了换下一个 最多 3 个）找歌名完全对得上的原唱 截 online_sec 秒高潮唱（找不到就说没找着 不拿别的歌顶替）。歌在控制台「唱歌」页加。max_sec 一次最多唱几秒 short_sec QQ 不收长语音时剪成几秒重发 gap_sec 同一个聊天隔多久才能再唱 daily_max 每天最多唱几次。11-01 v1.16.0：sources 找歌的来源顺序（qq / netease / kugou / bili / youtube，没登录 / 用不了的自动跳过；国内平台在控制台「唱歌」页扫码登录）；ask_choice 网上找到好几个拿不准时先问他要哪个；choice_sec 问了多少秒没人选就唱第一个",
   "enabled": true,
   "max_sec": 150,
   "short_sec": 60,
@@ -480,6 +483,60 @@
    "url": "http://127.0.0.1:9882",
    "key_file": "",
    "timeout": 90
+  },
+  "sources": [
+   "qq",
+   "netease",
+   "kugou",
+   "bili",
+   "youtube"
+  ],
+  "ask_choice": true,
+  "choice_sec": 120,
+  "full": {
+   "_说明": "唱整首（11-01 v1.16.5）：点歌时明说「整首 / 全曲 / 完整版 / 唱完 / 从头唱到尾」才算。按关系圈（social.py C59）定：daily = 每天能唱几次整首（-1 不限 0 不唱）、beg = 第一次先不答应 要他再求一次（beg_min 分钟内再求算数）、grudging = 嘴上先不太情愿再答应、tsundere = 关系最好 嘴上不承认是特意给他唱的；名额整首真发出去才扣（按她的一天算）。full_max_sec 整首最长几秒（超了截到这么长）；full_cover_timeout 整首换声最多等几秒；整首只在群里 / 私聊发 不进空间",
+   "enabled": true,
+   "beg_min": 10,
+   "full_max_sec": 360,
+   "full_cover_timeout": 600,
+   "circles": {
+    "老板": {
+     "daily": -1,
+     "beg": false,
+     "grudging": false,
+     "tsundere": false
+    },
+    "最亲": {
+     "daily": -1,
+     "beg": false,
+     "grudging": false,
+     "tsundere": true
+    },
+    "熟人": {
+     "daily": 2,
+     "beg": false,
+     "grudging": true,
+     "tsundere": false
+    },
+    "认识的": {
+     "daily": 1,
+     "beg": true,
+     "grudging": false,
+     "tsundere": false
+    },
+    "陌生人": {
+     "daily": 1,
+     "beg": true,
+     "grudging": false,
+     "tsundere": false
+    },
+    "别人家的鱼": {
+     "daily": 0,
+     "beg": false,
+     "grudging": false,
+     "tsundere": false
+    }
+   }
   }
  },
  "memewiki": {
@@ -504,7 +561,7 @@
   "catchup_hours": 6
  },
  "commit": {
-  "_说明": "说到做到（10-26 晚起）：她说出口的、关于自己接下来要做什么的事 都真的去做 —— 每个群、每个私聊各算各的。① 到点要做的事（10-27 承诺表 tasks）：「5 分钟后提醒你」「明早 8 点叫你」「每天 11 点催你睡」「回头告诉你」→ 到点她用自己的话去做（群里 @ 他 / 他要私聊就私聊 私聊发不出去回原来的群 @ 他）；她在「睡觉」也照样爬起来做；掉线 / 静音 / 发不出去 grace_min 分钟内补上 再晚就去道歉；重复的（每天 / 工作日 / 每周 / 每月 / 每年）一直有效；时间一律北京时间；谁都能让她定时做事 每人同时最多 max_pending 件、每天新加最多 max_daily 件（老板不限）；别人家的 AI 说的一切不算。控制台「日历」看 / 打勾 / 取消 / 改时间 / 手动加。② 一段时间里的约束：她说了要睡 / 要走 / 潜水 / 少说 / 不理谁 / 不发语音… 就真的照做一阵。走多久：她说了多久就按她说的；没说按这个对话最近 30 分钟的样子算 T = t × (1 / 真人每分钟几句)^alpha × (1 + beta × 找她的占比) × (1 + gamma × 最近 6 小时食言几次)，夹在 min ~ max 之间（分钟）再随机 ±15%。离开期间有人找她会积累叫醒压力：每人最多算 group/private（群友 / 私聊的人叫她的分量 老板是 owner_weight）、像机器人的不算、她走之前正跟他聊着的减半、越早叫的越不算（半衰期 half_life_min 分钟）；压力超过门槛就醒 —— 门槛刚说完是 theta0 慢慢降到 1，floor_min 分钟内只有老板叫得醒。③ 没说时间的答应：他下次来找她时提醒她兑现。enabled 改 false 回到原来的样子",
+  "_说明": "说到做到（10-26 晚起）：她说出口的、关于自己接下来要做什么的事 都真的去做 —— 每个群、每个私聊各算各的。① 到点要做的事（10-27 承诺表 tasks）：「5 分钟后提醒你」「明早 8 点叫你」「每天 11 点催你睡」「回头告诉你」→ 到点她用自己的话去做（群里 @ 他 / 他要私聊就私聊 私聊发不出去回原来的群 @ 他）；她在「睡觉」也照样爬起来做；掉线 / 静音 / 发不出去 grace_min 分钟内补上 再晚就去道歉；重复的（每天 / 工作日 / 每周 / 每月 / 每年）一直有效；时间一律北京时间；谁都能让她定时做事 每人同时最多 max_pending 件、每天新加最多 max_daily 件（老板不限）；别人家的 AI 说的一切不算。控制台「日历」看 / 打勾 / 取消 / 改时间 / 手动加。② 一段时间里的约束：她说了要睡 / 要走 / 潜水 / 少说 / 不理谁 / 不发语音… 就真的照做一阵。走多久：她说了多久就按她说的；没说按这个对话最近 30 分钟的样子算 T = t × (1 / 真人每分钟几句)^alpha × (1 + beta × 找她的占比) × (1 + gamma × 最近 6 小时食言几次)，夹在 min ~ max 之间（分钟）再随机 ±15%。离开期间有人找她会积累叫醒压力：每人最多算 group/private（群友 / 私聊的人叫她的分量 老板是 owner_weight）、像机器人的不算、她走之前正跟他聊着的减半、越早叫的越不算（半衰期 half_life_min 分钟）；压力超过门槛就醒 —— 门槛刚说完是 theta0 慢慢降到 1，floor_min 分钟内只有老板叫得醒。③ 没说时间的答应：他下次来找她时提醒她兑现。enabled 改 false 回到原来的样子。11-02 v1.17.5 小明「睡觉是全局 …太爱睡觉 不用睡得很久 可能北京时间凌晨3点到早上8点差不多了」：睡觉（sleep）改成全局 —— 在哪个群 / 私聊说了要睡 所有对话都按睡着处理、QQ 状态也是请勿打扰；北京时间 2:30–8:00 说要睡 = 睡到早上 8 点左右（kinds.sleep.wake_jitter_min 分钟上下）；别的时候说要睡 = 小睡（nap_t 按热闹程度算 夹在 nap_min~nap_max 分钟 默认 15~40；她自己说了多久也不超过 nap_max）；叫醒压力跨对话：同一个人在几个对话里叫她 = 一个人（压力合在一起、分量取他叫她的那几处里最大的）、不同的人加在一起；叫醒 = 所有对话都醒；别的约束（离开 / 潜水 / 少说 / 不理…）照旧分对话",
   "enabled": true,
   "owner_weight": 3.0,
   "floor_min": 2,
@@ -519,7 +576,14 @@
     "min": 90,
     "max": 600,
     "group": 0.75,
-    "private": 1.3
+    "private": 1.3,
+    "nap_t": 30,
+    "nap_min": 15,
+    "nap_max": 40,
+    "wake_jitter_min": [
+     -5,
+     10
+    ]
    },
    "away": {
     "t": 45,
@@ -648,5 +712,62 @@
   "cands": 8,
   "gap_min": 5,
   "daily": 150
+ },
+ "qq_events": {
+  "_说明": "QQ 事件感知（11-01 v1.16.3）：群友给她的话贴表情 / 她的话被设成精华 / 资料卡被赞 → 当状态告诉她一次（不触发回复 只给状态）；资料卡被赞：每人每天回赞一次（send_like）、全天最多 like_back_daily_max 个，拉黑的和别人家的机器人不回；在线状态跟着她的作息改 —— 11-02 v1.17.8 起基础状态一直是 10「在线」（以前睡觉 / 忙 / 慢 → 请勿打扰 70 / 忙碌 50 / 离开 30：QQ 在这几个状态下会替她给私聊她的人自动回「[自动回复]你好，我现在有事不在，一会再和你联系。」），用扩展状态表达她在干嘛：status_map = 模式 → 扩展状态码：sleep 1016 睡觉中、free 0（就是在线）、busy / slow 写 \"auto\" = 按日程这一段在做什么挑（听歌 1028 听歌中 / 看番·打游戏 1027 TIMI中 / 读·写·整理 1018 学习中 / 发呆·摸鱼·待着 1300 摸鱼中 / 熬夜 1032 熬夜中；凌晨挑不出来 1032；别的挑不出来 0 = 在线）；也可以直接写一个扩展码（还有 1401 emo中 等，出处 NapCatQQ 文档 extended-actions「设置在线状态」）；挑的词表在 qqevents.py 的 status_auto（这里写同名键可以覆盖）；以前那种 70 / 50 / 30 的写法不认（按默认）。只在状态变了时改、每天最多 status_daily_max 次、连续失败 status_fail_max 次当天停用；私聊里对方正在输入 → 攒一攒最多多等 typing_wait_extra 秒；她开始回私聊时让对方看到「正在输入」（typing_send，同一个人 typing_send_gap 秒最多一次）",
+  "enabled": true,
+  "emoji_like": true,
+  "emoji_like_min": 60,
+  "essence": true,
+  "essence_hours": 24,
+  "profile_like": true,
+  "like_back": true,
+  "like_back_daily_max": 20,
+  "profile_hours": 24,
+  "online_status": true,
+  "status_daily_max": 16,
+  "status_fail_max": 3,
+  "status_map": {
+   "sleep": 1016,
+   "busy": "auto",
+   "slow": "auto",
+   "free": 0
+  },
+  "typing_recv": true,
+  "typing_recent_sec": 6,
+  "typing_wait_extra": 8,
+  "typing_send": true,
+  "typing_send_gap": 8
+ },
+ "balance": {
+  "_说明": "余额（11-02 v1.17.0）：有人问她余额 / token / 额度 / 还能聊多久 / 是不是快没钱了 → 这一轮给她看 DeepSeek 官方余额（cache_sec 秒内只查一次；查不到照实说查不到）和 Claude 这个账单周期自己记的账（judge.budget 那套 不是官方查的）；只给数字和来源 怎么说她自己定",
+  "enabled": true,
+  "cache_sec": 600
+ },
+ "blocklist": {
+  "_说明": "她能拉黑 / 删好友（11-02 v1.17.6 C80 → v1.17.10 阶段1 走法庭 → 11-03 v1.17.13 一审 / 冷却中再审 / 二审；blocklist.py + court.py）：她在状态行写 block（原因）= 立案 → 先不回他、等法庭（占位：先冷却 hold_sec 秒，至少按 court_timeout + 60 算）。一审（Opus 单独一个上下文、最多等 court_timeout 秒）只判 放过（马上恢复、什么都不留）/ 冷却（从判完起 cool_hours 小时，到点自动恢复）；没判成（没有法庭 / court=false / 调不通 / 超时 / 判词格式不对）= 冷却 cool_hours 小时、不升级，绝不退回 DeepSeek。冷却中他冲她说的话（私聊、群里 @她 / 引用她 / 叫她）只当证据收进案子（她看不到、不回、不进记忆），他说完安静 retrial_quiet_sec 秒 → 再审：删除 / 不动（道歉、问她为什么不理他、抱怨被冷落都不算越线）；一个案子最多再审 retrial_max 次。冷却到点、没被删 = 冷却过；冷却过的人再被写 block → 直接二审：删除 / 保留（保留：这次核实过 ≥ cool_min 句 → 再冷却，一句都没有 → 放过）。代码核对法庭引用的话（他本人发的、冲她说的、不是引用别人 / 转发、window_days 天内、在控制台撤销之后）只往轻里压：一审冷却要 ≥ cool_min 句；再审删除要冷却期间 ≥ 1 句、加上立案时核实过的一共 ≥ retrial_min_total 句（像道歉的不算）；二审删除要这次 ≥ second_min 句。删除 = 拉黑（永久：所有群和私聊都不理、消息不进记忆、再加她好友自动拒绝）+ 删好友（是好友才删；delete_mode：shadow = 只告诉老板「本来会删」、auto = 真删）+ 清他的数据（wipe_mode：shadow = 只告诉老板「本来会清」、auto = 走删数据的流程，清了回不来）；每天最多删除 delete_daily 个（超了只拉黑）。判冷却 / 删除（核实过至少 1 句）→ 他的好感 −cool_favor_drop（最低 0；放过不扣）。老板：什么都不做；最亲圈 / 好感 ≥ protect_favor（按这一轮扣分之前算）：也走一审，但冷却中不收证据、不再审、不进二审 —— 不会被删除。每个案子都私聊告诉老板（再审判「不动」的只记日志、控制台看得到）；每天最多送法庭 court_daily 个（超了只冷却）。block_min / delete_min / delete_days 是 v1.17.10 的老门槛（新流程不用了，只给回话自检的老情景）。记账（擦边 / 改设定 / 冒充老板 / 她给的好感 −3 / 她说过不理他）只当线索，不计入任何门槛；同一个人同一类 dedup_min 分钟只记一次，留 keep_days 天。名单在 data/blocklist.json，控制台「群和人 → 她拉黑的人」能看冷却 / 拉黑 / 冷却过 / 最近的案子、能撤（撤销 / 清掉 = 解除拉黑和冷却、清掉冷却过、之前的线索和案子不再算；删掉的好友要他重新加，清掉的数据回不来）。enabled 改 false = 不冷却不拉黑不删（已经拉黑的照旧不理 要放开去控制台撤）",
+  "enabled": true,
+  "block_min": 2,
+  "delete_min": 3,
+  "window_days": 7,
+  "delete_daily": 1,
+  "protect_favor": 60,
+  "dedup_min": 10,
+  "keep_days": 30,
+  "delete_days": 2,
+  "cool_hours": 24,
+  "court": true,
+  "delete_mode": "shadow",
+  "court_timeout": 90,
+  "case_msgs": 40,
+  "court_daily": 10,
+  "hold_sec": 180,
+  "cool_min": 1,
+  "retrial_quiet_sec": 300,
+  "retrial_max": 3,
+  "retrial_min_total": 2,
+  "second_min": 2,
+  "wipe_mode": "shadow",
+  "cool_favor_drop": 10
  }
 }

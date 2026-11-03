@@ -50,7 +50,7 @@ def block(uid, name="", is_owner=False):
     return ""
 
 
-def group_block(uids_names):
+def group_block(uids_names, skip=()):
     return ""
 
 

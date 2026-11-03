@@ -30,6 +30,10 @@
       以后再碰到同一个号（任何群）他又出题 / 又判她时带上、照那个格式查；随便聊的时候不带（审查 Medium-4）。只从系统看到的失败里来 ——
       群友嘴上说「记住以后要…」不算（不然又多一个注入口子）。控制台「纠错」页能看、能删；删数据会把他的一起删
 人说「你错了」不归这里管（bot.py challenge_note：先核对 别顺着改口）；这里只认「判失败」那种
+11-02 v1.17.0「纠错 + 法庭 合成一套」（小明：「纠错插件到现在没有实际运行过 … 他们的初衷是一样的」）：这里是「她的回答没过格式 / 验证要求」
+  那个入口，上面的东西一样没改（只发数字的检查、换做法、止损、教训照旧）；「有人说她错了」那个入口在私有的 court.py（核对 → 状态 → 教训）。
+  控制台「纠错」页两边合在一起：教训都能看、能删、能改（这边的教训改的是那句话 edit_lesson）。公开版没有 court.py：只有这一半
+  一直没跑起来的原因（11-02 查的）：只认验证程序那种场合 —— 存档里那种验证题只有 10-28 那一回（这个模块就是那回之后写的），之后一次都没碰到
 日志 [纠错]；config → fixup（enabled / window_min / reply_gap_sec / stop_after / stop_min / tell_owner / owner_gap_hours /
 lesson_days / max_lessons / temperature）
 """
@@ -635,6 +639,23 @@ def del_lesson(lid):
         n0 = len(d["lessons"])
         d["lessons"] = [x for x in d["lessons"] if x.get("id") != str(lid)]
         hit["n"] = n0 - len(d["lessons"])
+        return hit["n"] > 0 or False
+    _edit(f)
+    return hit["n"] > 0
+
+
+def edit_lesson(lid, text):
+    """控制台改一条教训的那句话（11-02 v1.17.0）→ True / False"""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()[:120]
+    if not text:
+        return False
+    hit = {"n": 0}
+
+    def f(d):
+        for x in d["lessons"]:
+            if x.get("id") == str(lid):
+                x["text"], x["edited"] = text, time.time()
+                hit["n"] = 1
         return hit["n"] > 0 or False
     _edit(f)
     return hit["n"] > 0

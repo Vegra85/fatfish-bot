@@ -30,6 +30,14 @@
   save(folder, name, code)    存文件（同名加 -2、-3…）→ Path
   chunks(code)             文件发不出去时 退回成几条文字
   Quota                    每人每天、总共每天最多做几个（老板不限）
+  target_ext(lang, code, job)  这次交什么格式：文档按他要的 / 她挑的；代码照旧看语言（11-02 v1.17.4）
+
+  11-02 v1.17.4（小明：「他目前好像就会生成html文件 我不希望这个被写死」）：
+    以前只认网页和代码 ——「帮我写一个docx总结」被当成网页（引用里她那句「写网页做文件」被认成了他要的东西），
+    交了个 .html 还说「docx我生不出来」。现在：
+    · Word / PDF / Excel / CSV / PPT / Markdown / 文本 都认得；她写 Markdown / 表格 → docmaker 转成真文件
+    · 他只说「写个文档」没说格式 → 她按内容自己挑（代码块开头写 ```docx / ```xlsx / ```md / ```html …）
+    · 引用的那段（「回复了 X 的「…」」）是别人的话：先只看他自己说的；他自己只说了「写吧」才拿引用里的东西
 """
 import json
 import re
@@ -37,6 +45,7 @@ import time
 from pathlib import Path
 
 import clock
+import docmaker
 
 BIG_LINES = 12             # 代码块 ≥ 这么多行 或 ≥ BIG_CHARS 个字 → 存成文件发（短的照旧贴在聊天里）
 BIG_CHARS = 500
@@ -47,7 +56,7 @@ BIG_CHARS = 500
 #   现在：泛泛的请求词（来 / 给我 / 帮我 / 请 / 麻烦）要紧接「一个 / 个 / 份 / 段」、再隔几个字就是东西才算（「请给我一个html」「来个网页」）；
 #   中间夹着「推荐 / 找 / 玩 / 想 / 讲 / 问…」、东西后面紧跟「学习 / 路线 / 名字 / 链接 / 题 / 打不开 / 怎么办…」的不算；
 #   光说「游戏」（不是小游戏 / 网页游戏 / html）要配 写 / 做 / 弄 / 开发 / 编（「来个猜谜游戏」是要陪他玩）
-VERB = r"(?:写|做|弄|整|搞|生成|画|造|实现|开发|编|设计)"
+VERB = r"(?:写|做|弄|整|搞|生成|画|造|实现|开发|编|设计|导出|导成|存成|转成)"   # 导出 / 存成 / 转成（「导出成csv」11-02 v1.17.4）
 ASK_VERB = r"(?:来|给我|帮我|帮忙|请|麻烦)(?:一|1)?(?:个|份|段|款|套)"
 GAP_NOT = re.compile(r"推荐|找|打不开|怎么办|哪个|还是")
 GAP_NOT_ASK = re.compile(r"玩|想|说说|讲|问|学(?![生校])")      # 泛请求词那种 中间再夹这些也不算（「给我个能玩的」）
@@ -57,6 +66,15 @@ AFTER_NOT = re.compile(r"^(?:[^。！!？?\n，,；;\s]{0,2}?(?:名字|链接|�
                        r"|\s*[^。！!？?\n，,；;\s]{0,2}?(?:学习|路线|教程|编辑器|打不开|怎么办))")
 GAME_VERB = re.compile(r"写|做|弄|开发|编")
 KINDS = [  # (正则, 种类, 默认扩展名) 先匹配的优先
+    # 文件格式（11-02 v1.17.4）：明说了格式的最先认；「文档」没说格式 → auto（她按内容挑）
+    (r"docx|\bdoc\b|word|wps", "Word 文档", ".docx"),
+    (r"pdf(?!\s*(?:解析|阅读|转换|编辑|插件|库|工具))", "PDF", ".pdf"),
+    (r"xlsx|\bxls\b|excel|电子表格|表格文件", "Excel 表格", ".xlsx"),
+    (r"csv", "CSV 表格", ".csv"),
+    (r"pptx|ppt|幻灯片|演示文稿|slides", "PPT", ".pptx"),
+    (r"markdown|\bmd\b", "Markdown 文档", ".md"),
+    (r"txt|纯文本|文本文件", "文本文件", ".txt"),
+    (r"文档", "文档", "auto"),
     (r"html|网页|页面|前端|h5|web ?page|landing ?page", "网页", ".html"),
     (r"svg", "SVG 图", ".svg"),
     (r"小游戏|游戏", "小游戏", ".html"),
@@ -129,7 +147,7 @@ RESEND_SAY = re.compile(r"再(?:甩|发|传|丢)(?:你|给你)?(?:一|1)?(?:次|
 NO_DO = re.compile(r"不改|不想改|改不了|没法改|不会改|懒得改|不重画|不画了|不做了|不弄了|就这样吧")
 USER_STOP = re.compile(r"不急|明天再|改天|以后再|不用改|别改了|算了|先别|不用了")
 # 承诺表里的事是「做个东西」：画 / 写 / 做 + 东西，或者「把画改成…」「重画」
-TASK_MAKE = re.compile(r"(?:画|写|做|改|弄|生成|重画|重做)[^。！!？?\n]{0,14}?(?:网页|html|svg|代码|脚本|小游戏|游戏|程序|画|图)|"
+TASK_MAKE = re.compile(r"(?:画|写|做|改|弄|生成|重画|重做)[^。！!？?\n]{0,14}?(?:网页|html|svg|代码|脚本|小游戏|游戏|程序|画|图|文档|docx|word|pdf|表格|excel|xlsx|csv|ppt|幻灯片|markdown|txt)|"
                        r"(?:把|将)(?:画|图|网页|代码|它|那张)[^。！!？?\n]{0,6}?(?:改|换|重)|重画|重新画|重做|重新做", re.I)
 WHAT_LINE = re.compile(r"^[ \t]*[（(]?\s*做的是[:：]\s*(.+?)\s*[)）]?[ \t]*$", re.M)
 
@@ -146,15 +164,34 @@ FENCE = re.compile(r"```[ \t]*([\w+#.-]*)[^\n]*\n(.*?)(\n[ \t]*```|\Z)", re.S)
 BAD_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
 
 
+QUOTE = re.compile(r"（回复了[^「」（）\n]{0,40}?的「.*?」）", re.S)
+
+
 def want(texts):
-    """这一轮他在让她做个东西？texts = 他还没被回的那几句 → {"kind", "ext"} / None"""
-    t = " ".join(str(x or "") for x in (texts or []))[-600:]
-    if not t.strip() or NOT_MAKE.search(t):
+    """这一轮他在让她做个东西？texts = 他还没被回的那几句 → {"kind", "ext"} / None
+    11-02 v1.17.4：先只看他自己说的 —— 引用的那段是别人的话（小明 引用她那句「写网页做文件」说「帮我写一个docx」→ 以前认成网页）；
+    他自己只说了「写吧」「做一个」认不出东西 才连引用一起看"""
+    full = " ".join(str(x or "") for x in (texts or []))[-600:]
+    own = QUOTE.sub(" ", full)
+    hit = _want(own)
+    if hit is None and own != full and re.search(VERB, own):
+        hit = _want(full)
+    return hit
+
+
+def _want(t):
+    if not t.strip():
         return None
+    # 带「讲讲 / 看看 / 解释…」= 在问东西 不是让她做（10-28）；11-02 v1.17.4：要文档的那几种 这些词在后面的照样算
+    #   （「给我写个文档 讲讲今天群里聊了啥」= 文档里要讲的）—— 只有它们出现在「写个文档」前面才不算
+    nm = NOT_MAKE.search(t)
     for line in str(t).splitlines() or [t]:
         if ABILITY.search(line.strip()) and not re.search(r"帮我|给我|请|麻烦", line):
             return None
     for rx, rx_ask, kind, ext in _KIND_RE:
+        doc = ext == "auto" or ext in docmaker.EXTS
+        if nm and not doc:
+            continue
         for r in (rx, rx_ask):
             pos = 0
             while True:                    # 每个起点都试一遍（前面那段不算 后面的「写个网页」还能认出来）
@@ -162,6 +199,8 @@ def want(texts):
                 if not m:
                     break
                 pos = m.start() + 1
+                if nm and nm.start() < m.start():
+                    continue
                 before = t[max(0, m.start() - 4):m.start()]
                 # 「让我写 / 教我写」不算叫她写（「老师让我写个网页 好难」「教我写个网页」10-28 审查复查 reply-1）
                 if before.endswith("在") or re.search(r"(?<![帮给替为])(?:我|我们|俺)(?:也|又|还|刚|正)?$", before):
@@ -173,6 +212,8 @@ def want(texts):
                     continue               # 「来个猜谜游戏」「整个游戏都很好玩」（10-28 审查 reply-1）
                 return {"kind": kind, "ext": ext}
     for rx, kind, ext in _USE_RE:          # 「请用 SVG 画…」「帮我用 html 做…」（10-28 审查复查 reply-1）
+        if nm and not (ext == "auto" or ext in docmaker.EXTS):
+            continue
         if rx.search(t):
             return {"kind": kind, "ext": ext}
     return None
@@ -339,7 +380,7 @@ ASK_DONE = re.compile(r"呢\s*[?？]*\s*$|在哪|(?:改|弄|画|做)(?:好|完)�
 # 他没提是哪个、但她刚才几句在说它：「弄好了没」「好了吗」「还没好？」（「你在干嘛呢」这种不算）
 ASK_DONE2 = re.compile(r"(?:改|弄|画|做|发)(?:好|完)?了?(?:吗|没|么|嘛|没有)|^\s*(?:那个)?好了(?:吗|没|么|嘛|没有)|还没好|在哪|发哪|没收到")
 CANCEL = re.compile(r"不用改|别改了|算了|不用了|不要了|不改了|就这样吧|这样就行")
-_ABOUT_SKIP = {"html", "htm", "svg", "css", "png", "jpg", "txt", "json"}
+_ABOUT_SKIP = {"html", "htm", "svg", "css", "png", "jpg", "txt", "json", "docx", "xlsx", "pdf", "pptx", "csv", "md"}
 
 
 def pending(last, hist=None, now=None):
@@ -538,10 +579,30 @@ def ack_block(job):
                 "别推到「明早」「睡醒」「待会儿」：系统马上就会让你重新做完整 存成文件发给他。" + fix +
                 f"{TYPO}（顺嘴说一句你按哪个做）。别贴代码、别说「改好了」（还没改）、别编你之前画了什么。状态行里别写 do。\n")
     return (f"\n# 他让你做个{job['kind']}（是个大活）\n"
-            "你接了。这一条只用你自己的口气回一两句：可以嘟囔两句麻烦、讨价还价着玩（「好麻烦哦」「这活得加饭钱」），"
+            "你接了。这一条只用你自己的口气回一两句：可以嘟囔两句麻烦、讨价还价着玩，"
             "但要答应、说你这就去弄 —— 别反问「要不要现在写」、别推到明天、别贴代码、别说「写好了」（还没写）。"
-            f"{TYPO}（顺嘴确认一句「你说的是鹈鹕吧」）。"
+            f"{TYPO}（拿不准是哪个就顺嘴确认一句）。" + _can_line(job) +
             "系统接着就会让你把它做完整 存成文件发给他。状态行里别写 do。\n")
+
+
+PDF_BROWSER = ""           # config make.pdf_browser（bot 开机时填）：打印 PDF 用哪个浏览器 空 = 自己找 Edge / Chrome
+
+
+def is_doc(job):
+    ext = str((job or {}).get("ext") or "")
+    return ext == "auto" or ext in docmaker.EXTS
+
+
+def _can(job=None):
+    """这台电脑现在能做的文件格式（她别再说「docx我生不出来」）"""
+    have = docmaker.available(PDF_BROWSER)
+    return "、".join(docmaker.NAMES[e] for e in have) + "、网页（html）、各种代码文件"
+
+
+def _can_line(job):
+    if not is_doc(job):
+        return ""
+    return f"能做成真文件的格式：{_can(job)} —— 不只是网页。"
 
 
 # 是在画东西（SVG / canvas / 动画）：讲究画得对不对 —— 交之前照 DRAW_RULES 查、再自己检查一遍（10-28 v1.9.1）
@@ -581,16 +642,47 @@ def make_block(job, said, old=""):
             head += "照他现在说的重新做一个完整的（不是在旧的上面打补丁、也不是只说改了哪）\n"
     else:
         head = f"\n# 现在把他要的{job['kind']}做出来\n他说的：「{s}」\n"
+    if is_doc(job):
+        return head + _doc_rules(job) + f"- {TYPO}；你刚才回他的那句里说了按哪个做 就照那个\n" + _TAIL
     return (head +
             "- 认真做、做完整、细节做足：他要什么就给什么 别缩水别偷懒。网页 / 小游戏：一个 html 文件 CSS 和 JS 都写在里面 "
             "不引外部文件和链接、断网也能直接打开；要画东西的用 SVG 或 canvas 自己画（别用图片链接）\n"
             + (DRAW_RULES if is_draw(job, said) else "") +
             f"- {TYPO}；你刚才回他的那句里说了按哪个做 就照那个\n"
-            "- 输出格式：代码块前面什么都别写；一个 ``` 代码块装整个文件（从第一行到最后一行 别省略）；"
-            "代码块后面另起一行 用你自己的口气说一句交货的话（比如「真的麻烦死了 不过弄好了 双击打开看」）30 字以内 "
+            "- 一个 ``` 代码块装整个文件（从第一行到最后一行 别省略）\n" + _TAIL)
+
+
+def _doc_rules(job):
+    """Word / PDF / Excel / PPT / Markdown / 文本：她写内容（Markdown / 表格）系统转成真文件（11-02 v1.17.4）"""
+    ext = str(job.get("ext") or "")
+    have = docmaker.available(PDF_BROWSER)
+    L = []
+    if ext == "auto":
+        L.append(f"- 他没说要什么格式：你按内容挑最合适的一种。这台电脑能做：{_can(job)}。"
+                 "在代码块开头写你挑的格式（```docx / ```pdf / ```xlsx / ```pptx / ```md / ```txt / ```html）；"
+                 "挑了网页就照网页的规矩：一个 html 文件 CSS 和 JS 都写在里面\n")
+        name = "文件"
+    else:
+        name = docmaker.NAMES.get(ext, "文档")
+        L.append(f"- 这次交的是{name}（{ext}）：系统会把你写的转成真正的{name}发给他（不是网页）\n")
+        if ext not in have:
+            alt = "每页一张的 PDF" if ext == ".pptx" and ".pdf" in have else "Word 文档"
+            L.append(f"- 这台电脑现在做不了{name}：照样写 系统会做成{alt}（交货那句照实说是{alt}）\n")
+    L.append("- 内容用 Markdown 写在一个 ``` 代码块里：第一行「# 标题」、小标题 ##、列表用 -、"
+             "表格用 | 列 | 列 |（第二行 |---|---|）、要强调的用 **…**；代码块里别再套 ```\n")
+    if ext in (".xlsx", ".csv"):
+        L.append("- 表格：用 Markdown 表格写 第一行是表头；要分几张表 就在每张前面写「## 表名」；数字只写数字（单位写进表头）\n")
+    if ext == ".pptx":
+        L.append("- 幻灯片：第一行「# 总标题」；每一页用「## 这页的标题」开头 下面几条 - 要点（一页别超过 6 条）\n")
+    L.append("- 认真写、写完整：他要什么就写什么 别缩水；总结聊天就照聊天记录里真有的写（谁说了什么） 别编；不知道的就写不知道\n")
+    return "".join(L)
+
+
+_TAIL = ("- 输出格式：代码块前面什么都别写；"
+            "代码块后面另起一行 用你自己的口气说一句交货的话 30 字以内 "
             "—— 东西已经做好了 别再说「这就来」「马上画」；再另起一行写「做的是：…」20 字以内 说清楚画了 / 做了什么"
             "（比如「做的是：一只鹈鹕在河边骑车 嘴里叼着鱼」）—— 这行不发给他 是让你以后记得自己做了啥\n"
-            "- 别解释代码、别分段讲、别说「复制下面这段」—— 系统会把代码存成文件发给他\n"
+            "- 别解释代码 / 内容、别分段讲、别说「复制下面这段」—— 系统会把它存成文件发给他\n"
             "- 最后照常写 %%STATE%% 那一行\n")
 
 
@@ -681,6 +773,24 @@ def ext_of(lang, code, dflt=""):
     if re.search(r"^\s*(?:import |from \w+ import |def |class \w+[:(]|print\()", str(code or ""), re.M):
         return ".py"
     return dflt or ".txt"
+
+
+FMT = {"docx": ".docx", "doc": ".docx", "word": ".docx", "pdf": ".pdf", "xlsx": ".xlsx", "xls": ".xlsx", "excel": ".xlsx",
+       "csv": ".csv", "pptx": ".pptx", "ppt": ".pptx", "md": ".md", "markdown": ".md", "txt": ".txt", "text": ".txt"}
+
+
+def target_ext(lang, code, job=None):
+    """这次交什么格式（11-02 v1.17.4）：要的是文档 → 就那个格式；没说格式（auto）→ 看她在代码块开头写的；代码照旧看语言"""
+    want_ = str((job or {}).get("ext") or "")
+    lg = (lang or "").strip().lower()
+    if want_ in docmaker.EXTS:
+        return want_
+    if want_ == "auto":
+        if lg in FMT:
+            return FMT[lg]
+        e = ext_of(lg, code, "")
+        return e if e and e != ".txt" else ".docx"
+    return ext_of(lang, code, want_)
 
 
 def _clean(name):

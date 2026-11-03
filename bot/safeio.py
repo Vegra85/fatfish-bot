@@ -15,6 +15,7 @@
            trace（调模型的记录 只留 3 天 —— 打进包里就留 14 天了）
     哪天记忆坏了 从前一天的包里把那个文件拿出来放回去就行
 """
+import contextlib
 import json
 import os
 import re
@@ -88,6 +89,52 @@ def update_json(path, fn, default=None, log=None):
         return d
     write_json(path, d)
     return d
+
+
+class LockTimeout(Busy):
+    """等了几秒还拿不到锁（另一个进程一直拿着）"""
+
+
+@contextlib.contextmanager
+def file_lock(path, wait=3.0, stale=10.0):
+    """几个进程（控制台 / 机器人）读改写同一个文件时排队（11-03 v1.17.13 Codex F11：control.json 以前两边各读各的 后写的冲掉先写的）：
+    旁边建「<文件名>.lock」（O_CREAT|O_EXCL：谁先建成谁拿到 里面写进程号和时间）→ 读改写 → 删掉。
+    拿不到就等 最多 wait 秒（还拿不到 → LockTimeout 也就是 Busy：跟文件打不开一样 这次不改）；
+    超过 stale 秒的旧锁 = 拿锁的那边半路崩了没删 → 删掉重来"""
+    lk = Path(str(path) + ".lock")
+    lk.parent.mkdir(parents=True, exist_ok=True)
+    t0 = time.time()
+    while True:
+        try:
+            fd = os.open(str(lk), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except (FileExistsError, PermissionError):      # Windows：另一边正在删这个锁时 建也会报 PermissionError
+            try:
+                raw = lk.read_text(encoding="utf-8").split()
+                if time.time() - (float(raw[1]) if len(raw) > 1 else lk.stat().st_mtime) > stale:
+                    lk.unlink()
+                    continue
+            except (OSError, ValueError):
+                pass                       # 刚被删掉 / 正在写：等一下再试
+            if time.time() - t0 >= wait:
+                raise LockTimeout(f"{lk.name} 一直被占着")
+            time.sleep(0.02)
+            continue
+        try:
+            os.write(fd, f"{os.getpid()} {time.time():.3f}".encode("ascii"))
+        finally:
+            os.close(fd)
+        break
+    try:
+        yield
+    finally:
+        for _ in range(10):                # Windows：另一边正好在读这个锁（看它旧不旧）时删不掉（WinError 32）→ 等一下再删
+            try:                           #   （不然锁一直留着 两边都要等到 10 秒后当成死锁才删 中间每次改都是 Busy）
+                lk.unlink()
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                time.sleep(0.02)
 
 
 _BUSY = {}            # 文件 → 上次「一直打不开」的时间（10 秒内再读只试一次 不再等：别让每次读都卡住整只机器人 0.75 秒）
