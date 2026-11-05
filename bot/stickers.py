@@ -36,6 +36,7 @@ except Exception:
 _B = _CFG.get("behavior") or {}
 STICKER_GAP = int(_B.get("sticker_gap_sec", 180))   # 同一个对话里两张表情包至少隔多久
 PHOTO_GAP = 20 * 3600                                # 生活照一天最多一张
+_PH = {"on": True}            # 生活照给不给用（11-04 v1.17.16：bot 每轮 block(photos=…) 定 —— 有自拍以后不给；resolve2 跟着这个）
 NO_REPEAT = 40                                       # 同一个对话里最近发过的这么多张不重复
 SHOW = 8                                             # 每次给她看几张
 
@@ -423,7 +424,9 @@ def hushed(conv, now=None):
     return (now or time.time()) < _hush.get(str(conv), 0)
 
 
-def block(context="", mood_label="", conv=None, ask_text=None):
+def block(context="", mood_label="", conv=None, ask_text=None, photos=True):
+    """photos（11-04 v1.17.16）：False = 不给她看生活照（[[照片:…]]）、她写了也不发（有自拍以后：旧照片跟现拍的对不上）"""
+    _PH["on"] = bool(photos)
     c = _load()
     if not c["files"]:
         return ""
@@ -465,7 +468,7 @@ def block(context="", mood_label="", conv=None, ask_text=None):
     if asked(conv, now):
         s += "对方想要表情包：这次发一张（单独一条写 [[表情:名字]]）。\n"
     s += "说了要给的就一定写标记：嘴上说「这张给你」却不写 [[表情:…]] 就是空话。\n"
-    return s + _photo_block(c)
+    return s + (_photo_block(c) if photos else "")
 
 
 def _photo_block(c):
@@ -573,6 +576,9 @@ def resolve2(seg, conv_key, said=""):
     k = (str(conv_key), kind)
     now = time.time()
     if kind == "照片":
+        if not _PH["on"]:                               # 11-04 v1.17.16：有自拍以后旧生活照不发（她写了也不发）
+            _log(f"[表情包] {conv_key} 旧生活照「{ref}」不发（自拍开着：要照片就是现拍的自拍）")
+            return text, None, None
         name = ref if ref in c["pfiles"] else next((x for x in c["pfiles"] if x.lower() == ref.lower()), None)
         if not name or now - _last.get(k, 0) < PHOTO_GAP:
             return text, None, None

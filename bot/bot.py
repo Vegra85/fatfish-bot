@@ -1455,7 +1455,9 @@ READ_SYS = ("你在帮一个 QQ 聊天机器人「{bot}」读懂聊天。下面�
             "1. 这句真正的意思（话里有话 / 谐音 / 梗 / 黄腔 / 反话 / 起哄 / 闹着玩 / 认真在问 —— 说清楚是哪种）\n"
             "2. 他省略的主语 / 宾语指的是谁、什么（从前文找）\n"
             "3. 他是在跟谁说、想要什么样的回应（一起玩 / 要答案 / 要安慰 / 其实不是跟她说）\n"
-            "4. 有她容易忽略的前文就提一句\n不确定就写不确定。")
+            "4. 有她容易忽略的前文就提一句\n"
+            "只写他那边的意思：她知道什么、看不看得到什么（余额、聊天记录、几点了这些系统会另外给她，你这里看不到）不要替她下结论。\n"   # 11-04 v1.17.18 人格回归：笔记写「余额她看不到」→ DeepSeek 照着说「具体数字我哪看得到」（其实给了她）
+            "不确定就写不确定。")
 
 
 # 攒一攒「尾巴含糊才问」（11-01 v1.16.3）：规则等完了 最后一句的尾巴含糊 → 问一次便宜模型「他说完了吗」（不带人设）
@@ -1490,6 +1492,7 @@ def tail_vague(text):
 READ_DS_MODEL = "deepseek-v4-pro"
 READ_DS_PRICE = {"deepseek-v4-pro": (4.5, 0.15, 13.5)}   # 元 / 百万 token（空闲时段）：没命中 / 命中 / 输出；高峰 × stats 的 peak_mult（DeepSeek 官方价格页 10-30 记在 claude\iq_test\iq_run.py）；别的模型按 stats 里 flash 的价
 READ_NOTE_HEAD = "\n\n[系统] ———— 读懂这句（理解笔记 不是台词）————\n"
+READ_NOTE_TAIL = "\n（笔记只读他的意思；你知道什么、能看到什么 以上面系统给你的资料为准）"   # 11-04 v1.17.18：笔记跟系统给的资料（余额 / 翻到的记录）打架时听资料的
 
 
 def _cfg_mt():
@@ -1532,14 +1535,14 @@ def with_read_note(messages, note):
     out = [dict(m) for m in messages]
     c = out[-1].get("content")
     if isinstance(c, str):
-        out[-1]["content"] = c + READ_NOTE_HEAD + note
+        out[-1]["content"] = c + READ_NOTE_HEAD + note + READ_NOTE_TAIL
     elif isinstance(c, list):
         parts = list(c)
         i = next((k for k, x in enumerate(parts) if isinstance(x, dict) and x.get("type") == "text"), None)
         if i is None:
-            parts.append({"type": "text", "text": READ_NOTE_HEAD.lstrip("\n") + note})
+            parts.append({"type": "text", "text": READ_NOTE_HEAD.lstrip("\n") + note + READ_NOTE_TAIL})
         else:
-            parts[i] = dict(parts[i], text=str(parts[i].get("text") or "") + READ_NOTE_HEAD + note)
+            parts[i] = dict(parts[i], text=str(parts[i].get("text") or "") + READ_NOTE_HEAD + note + READ_NOTE_TAIL)
         out[-1]["content"] = parts
     return out
 
@@ -1885,7 +1888,8 @@ def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", s
         tsaid = time_said(mem)            # 提过、他这几句又跟时间无关 → 只给「凌晨 / 下午」不给几点几分（时间只在跟话题有关时给）
     except Exception:
         tsaid = []
-    exact = not tsaid or bool(TIME_Q.search(str(query or "")))
+    exact = bool(TIME_Q.search(str(query or "")))   # 11-04 v1.17.18 人格回归：新对话的第一轮也只给时段 —— 以前这段对话还没提过时间就给几点几分，
+    #   每个新对话都可能拿它开头（北京 22:10 跑：Claude 10 个新好友里 6 个开口「这么晚还来加我」）；他的话跟时间有关才给几点几分
     # 人物卡（11-02 v1.17.7 P2）：「2 条常驻 + 好感一行 + 群里 5 人阶段」里重复的部分换成这一张卡（公开版 / 关着 → 照旧）
     #   先按话题想起来（不再硬塞两条常驻：卡里有「他是谁」）→ 卡里放还记得清的、这轮没想起来的他的事
     #   → 卡里那几件也算这一轮给她看了（memory.LAST_PICKED：她用上了 +0.5、最近注入过的不加分防老提 —— 以前常驻那两条也是这么算的）
@@ -1915,7 +1919,8 @@ def build_system(mem, scene, query="", is_owner=False, speaker=None, extra="", s
            + slang.block(query + " " + " ".join(h.get("text", "") for h in mem.get("history", [])[-4:]),
                          "" if "# 梗百科查到的" in scene else query)      # 已经查给她看了 就不再重复提示
            # ask（11-03 v1.17.13 Gemini 4-F6）：_reply 传他自己打的字（引用的那条、图的描述、卡片不算）—— 认「别发 / 要表情包」只看这个；别处没传照旧
-           + stickers.block(query + " " + recent3, load_mood().get("label", ""), mem.get("key"), query if ask is None else ask)
+           + stickers.block(query + " " + recent3, load_mood().get("label", ""), mem.get("key"), query if ask is None else ask,
+                            photos=_photos_ok())   # 11-04 v1.17.16：有自拍以后旧生活照不给她（小明 定）
            + "\n# 当前场景\n" + scene + "\n")
     if split:
         return static + semi, dyn
@@ -2621,6 +2626,22 @@ FORGET_PROMPT = """{who}刚才跟你说了一句带「忘」的话。先判断�
 记忆：
 {facts}
 """
+
+
+def _photos_ok():
+    """旧生活照（表情包库里的 [[照片:…]]，就两张）给不给她用 —— 11-04 v1.17.16 小明 定：有自拍以后不给。
+    11-04 现场：睡觉的时间不拍自拍，她拿橘猫那张说成「刚醒的」发了（大白天的光、跟她在干嘛对不上，每次都是这张）；公开版没有自拍 照旧能用"""
+    return selfie is None or not selfie.on()
+
+
+async def _quiet(coro, tag):
+    """后台等着的任务（11-04 v1.17.16）：出错记一行、交回 None，不往外抛 —— 被 asyncio.shield 等、等超时以后它才出错的话没人接，
+    日志里就是一整段 Traceback（「exception in shielded future」）"""
+    try:
+        return await coro
+    except Exception as e:
+        log(f"{tag} 后台出错:", repr(e)[:100])
+        return None
 
 
 async def do_forget(mem, text, name="", uid=""):
@@ -5319,7 +5340,7 @@ class FatFish:
                 chat = [f'{h.get("name", "")}: {h.get("text", "")[:50]}' for h in mem["history"][-5:-1]]
                 asyncio.create_task(self._caption_later(key, scene, dict(entry), chat))   # 后台看 不堵后面的消息
         if forget_now:     # 模型挑哪几条在锁外做（10-28 审查 memory-1）；最多等 15 秒（多半在她回这句之前就忘掉了）超时就让它后台接着做
-            ft = asyncio.create_task(do_forget(mem, own_words(text), name, uid))
+            ft = asyncio.create_task(_quiet(do_forget(mem, own_words(text), name, uid), "[遗忘]"))   # 11-04 v1.17.16：等满 15 秒以后才出错也没人接 → 记一行
             try:
                 await asyncio.wait_for(asyncio.shield(ft), 15)
             except Exception:
@@ -6366,7 +6387,13 @@ class FatFish:
             log("[读懂] 提前读出错:", repr(e)[:100])
 
     async def _read_note(self, key, uid, name, read_lines, texts):
-        return await read_note(key, uid, name, read_lines, texts, budget=float(_read_cfg().get("timeout", 8)))
+        """理解笔记（读懂层）。11-04 v1.17.16：出错就记一行、交回 None，不往外抛 —— 攒一攒时提前起的这个任务 _reply 是用 asyncio.shield 等的，
+        等满 timeout 以后它才出错的话没人接，日志里就是一整段「exception in shielded future」Traceback（11-03 DeepSeek 503 那阵 9 次）"""
+        try:
+            return await read_note(key, uid, name, read_lines, texts, budget=float(_read_cfg().get("timeout", 8)))
+        except Exception as e:
+            log("[读懂] 理解笔记没写成（照常回）:", repr(e)[:80])
+            return None
 
     def _read_fallback(self, key, uid, name, read_lines, texts, t_start):
         """Claude 回的那一轮的退路（11-02 v1.17.9）：Claude 出错 / 超时 / 回了空的 / 半路停用 → judge 退回 DeepSeek 时走这里
@@ -8218,7 +8245,7 @@ class FatFish:
         try:                               # 11-02 v1.17.1：重启前还在后台弄的整首（没弄完 = 没唱成）→ 下次他来找她时告诉她一声
             for u, j in sing.full_jobs_left():
                 nt = getattr(commit, "note", None)
-                if nt and nt(u, f"你答应给他唱的整首「{j.get('song') or '那首歌'}」还在后台弄的时候程序重启了 —— 没发出去 他没听到",
+                if nt and nt(u, f"你答应给他唱的整首「{j.get('song') or '那首歌'}」还在录的时候程序重启了 —— 没发出去 他没听到",
                              conv=j.get("conv")):
                     log(f"[唱歌] 重启前给「{j.get('who') or u}」弄的整首「{j.get('song')}」没弄完 → 下次他来找她时告诉她没唱成")
         except Exception as e:
@@ -10048,8 +10075,8 @@ class FatFish:
                 why = {"还不会": "这首你还不会", "没歌名": "你没说唱哪首", "没整首许可": "许可过期了"}.get(
                     fail.get("why"), "网上没找到能唱的完整版" if not fail.get("err") else "你这边出了岔子")
                 log(f"[唱歌] {conv} 整首「{nm}」没弄出来（{fail.get('why')}）")
-                line = await self._state_line("sing_full_fail", f"你刚才答应给他唱整首「{nm}」 结果没弄出来（{why}）。整首这次没唱成。",
-                                              f"整首「{nm}」这次没弄出来")
+                line = await self._state_line("sing_full_fail", f"你刚才答应给他唱整首「{nm}」 结果没录成（{why}）。整首这次没唱成。",
+                                              f"整首「{nm}」这次没录成")
                 if line and await self._deliver(action, pk, target, [{"type": "text", "data": {"text": line}}]) is not False:
                     await keep(line)
                 return None
@@ -12747,10 +12774,16 @@ async def _impress_one(uid, conv, n, kind="first"):
     else:
         base = prev or (first if first and first.get("where") == conv else None)
         since = float((base or {}).get("lr") or (base or {}).get("ts") or 0) or None
+        if base is not None and not prev:   # 11-04 v1.17.17：第一印象那个场合（还没有现在的印象）跟夜里挑人（personcard.due_updates）一样，从第一印象依据的那天往后拿；看过一次「差不多」的从看过的时候往后拿
+            seen = (p.get("seen") or {}).get(conv) or {}   # —— 开机补写的第一印象 lr / ts 是补写的时间、后来的来往都在那之前：按 lr 拿永远一句都没有（11-04 夜里 8 个人 4 个「没写成」、每晚重来）
+            since = max(float(base.get("src_ts") or base.get("ts") or 0), float(seen.get("t") or 0)) or None
         lines = await asyncio.to_thread(personcard.exchange_lines, conv, uid, DATA, since, None, False, 24)
         sys_p, user_p = personcard.now_prompt(name, conv, lines, first, prev, gn)
     if not any(x.get("role") == "user" for x in lines):
         personcard.note_try(uid, "存档里没找到他们的来往")
+        if kind != "first" and hasattr(personcard, "mark_seen"):   # 11-04 v1.17.17：记一笔看过了（再来往够了、隔够了再看）；以前每晚都挑到他、每晚「没写成」
+            personcard.mark_seen(uid, conv, n)
+        log(f"[人物卡] {name}（{personcard.where_label(conv, gn)}）{'第一印象' if kind == 'first' else '现在的印象'}这次没写成：存档里没找到他们的来往")
         return "没原话"
     raw = await llm_bg("impress", sys_p, [{"role": "user", "content": user_p}], temperature=0.3, max_tokens=300)
     if _gone(uid, t_start):                # 等模型的时候他删了自己的数据：不写回去

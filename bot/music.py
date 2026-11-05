@@ -69,6 +69,13 @@ PREFER_STRONG = re.compile(r"原唱|官方|official|(?<![a-z])live(?![a-z])|现�
 PREFER = re.compile(r"高音质|无损|hi-?res|完整版|录音棚|audio|音乐(?!会|节|剧)", re.I)   # 「音乐会」不算（10-31 v1.15.15 小饭桌音乐会被当成「带音乐」）
 LIVE = re.compile(r"(?<![a-z])live(?![a-z])|现场|演唱会|音乐会|小饭桌|小桌|tiny\s*desk|不插电|unplugged|直播|livehouse|音乐节|"
                   r"(?<![a-z])concert(?![a-z])", re.I)    # concert：YouTube 英文标题（11-01 v1.16.0）   # 换声开着时现场版往后排（观众声 / 混响 分不干净 换出来更糊）10-31 v1.15.14
+_LP = threading.local()       # 11-04 v1.17.16：这个线程这一遍找歌是不是「只找录音室版」（要换声时 fetch 先这么在所有来源找一遍）
+
+
+def _no_live():
+    return bool(getattr(_LP, "no_live", False))
+
+
 CUT_V = 2                     # 剪法版本：10-31 v1.15.14 找副歌 + 对齐句子；记过的旧片段（最响的 12 秒）不再用 重新剪
 MIN_REAL_SEC = 80             # 下载下来量到的真实时长不到这个数 = 试听片段 / 预览 → 不用
 MAX_LEFTOVER_ASCII = 40       # 英文 / 数字多于这个数也算「别的内容」
@@ -222,7 +229,7 @@ def _recheck_cached(hit, title, artist, raw_req, studio=False, bad=()):
     src = hit.get("source")
     # 11-01 v1.16.0：歌曲平台（网易云 / QQ / 酷狗）没有视频标题 —— 看歌名里有没有 Live / 现场
     live_txt = vid or (str(hit.get("title") or "") if src in ("网易云", "QQ音乐", "酷狗") else "")
-    if studio and live_txt and LIVE.search(live_txt) and not hit.get("live_only"):
+    if studio and live_txt and LIVE.search(live_txt) and not hit.get("live_all"):   # 11-04 v1.17.16：live_only → live_all（所有来源都只有现场版才算；以前一个来源里录音室版放不了就记成 live_only）
         return False, "是现场版（要换声：观众声和混响分不干净 换出来糊）"
     if src not in ("B站", "YouTube") or not vid:       # YouTube 记的视频标题也按 check_title 再核对（11-01 v1.16.0）
         return True, ""
@@ -1082,6 +1089,10 @@ def bili_rank(results, title, artist, raw_req="", rejected=None, studio=False, b
             sc += int(x["bonus"])
             why += str(x.get("bonus_why") or "")
         live = bool(studio and LIVE.search(t))
+        if live and _no_live():                                         # 11-04 v1.17.16：第一遍只找录音室版（别的来源有就用那边的）
+            if rejected is not None:
+                rejected.append((t, "现场版（先看所有来源有没有录音室版）"))
+            continue
         if live:                                                        # 要换声：现场版排到所有录音室版后面（10-31 v1.15.14 只扣 8 分
             why += "（要换声 现场版排最后）"                              #   「live」又在 PREFER_STRONG 里 +6 → 净扣 2 分 播放量一高就翻盘 11-01 v1.15.18）
         out.append((live, sc, i, dict(x, why=why, score=sc, live=live)))
@@ -1564,6 +1575,34 @@ def fetch(req, log=print, sec=12, sessdata="", studio=False, *, ask=False, _nofb
             q = None
         if q:
             return {"ask": q}
+    passes = (True, False) if studio else (False,)   # 11-04 v1.17.16 小明：「为什么找的不是原版」—— 要换声：所有来源先只找录音室版，都没有才放开现场版
+    try:
+        for nl in passes:
+            _LP.no_live = nl
+            got = _fetch_pass(order, title, artist, req, sec, out, cache, key, why, log, bad, pre, sessdata, studio)
+            if got:
+                if not nl and studio and LIVE.search(str(got.get("video") or got.get("title") or "")):
+                    got["live_all"] = True               # 所有来源都只有现场版能用：记下来（下次核对别又丢掉重找）
+                    if isinstance(cache.get(key), dict):
+                        cache[key]["live_all"] = True
+                        _save_cache(cache)
+                return got
+            if nl:
+                log(f"[唱歌] 「{req}」所有来源都没有能用的录音室版 → 现场版也算（" + "；".join(why[-2:])[:80] + "）")
+    finally:
+        _LP.no_live = False
+    if artist and not _nofb:               # 她写的歌手可能写错了（11-01 v1.15.18 借 chorus-cover 0.17.2 的思路）：去掉歌手再找一次
+        log(f"[唱歌] 「{req}」带着歌手「{artist}」没找到 → 去掉歌手再找一次（{'；'.join(why[-2:])[:80]}）")
+        got = fetch(title, log, sec, sessdata, studio, _nofb=True)
+        if got.get("path"):
+            got["pick_why"] = (str(got.get("pick_why") or "") + f"（她说的歌手「{artist}」找不到 去掉歌手找的）").strip()
+            return got
+    log(f"[唱歌] 网上找「{req}」没找到能唱的：" + "；".join(why[-4:]))
+    return {"fail": "；".join(why[-3:]) or "没找到", "skipped": skipped}
+
+
+def _fetch_pass(order, title, artist, req, sec, out, cache, key, why, log, bad, pre, sessdata, studio):
+    """来源按 order 一个个试一遍 → 第一个找到的 / None（11-04 v1.17.16 从 fetch 里拆出来：要换声时先「只找录音室版」跑一遍）"""
     for src in order:
         got = None
         try:
@@ -1587,14 +1626,7 @@ def fetch(req, log=print, sec=12, sessdata="", studio=False, *, ask=False, _nofb
             why.append(f"{SRC_NAME[src]}出错：{repr(e)[:80]}")
         if got:
             return got
-    if artist and not _nofb:               # 她写的歌手可能写错了（11-01 v1.15.18 借 chorus-cover 0.17.2 的思路）：去掉歌手再找一次
-        log(f"[唱歌] 「{req}」带着歌手「{artist}」没找到 → 去掉歌手再找一次（{'；'.join(why[-2:])[:80]}）")
-        got = fetch(title, log, sec, sessdata, studio, _nofb=True)
-        if got.get("path"):
-            got["pick_why"] = (str(got.get("pick_why") or "") + f"（她说的歌手「{artist}」找不到 去掉歌手找的）").strip()
-            return got
-    log(f"[唱歌] 网上找「{req}」没找到能唱的：" + "；".join(why[-4:]))
-    return {"fail": "；".join(why[-3:]) or "没找到", "skipped": skipped}
+    return None
 
 
 def fetch_pick(opt, log=print, sec=12, sessdata="", studio=False):
@@ -1734,7 +1766,13 @@ def _make_clip(tmp, sec, out, dur=0, lrc=""):
 def _song_try(src, cands, title, req, sec, out, cache, key, why, log, tries=SONG_TRY):
     """歌曲平台的候选一首首试：拿音频（放不了换下一首、原因记进 why）→ 80 秒闸门 → 歌词找副歌 → 剪 → 记进 song_online.json"""
     nm = SRC_NAME[src]
-    for s in cands[:tries]:
+    pool = list(cands)
+    if _no_live():                       # 11-04 v1.17.16：第一遍只试录音室版（以前录音室版放不了就退到同一个来源的现场版 别的来源有原版也不看了）
+        lv = [s for s in pool if LIVE.search(str(s.get("name") or ""))]
+        if lv:
+            why.append(f"{nm}现场版 {len(lv)} 首先放着（先看所有来源有没有录音室版）")
+            pool = [s for s in pool if s not in lv]
+    for s in pool[:tries]:
         audio, w, ext = _song_audio(src, s)
         if not audio:
             why.append(f"{nm}《{s.get('name')}》{w}")

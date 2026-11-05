@@ -842,11 +842,11 @@ def block(mode, texts=None, conv=None):
         who = "他" if (not uid or str(uid) == str(by)) else (str((j or {}).get("who") or "别人") or "别人")
         song = str((j or {}).get("song") or "").strip()
         mins = int((time.time() - float((j or {}).get("t") or time.time())) // 60)
-        return (f"\n# 唱整首\n给{who}唱的整首" + (f"《{song}》" if song else "") + "还在后台弄"
-                + (f"（{mins} 分钟前开始弄的" if mins >= 1 else "（刚开始弄") + "，弄好了系统自己发出去）：还没发出去 不是没唱、也不是发丢了。"
+        return (f"\n# 唱整首\n给{who}唱的整首" + (f"《{song}》" if song else "") + "还在录"       # 11-04 v1.17.16 小明：说「弄」像在处理东西 → 照她在唱、在录写
+                + (f"（{mins} 分钟前开始录的" if mins >= 1 else "（刚开始录") + "，录好了系统自己发出去）：还没发出去 不是没唱、也不是发丢了。"
                 "这一轮别再唱一段、别写唱歌标记。\n")
     if mode == "wait" and conv and _wait_why.get(conv) == "full":
-        return ("\n# 唱歌\n对方想听你唱歌 但你给人唱的一首整首还在后台弄（弄好了系统自己发出去）：这会儿先不唱别的 让他等整首发出去再点。"
+        return ("\n# 唱歌\n对方想听你唱歌 但你给人唱的一首整首还在录（录好了系统自己发出去）：这会儿先不唱别的 让他等整首发出去再点。"
                 "别写唱歌标记；你是会唱歌的 别说你不会、别说没这功能。\n")
     if mode == "wait":
         left = _wait_left.get(conv) if conv else None
@@ -1189,7 +1189,7 @@ def full_block(fp):
     if not fp:
         return ""
     st, c, rule = fp.get("state"), fp.get("circle") or "认识的", fp.get("rule") or {}
-    slow = "整首要几分钟才弄得好（系统在后台弄 弄好了自己发出去）。"
+    slow = "整首是你现在从头唱一遍、录下来再发给他：录完要几分钟，录好了系统自己发出去。"   # 11-04 v1.17.16 小明：「应该是我现在唱 给你录之类的」
     song = str(fp.get("song") or "")
     mark = (f"他要的是你刚才唱的那首的整首：单独一行写 [[唱:{song}]]（这次系统给的是整首 不是十来秒）。" if song
             else "唱的时候照常单独一行写 [[唱:歌名]]（这次系统给的是整首 不是十来秒）。")
@@ -1216,7 +1216,7 @@ def full_block(fp):
     if st == "none":
         return "\n# 唱整首\n他是别人家的鱼（别人部署的机器人）：整首不给唱；唱一段照常。\n"
     if st == "busy":
-        return "\n# 唱整首\n给他的上一首整首还在弄（弄好了系统会自己发）：这次别再答应新的整首；唱一段照常。\n"
+        return "\n# 唱整首\n给他的上一首整首还在录（录好了系统会自己发）：这次别再答应新的整首；唱一段照常。\n"
     return ""
 
 

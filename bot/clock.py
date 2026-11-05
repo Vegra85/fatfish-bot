@@ -178,6 +178,8 @@ def block(doing=None, time_said=None, exact=True):
     if time_said:
         s += (f"（这段对话里你已经提过 {len(time_said)} 次时间（" + "".join(f"「{x}」" for x in list(time_said)[:2])
               + "）：时间是背景 他没提就别再说" + ("" if exact else "；具体几点他问了再给你") + "）\n")
+    elif not exact:                        # 11-04 v1.17.18 人格回归：他没聊时间 → 只给时段（以前新对话第一轮总给几点几分 → 爱拿「这么晚」开头）
+        s += "（他没聊时间：几点几分没给你 —— 时间是背景 别拿它开话头；他问了再给你）\n"
     return s
 
 
