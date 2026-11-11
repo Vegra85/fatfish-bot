@@ -108,7 +108,9 @@ def _norm(t):
 
 
 def parse(req):
-    """「雨爱 - 杨丞琳」「杨丞琳的雨爱」「《雨爱》杨丞琳」→ (歌名, 歌手)"""
+    """「雨爱 - 杨丞琳」「《雨爱》杨丞琳」→ (歌名, 歌手)
+    （11-10 v1.17.35 审查 V6-1：「X的Y」不在这里拆了 —— 「夜空中最亮的星」被拆成歌名「星」歌手「夜空中最亮」，128 个带「的」的真实歌名拆错 115 个。
+      现在整句先当歌名；整句哪儿都没找到、X 又核实得出是个歌手，才当「歌手的歌名」：见 _de_split 和 fetch 末尾）"""
     r = str(req or "").strip()
     m = re.match(r"^\s*《([^《》]+)》\s*(.*)$", r)
     if m:
@@ -117,10 +119,36 @@ def parse(req):
         if sep in r:
             a, b = r.split(sep, 1)
             return a.strip(), b.strip()
-    m = re.match(r"^(.{1,8}?)的(.{1,30})$", r)
-    if m and not re.search(r"(这|那|一|哪)", m.group(1)):
-        return m.group(2).strip(), m.group(1).strip()
     return r, ""
+
+
+def _de_split(req):
+    """「杨丞琳的雨爱」这种写法 → (歌名, 歌手)：只是一种「可能」的拆法（认的形状跟以前 parse 里那条一样）；不是这个形状 / 写了《》或分隔符 → None
+    （11-10 v1.17.35 审查 V6-1）fetch 只在整句当歌名哪儿都没找到以后才用它，而且拆出来的歌手要核实（_de_strict）"""
+    r = str(req or "").strip()
+    if parse(r) != (r, ""):
+        return None
+    m = re.match(r"^(.{1,8}?)的(.{1,30})$", r)
+    if m and not re.search(r"(这|那|一|哪)", m.group(1)) and _norm(m.group(1)) and _norm(m.group(2)):
+        return m.group(2).strip(), m.group(1).strip()
+    return None
+
+
+def _de_strict():
+    """这个线程这会儿找的「歌手」是不是从「X的Y」拆出来的（fetch 末尾开的）：是 → 歌手要是单独的一个名字才算对上（不认子串）"""
+    return bool(getattr(_LP, "de_artist", False))
+
+
+def _toks(t):
+    """按空格 / 标点 / 括号 / 中英文交界切成一段段（转简体、小写）：「周杰倫 Jay Chou【晴天】」→ 周杰伦 jay chou 晴天"""
+    return re.findall(r"[a-z0-9]+|[^\W_a-z0-9]+", _simp(t).lower())
+
+
+def _has_name(text, name):
+    """text（平台记的歌手名 / 视频标题 / UP 主）里有没有 name 这个单独的名字（完整的一段或连着的几段）：
+    「逃跑计划 - 夜空中最亮的星」里没有单独的「夜空中最亮」，「周杰倫 Jay Chou【晴天】」里有单独的「周杰伦」（11-10 v1.17.35 审查 V6-1）"""
+    a, b = _toks(text), _toks(name)
+    return bool(b) and any(a[i:i + len(b)] == b for i in range(len(a) - len(b) + 1))
 
 
 def _ok_name(name, want, raw_req):
@@ -136,6 +164,8 @@ def _ok_name(name, want, raw_req):
 def _artist_ok(names, artist):
     if not artist:
         return True
+    if _de_strict():                       # （11-10 v1.17.35 审查 V6-1）歌手是从「X的Y」拆出来的：平台记的歌手里要有这个单独的名字（「你」⊂ 别的名字不算）
+        return any(_has_name(n, artist) for n in names)
     a = _norm(artist)
     return any(a and (a in _norm(n) or _norm(n) in a) for n in names if _norm(n))
 
@@ -198,6 +228,10 @@ def check_title(vtitle, up, title, artist="", raw_req=""):
         an = _sn(artist)
         if not (an and (an in vs or an in _sn(up) or (_sn(up) and _sn(up) in an))):
             return False, 0, f"标题和 UP 主里都没有歌手「{str(artist)[:12]}」"
+        # （11-10 v1.17.35 审查 V6-1）歌手是从「X的Y」拆出来的（多半其实是歌名的一半）：标题 / UP 主里要有 X 这个单独的名字（至少两个字）、
+        #   标题里 Y 也要是单独的一段 —— 「杨坤 - 答案 给你」不算「你」唱的《答案》；宁可不认
+        if _de_strict() and not (len(an) >= 2 and _has_name(vt, title) and (_has_name(vt, artist) or _has_name(up, artist))):
+            return False, 0, f"标题和 UP 主里没有单独的歌手名「{str(artist)[:12]}」（它是从「X的Y」里拆出来的 拿不准是不是歌手）"
     quoted = _quoted(vt)
     in_quote = any(hit == q or hit in q for q in quoted)
     rest = _sn(re.sub(r"[【\[（(][^】\]）)]*[】\]）)]", " ", vt))      # 去掉【】[]（）装饰
@@ -1597,6 +1631,20 @@ def fetch(req, log=print, sec=12, sessdata="", studio=False, *, ask=False, _nofb
         if got.get("path"):
             got["pick_why"] = (str(got.get("pick_why") or "") + f"（她说的歌手「{artist}」找不到 去掉歌手找的）").strip()
             return got
+    # （11-10 v1.17.35 审查 V6-1）整句当歌名哪儿都没找到、写法是「X的Y」：当「X 唱的《Y》」再找一次 —— X 要核实得出是歌手
+    #   （平台记的歌手里 / 视频标题、UP 主里有这个单独的名字，_de_strict）；对不上就是没找着，不去掉 X 拿 Y 顶替（_nofb）
+    sp = None if (artist or _nofb) else _de_split(req)
+    if sp:
+        log(f"[唱歌] 整句「{req}」当歌名没找到 → 看看是不是「{sp[1]}」唱的《{sp[0]}》（歌手名要单独对得上才算）")
+        _LP.de_artist = True
+        try:
+            got = fetch(f"{sp[0]} - {sp[1]}", log, sec, sessdata, studio, _nofb=True)
+        finally:
+            _LP.de_artist = False
+        if got.get("path"):
+            got["pick_why"] = (str(got.get("pick_why") or "") + f"（整句「{req}」当歌名没找到 按「{sp[1]}」唱的《{sp[0]}》找的）").strip()
+            return got
+        why.append(f"当成「{sp[1]}」唱的《{sp[0]}》也没找到")
     log(f"[唱歌] 网上找「{req}」没找到能唱的：" + "；".join(why[-4:]))
     return {"fail": "；".join(why[-3:]) or "没找到", "skipped": skipped}
 

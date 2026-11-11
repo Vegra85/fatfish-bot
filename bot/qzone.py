@@ -959,9 +959,18 @@ def _neg(c, i, j, q=False):
     return bool((NEG_Q if q else NEG).search(_pre(c, i) + c[i:j]))
 
 
+# （11-10 v1.17.35 审查 V5-18）「别看我空间」一认就落盘、没有期限、他本人不知道 —— 门槛要高：「空间 / 说说」后面得是这句话的边
+#   （完了 / 空格 / 「里」「看」「了、吧、行吗」这种收尾的字）；后面还跟着别的字的不记：
+#   「别看我说说笑笑的 其实我很内向」「别看我空间小 东西可不少」（别看 = 虽然）、「别去我说说的那家店」「不要来我空间站」。拿不准不记
+OUT_END = re.compile(r"(?:里面?|里头|那儿?|那边|那里)?(?:(?:和|跟|还有|、)(?:我的?)?(?:空间|说说|动态|相册|留言板?))*"
+                     r"(?:乱|瞎|偷偷?)?(?:看看?|逛逛?|刷|翻|踩|转|点赞|评论|留言)?"
+                     r"(?:了|啦|吧|啊|呀|哦|嘛|呢|哈|呗|好吗|行吗|好不好|行不行|可以吗|可以不|谢谢|可以|行|好)*(?:\s|$)")
+
+
 def _out(c, q=False):
     """这一小句是不是「别看我空间」（问句里只认 别 / 不要 / 不许 / 不准：「你就不能来看看我空间吗」是反问）"""
-    return any(not q or re.match(r"别|不要|不许|不准|不太?(?:希望|喜欢|愿意)", m.group(1)) for m in OPT_OUT.finditer(c))
+    return any((not q or re.match(r"别|不要|不许|不准|不太?(?:希望|喜欢|愿意)", m.group(1))) and OUT_END.match(c[m.end():])
+               for m in OPT_OUT.finditer(c))
 
 
 def _go(c, q, rx):
@@ -970,9 +979,24 @@ def _go(c, q, rx):
                for m in rx.finditer(c))
 
 
-def ask(texts, own=()):
+def _other_sure(m, raw, who, known):
+    """「看看 X 的空间 / 说说 / 动态」是不是真在说某个人的 QQ 空间（11-10 v1.17.35 审查 V5-18：以前 X 是什么都当成人 ——
+    「看看硬盘空间」「看看B站动态」「你看看大家说说什么」→ 她被告知「他让你去看别人的 QQ 空间」「没认出『内存』是哪个 QQ」）
+    算：@ 了人 / X 是 QQ 号 / 明说「QQ空间」/ 「X 的说说」（带「的」的「说说」就是 QQ 的说说）/ X 是认得的人（known(X)）；别的不算"""
+    if raw.startswith("@") or re.fullmatch(r"\d{5,11}", who):
+        return True
+    if re.search(r"(?:QQ|qq)(?:空间|说说|动态)$", m.group(0)) or m.group(0).endswith("的说说"):
+        return True
+    try:
+        return bool(known(who))
+    except Exception:
+        return False
+
+
+def ask(texts, own=(), known=None):
     """他这几句里有没有叫她看空间：('self', '') / ('other', 名字或QQ号) / None
-    own = 她自己的名字（「看看 <她> 的空间」不算别人的）（10-28 审查 qzone-6）"""
+    own = 她自己的名字（「看看 <她> 的空间」不算别人的）（10-28 审查 qzone-6）
+    known = 「这个名字是不是个认得的人」（bot.py 给；11-10 v1.17.35 审查 V5-18）；不给 = 不查（老逻辑）"""
     cs = _clauses(texts)
     if any(_out(c, q) or NO_GROUP.search(c) for c, q in cs):
         return None
@@ -985,6 +1009,8 @@ def ask(texts, own=()):
                 continue
             who = re.sub(r"^(?:一下|一眼|下|眼)", "", m.group(1).lstrip("@").strip()).lstrip("@").strip()
             if who and who not in ("我", "我的", "你", "你的", "自己", "她", "他") and "你" not in who and who not in own:
+                if known is not None and not _other_sure(m, m.group(1), who, known):
+                    continue               # 看不出是在说哪个人的 QQ 空间（硬盘空间 / B站动态…）：不算（11-10 v1.17.35 审查 V5-18）
                 return ("other", who)
     return None
 

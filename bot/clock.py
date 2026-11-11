@@ -110,6 +110,32 @@ def span(name):
     return None
 
 
+# （11-10 v1.17.35 审查 V8-1：「她这个钟点在不在睡」只留这一个出口 —— 以前自拍 selfie / 晚回 catchup / 说到做到的规矩 commit.RULES /
+#   日程 life 各自按「北京 3–8 点 = 睡」写死，夜猫子开着（她不睡）也照说「你是被叫醒的」「可以说刚睡醒」「3–8 点是真睡」「准备睡」，
+#   跟 state() 给的「熬夜中」在同一轮提示里打架。现在那几处都来问下面两个；夜猫子关着时答案跟它们以前各自写死的一样）
+def _in_sleep(ts=None):
+    """这个钟点落在 SCHEDULE「在睡觉」那段里（默认 3–8 点；不看夜猫子）"""
+    d = dt(ts)
+    h = d.hour + d.minute / 60
+    a, b = span("在睡觉") or (3.0, 8.0)
+    return (a <= h < b) if a <= b else (h >= a or h < b)
+
+
+def asleep_at(ts=None):
+    """她这个钟点按作息在不在睡：夜猫子开着 → False（她不睡）；关着 → 钟点在「在睡觉」那段（默认 3–8 点）
+    只看钟点 —— 她嘴上说了要睡（SLEEP_SRC）、控制台「叫醒她」照旧看 state()"""
+    return (not owl()) and _in_sleep(ts)
+
+
+def up_late(ts=None):
+    """夜猫子开着、这个钟点本来是睡觉那段：她没睡、在熬夜 → OWL_SCHEDULE 里这个钟点的状态名（「熬夜中」跟 state() 给的一样）；不是 → 空字符串"""
+    if not (owl() and _in_sleep(ts)):
+        return ""
+    d = dt(ts)
+    h = d.hour + d.minute / 60
+    return next((name for a, b, name, _ in OWL_SCHEDULE if a <= h < b), "熬夜中")
+
+
 def night_span():
     """夜里「真睡」那段：(该睡了的起点, 在睡觉的终点)，默认 (2.5, 8)。在这段里说要睡 = 睡到早上（commit 用）"""
     s, p = span("在睡觉") or (3.0, 8.0), span("该睡了")

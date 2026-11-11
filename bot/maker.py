@@ -114,6 +114,31 @@ AGAIN = re.compile(
     r"(?:帮我|给我|快|赶紧|现在|马上|立刻|这就)(?:画|做|写|弄|改)|"
     r"(?:能|可以|再)(?:不能)?(?:帮我)?(?:重新)?(?:画|做|写|弄|改)(?:一|个|下|张|次|吗|么|嘛)")
 AGAIN_NOT = re.compile(r"讲讲|讲解|讲一下|解释|什么意思|啥意思|怎么用|怎么打开|怎么运行|打不开")
+# （11-10 v1.17.35 审查 V5-14）上面的 AGAIN 一命中就开做、后面没有第二道：交货后 6 小时内「我现在做饭去了」「咖啡加点糖」「加个好友吧」
+#   → 她真的再做一份文件发过去；正在做时他问「快做好了吗」（快 + 做）→ 那件被取消、从头重做。现在 want_again 分开认：
+#   AGAIN_SURE 明说重来的（重做 / 重画 / 重新画 / 再画一个…）、说了错又说了要什么的（说错了 其实我要的是…）：照旧，6 小时内都算
+#   AGAIN_SOFT 只是带「改成 / 加个 / 去掉 / 说错了 / 其实我要 / 帮我画」这种字的：得看得出是冲那件东西说的才算 ——
+#              那件正在做、刚交货他紧接着说的（AGAIN_HOT_SEC 以内、交货以后没隔几条）、或者话里提到了那件东西（about）；
+#              「帮我 / 快 / 现在 + 画做写弄改」后面得是句子的边（「现在帮我画」算；「现在做饭去了」「马上写作业」「帮我写个请假条」不算），
+#              「我现在弄」「我马上写」是他在说自己 不算
+#   AGAIN_ASK  问进度的（好了吗 / 做完没 / 快做好了吗 / 做到哪了 / 还要多久）：不算重做、不打断正在做的
+#   拿不准一律不算：漏了的还有两道接着 —— 她嘴上答应了「我改」→ after_reply 真去做；她在状态行写「做东西」→ 照做
+_AGAIN_ERR = r"画错|做错|写错|弄错|(?<![你她他])(?:说|打)错了"
+_AGAIN_WANT = r"其实(?:我)?(?:要|想要)|我(?:要|想要)的是|不是要"
+AGAIN_SURE = re.compile(r"(?:(?<!我)|(?<=帮我|给我|替我))(?:重新(?:画|做|写|弄|整|来|生成)|重画|重做|重写)(?!了)|重来一|"   # 「我重新做了一遍作业」「这题我重做了」是他在说自己
+                        r"再(?:画|做|写|弄|整)(?:一(?!会)|个|张|份|次|遍|下)|再来(?:一?[个张份次遍版幅]|一?下)|"   # 「再写一会儿」「再来一杯」不算
+                        r"(?:" + _AGAIN_ERR + r")[^。！？!?\n]{0,12}?(?:" + _AGAIN_WANT + r")")                     # 「说错了 其实我要的是鹈鹕」：说了错、又说了要什么
+_AGAIN_END = r"(?:吧|嘛|呗|啊|呀|哦|吗|么|好吗|行吗|好不好|行不行|可以吗)*(?![0-9A-Za-z\u4e00-\u9fff])"     # 后面是句子的边
+_AGAIN_N = r"一?[下个张份次遍版幅]"
+AGAIN_SOFT = re.compile(
+    r"改成|换成|画成|做成|写成|弄成|改一下|改改|改下|改个|加(?:个|一个|上|点)|去掉|删掉|"
+    + _AGAIN_ERR + "|" + _AGAIN_WANT + "|"
+    r"(?:(?:帮我|给我|替我)(?:再|重新)?|(?<!我)(?:快|赶紧|现在|马上|立刻|这就)(?:点|就)?(?:帮我|给我)?)(?:画|做|写|弄|改)(?:" + _AGAIN_N + r")?" + _AGAIN_END + r"|"
+    r"(?:能不能|可不可以|能|可以|再)(?:再)?(?:帮我|给我)?(?:画|做|写|弄|改)(?:" + _AGAIN_N + r"|吗|么|嘛)" + _AGAIN_END)
+AGAIN_ASK = re.compile(r"(?:好|完|成)了(?:吗|没|么|嘛)|(?:好|完)了?没(?:有)?(?![0-9A-Za-z\u4e00-\u9fff])|(?:画|做|写|弄|改)到哪|"
+                       r"(?:还要|还有|还得)多久|多久(?:能)?好|什么时候(?:能)?(?:好|(?:画|做|写|弄|改)[完好])|还没(?:好|完)")
+AGAIN_HOT_SEC = 600        # 交货以后多久以内、
+AGAIN_HOT_GAP = 6          # 聊天记录没隔过几条 → 算「刚交货他紧接着说的」
 NOT_BUT = re.compile(r"不是([^，,。！？!?\s]{1,8}?)[，,\s]*(?:是|要)")      # 「不是醍醐 是鹈鹕」：前半截得是他上次说过的
 AGAIN_SEC = 6 * 3600       # 上一个做完多久以内 还算在说它
 
@@ -219,8 +244,25 @@ def _want(t):
     return None
 
 
-def want_again(texts, last, now=None):
-    """上一个做的东西还热乎（mem["last_make"] 6 小时内）、他这句在要改 / 重做 → 照上一个的种类再做一个；不是 → None"""
+def _again_hit(t, last, now=None, hist=None, busy=False):
+    """他这句算不算在要改 / 重做上一个（11-10 v1.17.35 审查 V5-14，规矩见 AGAIN_SURE 上面那段）"""
+    if AGAIN_ASK.search(t):
+        return False                       # 问进度：不算重做（正在做的接着做；刚交货的交给 followup 看要不要再发一次）
+    if AGAIN_SURE.search(t):
+        return True
+    if not AGAIN_SOFT.search(t):
+        return False
+    if busy or about(last, [t]):
+        return True
+    ts = float(last.get("ts") or 0)        # 刚交货他紧接着说的：hist = 聊天记录（已经包括他这几句）
+    since = [h for h in (hist or []) if isinstance(h, dict) and float(h.get("ts") or 0) > ts]
+    return hist is not None and (now or time.time()) - ts <= AGAIN_HOT_SEC and len(since) <= AGAIN_HOT_GAP
+
+
+def want_again(texts, last, now=None, hist=None, busy=False, sure=False):
+    """上一个做的东西还热乎（mem["last_make"] 6 小时内）、他这句在要改 / 重做 → 照上一个的种类再做一个；不是 → None
+    （11-10 v1.17.35 审查 V5-14）hist = 聊天记录、busy = 那件正在做：回他那一轮传进来 认得严一点（_again_hit）；
+    sure=True = 已经定了要做（她自己在状态行写了「做东西」/ 承诺表里到点的那件）：照旧宽着认（AGAIN）"""
     if not isinstance(last, dict) or not last.get("kind"):
         return None
     if (now or time.time()) - float(last.get("ts") or 0) > AGAIN_SEC:
@@ -228,7 +270,7 @@ def want_again(texts, last, now=None):
     t = " ".join(str(x or "") for x in (texts or []))[-400:]
     if not t.strip() or AGAIN_NOT.search(t):
         return None
-    if not AGAIN.search(t):
+    if not (AGAIN.search(t) if sure else _again_hit(t, last, now, hist, busy)):
         m = NOT_BUT.search(t)
         old = " ".join([str(x) for x in (last.get("said") or [])] + [str(last.get("file") or ""), str(last.get("what") or "")])
         if not (m and m.group(1) in old):
@@ -524,7 +566,7 @@ def resend_block(last, now=None):
     """他说没看到文件、交货以后也没说要改什么 → 系统把那个文件再发一次（她说一句就行）"""
     ago = _ago((now or time.time()) - float((last or {}).get("ts") or 0))
     return (f"\n（他说没看到你发的文件 —— 系统记录里{ago}确实发过「{(last or {}).get('file')}」。"
-            "你说一句「再发你一次」就行 系统会把那个文件真的再发一遍；别说你改过了）\n")
+            "你说一声会再发一次就行 系统会把那个文件真的再发一遍；别说你改过了）\n")      # （11-11 v1.17.38 E1：不给现成的话）
 
 
 def find_file(data, last):
@@ -681,7 +723,7 @@ def _doc_rules(job):
 _TAIL = ("- 输出格式：代码块前面什么都别写；"
             "代码块后面另起一行 用你自己的口气说一句交货的话 30 字以内 "
             "—— 东西已经做好了 别再说「这就来」「马上画」；再另起一行写「做的是：…」20 字以内 说清楚画了 / 做了什么"
-            "（比如「做的是：一只鹈鹕在河边骑车 嘴里叼着鱼」）—— 这行不发给他 是让你以后记得自己做了啥\n"
+            " —— 这行不发给他 是让你以后记得自己做了啥\n"      # （11-11 v1.17.38 E1：不给现成的话） 以前给了一条示范内容
             "- 别解释代码 / 内容、别分段讲、别说「复制下面这段」—— 系统会把它存成文件发给他\n"
             "- 最后照常写 %%STATE%% 那一行\n")
 

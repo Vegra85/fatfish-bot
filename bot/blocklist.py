@@ -55,6 +55,12 @@
   放过 / 庭审期间撤销 → 占位那一段从 off 里拿掉（end_cool / unblock）→ 他那几分钟私聊说的照开机补回那套补回给她（不告诉他）
   老板撤销（冷却 / 拉黑）→ 告诉他（申诉过的：看过你的申诉）+ 给她状态；删了好友的等他加回来再说
   data/blocklist.json 新字段：cases[…].found / cool[…].found {p, g}（他找过她几次 不存原话）、cases[…].by（老板送的）、cases[…].back_t、pinfo {QQ: 最近一次撤销}
+11-10 v1.17.35 审查 V2-1（小明 11-10 定的真删门槛；delete_gate / note_told）：再审、二审判删除都要两条都满足，不够只冷却不删 ——
+  ① 只有冷却的通知确实发到他手里（cases[…].told_t：bot._case_notice 发送成功以后才记）之后他还说的话才算数；占位期间 / 通知之前说的只当背景
+     （不为它们开再审、卷宗里不编号）；通知没发出去（发送失败 / 不是好友发不了）→ 不能删
+  ② 前后加起来核实过的 ≥ delete_min（3）句、分布在 ≥ delete_days（2）个北京日子（以前核实过的看案子的 quotes）
+  V2-15：cool_over —— 冷却到点以后、他自己先开口之前，通用的主动找人不选他（bot._cool_quiet）
+  data/blocklist.json 新字段：cases[…].told_t（冷却的通知发到他手里的时间；没有 = 没发到 / 老案子 → 不能当删除的依据）
 config → blocklist（见 DEFAULTS）
 """
 import copy
@@ -71,6 +77,8 @@ DATA = ROOT / "data"
 DEFAULTS = {"enabled": True,
             "block_min": 2,          # 拉黑：法庭引用、代码核实过的他的话至少几条（11-02 v1.17.10 阶段1：以前是「记账几次」）
             #   ↑ block_min / delete_min / delete_days：11-03 v1.17.13 起只有老判词的封顶（caps，回话自检的老情景）用；新流程看 cool_min / retrial_min_total / second_min
+            #   （11-10 v1.17.35 审查 V2-1：delete_min / delete_days 重新用起来 —— 再审、二审判删除都要过 delete_gate：
+            #     通知发到他手里以后说的才算数、前后一共核实 ≥ delete_min 句、分布在 ≥ delete_days 个北京日子；不够只冷却不删）
             "delete_min": 3,         # 删好友：核实过的引用至少几条
             "delete_days": 2,        # 删好友：这几条至少分布在几个不同的北京日子（11-02 v1.17.10 阶段1）
             "window_days": 7,
@@ -639,6 +647,87 @@ def trial_caps(stage, verdict, ok, prior=0):
     return {"result": res, "verdict": vd, "why": "；".join(why), "n": n, "days": days, "ok": ok}
 
 
+# ───────────── 11-10 v1.17.35 审查 V2-1：真删的门槛（小明 11-10 定的）─────────────
+# 以前：一审核实 1 句 → 冷却 → 他再说 1 句（占位那两三分钟里、还没收到任何通知时说的也算）→ 再审就能删：2 句、同一天、约 6 分钟。
+# 现在两条都满足才允许删（再审、二审都过这里；影子模式也是 —— 「本来会删」才是真话）；不够的只冷却不删：
+#   ① 只有「冷却的通知确实发到他手里之后」他还说的话才算数；通知没发出去（发送失败 / 不是好友发不了）→ 没有「通知之后」→ 不能删
+#   ② 前后加起来核实过的 ≥ delete_min（3）句、分布在 ≥ delete_days（2）个不同的北京日子
+def note_told(cid, now=None):
+    """冷却的通知确实发到他手里了 → 记在案子上 told_t（只记第一次）→ 记上了没有
+    bot._case_notice 在发送返回成功以后才调（不是「先记后发」那本账）；没有 told_t = 没发出去 / 老案子没记 → 这个案子不能当删除的依据"""
+    out = {"ok": False}
+
+    def upd(d):
+        c = next((x for x in d["cases"] if isinstance(x, dict) and x.get("id") == cid), None)
+        if not c or c.get("told_t"):
+            return False
+        c["told_t"] = round(float(now or time.time()), 3)
+        out["ok"] = True
+    _update(upd)
+    return out["ok"]
+
+
+def delete_gate(stage, c, ok, base=None):
+    """法庭判了删除、trial_caps 也过了以后再过这一道（只往轻里压）→ {"why": 不能删的原因（"" = 可以删）, "n": 前后一共核实几句, "days": 分布在几个北京日子}
+    base：看哪个案子的「通知发到了没有」和「以前核实过的话」（不给 = 自己找）——
+      再审：这个案子自己（冷却的通知 told_t、立案时核实过的 quotes）；这次核实的只算通知之后说的
+      二审：他上次冷却的那个案子（cooled 记的 case；这次的话本来就是那次冷却到点以后的）；那个案子的记录没有了 → 当通知没发到（拿不准判轻）
+        他删过数据（「冷却过」只剩时间、没有案号；案子里核实过的原话也清了）：找他最近那个判了冷却的案子（控制台撤销之后的），
+        以前核实过几句按案子上留的 n_ok 算、时间按立案那天算 —— 删数据不等于洗白（v1.17.13），也不因为删过数据就永远删不了
+    c：这个案子（副本）；ok：这次核实过的 [{t, …}]（verify / trial_caps 出来的）"""
+    c = c if isinstance(c, dict) else {}
+    ok = [m for m in ok or [] if isinstance(m, dict)]
+    if base is None:
+        d = _load()
+        uid, cid = str(c.get("uid") or ""), str(c.get("id") or "")
+        mine = [x for x in d["cases"] if isinstance(x, dict) and uid and str(x.get("uid")) == uid]
+        if stage == STAGE_RE:
+            base = next((x for x in mine if cid and str(x.get("id")) == cid), None)
+        else:
+            cd = d["cooled"].get(uid) if isinstance(d["cooled"].get(uid), dict) else {}
+            pid = str(cd.get("case") or "")
+            if pid:
+                base = next((x for x in mine if str(x.get("id")) == pid and pid != cid), None)
+            else:
+                pd = float((d.get("pardons") or {}).get(uid) or 0)
+                base = next((x for x in reversed(mine) if str(x.get("id")) != cid and x.get("result") == "冷却"
+                             and float(x.get("t") or 0) > pd), None) if cd else None
+    base = base if isinstance(base, dict) else {}
+    try:
+        told = float(base.get("told_t") or 0)
+    except (TypeError, ValueError):
+        told = 0.0
+
+    def ts(m):
+        try:
+            return float(m.get("t") or 0)
+        except (TypeError, ValueError, AttributeError):
+            return 0.0
+    post = [m for m in ok if told and (stage != STAGE_RE or ts(m) > told)]
+    prior = [t for t in [ts(q) for q in base.get("quotes") or []] if t]
+    if not prior and base.get("wiped"):    # 删过数据：原话清了、只剩句数
+        try:
+            prior = [float(base.get("t") or 0)] * max(0, min(6, int(base.get("n_ok") or 0)))
+        except (TypeError, ValueError):
+            prior = []
+    all_t = prior + [ts(m) for m in post]
+    n = len(all_t)
+    days = len({clock.strf("%Y-%m-%d", t) for t in all_t})
+    dmin = max(2, int(_f("delete_min")))
+    ddays = max(1, int(_f("delete_days")))
+    if not told:                           # 原因写短一点：会进给她的那行状态（最多 200 字）、给老板的通知、日志
+        why = "冷却的通知没发到他手里" if stage == STAGE_RE else "上次冷却的通知没发到他手里 / 那次的记录没有了"
+    elif not post:
+        why = "核实的话都是通知发到他手里之前说的"
+    elif n < dmin:
+        why = f"前后一共核实 {n} 句（要 {dmin} 句）"
+    elif days < ddays:
+        why = f"核实的 {n} 句只在 {days} 天里（要 {ddays} 天）"
+    else:
+        why = ""
+    return {"why": why, "n": n, "days": days}
+
+
 # ───────────── 案子 ─────────────
 def new_cid(now=None):
     """案号：月日-时分-4 位随机（11-03 v1.17.13：立案前先定好 —— 占位的冷却要记上是哪个案子的）"""
@@ -912,8 +1001,14 @@ def add_ev(cid, item, now=None):
 def ev_due(c):
     """这个案子有没有还没审过的、他冲她说的话（标 本人→她）—— 有才再审（11-03 v1.17.13）
     只有 @别人 / 只是提到她 / 转发、引用别人的：照样收着（下次再审时给法庭当背景），但不为它们开再审 —— 核对时它们本来就不能当证据，
-    为它们开庭只会白花一次、还占掉一次再审的名额（retrial_max）"""
-    return any(isinstance(e, dict) and not e.get("seen") and e.get("tag") == TAG_OWN for e in (c or {}).get("ev") or [])
+    为它们开庭只会白花一次、还占掉一次再审的名额（retrial_max）
+    （11-10 v1.17.35 审查 V2-1）冷却的通知发到他手里（told_t）之前说的（占位期间的 / 通知没发出去的）也一样：收着当背景、不为它们开再审"""
+    try:
+        told = float((c or {}).get("told_t") or 0)
+    except (TypeError, ValueError):
+        told = 0.0
+    return any(isinstance(e, dict) and not e.get("seen") and e.get("tag") == TAG_OWN and told and float(e.get("t") or 0) > told
+               for e in (c or {}).get("ev") or [])
 
 
 def retrial_begin(cid, now=None):
@@ -1246,7 +1341,7 @@ def forget(uid, names=(), data_dir=None):
             continue
         if str(cs.get("uid")) == uid:
             d["cases"][i] = {k: cs.get(k) for k in ("id", "uid", "t", "state", "verdict", "result", "cool_until", "closed", "n_ok", "days",
-                                                    "stage", "end") if k in cs}       # 冷却中收的证据、核实的原话、再审的理由都不留（11-03 v1.17.13）
+                                                    "stage", "end", "told_t") if k in cs}   # 冷却中收的证据、核实的原话、再审的理由都不留（11-03 v1.17.13）；told_t 只是通知发到的时间（11-10 v1.17.35）
             d["cases"][i]["wiped"] = int(time.time())
             n += 1
         else:
@@ -1382,6 +1477,17 @@ def cool_ends(now=None, back_hours=12, ahead_sec=0):
         if now - float(back_hours) * 3600 < until <= now + float(ahead_sec):
             out.append((str(u), dict(e)))
     return out
+
+
+def cool_over(uid, now=None):
+    """（11-10 v1.17.35 审查 V2-15）他最近那次冷却已经到点了 → 到点的时间戳；没冷却过 / 还在冷却 / 被拉黑 / 记录过期清掉了 → 0
+    主动找人用（bot._cool_quiet）：到点以后、他自己先开口之前 她不主动去找他（v1.17.28 小明 选的「她不主动去找他」）"""
+    uid = str(uid or "")
+    if not uid:
+        return 0
+    b = _cache()                           # 跟 is_blocked 用同一份缓存（主动找人每轮每个私聊都问一次 别每次都读文件）
+    until = b["c"].get(uid, 0)
+    return until if uid not in b["s"] and 0 < until <= float(now or time.time()) else 0
 
 
 def pardon_info(uid):

@@ -6,7 +6,8 @@
     groups : {群号: {"mode": "normal|quiet|at_only|mute", "mute_until": 时间戳,
                      "admin": {群管设的档位 见 groupadmin.py}, "qq_ban": {QQ 里被禁言到几点（她自己 / 全员 分开记 见 set_ban）}}}
              normal=正常  quiet=少说（不主动插话/冒泡/收尾 有人跟她说照常回）
-             at_only=只在有人 @/叫名字/引用她时说话  mute=完全不说话（消息照样记）
+             at_only=只在有人 @她 / 叫她名片名（bot_name / group_card）/ 引用她时说话（大肥鱼 / 西米这些外号不算 11-09 v1.17.32）
+             mute=完全不说话（消息照样记）
              mute_until：临时静音到这个时间（过了自动恢复 mode）
              实际生效的 = 控制台的 mode、群管设的 admin、QQ 禁言 三个里最严的那个（group_mode）
     blocked: {QQ号: 备注}  完全不理（消息也不记）—— 11-02 v1.17.6 起 她自己拉黑的（data/blocklist.json 的 blocked）也算（blocked() 一起看）
@@ -236,8 +237,10 @@ def set_self_off(uid, entry):
     _edit(f)
 
 
-def forget_person(uid):
-    """删数据（wipe）：他的「别接我的话」记录删掉；他当群管时设的档位留着（那是群的设置）但名字和原话抹掉"""
+def forget_person(uid, data_dir=None):
+    """删数据（wipe）：他的「别接我的话」记录删掉；他当群管时设的档位留着（那是群的设置）但名字和原话抹掉
+    data_dir（11-10 v1.17.35 审查 V4-6 / V4-7）：给了 = 改那个目录里的 control.json（备份副本 / 每日包解出来的 / 机器人没开时控制台删）；
+    没有这个文件 / 读坏了 / 没有他的 → 不写。老板定的屏蔽 / 标成机器人照旧不动"""
     uid = str(uid)
 
     def f(d):
@@ -253,6 +256,20 @@ def forget_person(uid):
             b = g.get("qq_ban")
             if isinstance(b, dict) and str(b.get("by")) == uid:
                 b["by"] = ""
+    if data_dir is not None:
+        fp = Path(data_dir) / "control.json"
+        try:
+            d = json.loads(fp.read_bytes().decode("utf-8-sig"))
+        except (FileNotFoundError, ValueError):
+            return
+        if not isinstance(d, dict):
+            return
+        d0 = json.dumps(d, sort_keys=True, ensure_ascii=False, default=str)
+        f(d)
+        if json.dumps(d, sort_keys=True, ensure_ascii=False, default=str) != d0:
+            with safeio.file_lock(fp):
+                safeio.write_json(fp, d)
+        return
     _edit(f)
 
 

@@ -8,7 +8,7 @@ DeepSeek 当脑子，[NapCat](https://github.com/NapNeko/NapCatQQ) 接 QQ（OneB
 > **这不是一个下载就能用的成品 AI。** 仓库里是思路、工具和集成：怎么接 QQ、怎么在群里接话、掉线了怎么补回、怎么看图 / 唱歌 / 做东西、怎么省 token、怎么做本机控制台……
 > **她是谁、记得什么、心情怎么变、跟谁有多熟 —— 这些「灵魂」不公开**，仓库里是能跑的空壳，要你自己造一个你自己的 AI。
 >
-> 当前版本 **v1.17.42**（2026-11-11）· [更新日志](CHANGELOG.md) · 作者每天在跑：Windows 11 + Python 3.15 · API key、聊天记录、记忆都不在仓库里
+> 当前版本 **v1.18.0**（2026-11-11）· [更新日志](CHANGELOG.md) · 作者每天在跑：Windows 11 + Python 3.15 · API key、聊天记录、记忆都不在仓库里
 
 ![控制台总览（演示数据）](docs/screenshots/overview.png)
 

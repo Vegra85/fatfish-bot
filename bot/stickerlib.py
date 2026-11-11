@@ -385,14 +385,19 @@ def view(entries, limit=60):
             "shadow": bool(C.get("shadow", True)), "on": on(), "conf": {k: C[k] for k in DEFAULTS}}
 
 
-def forget(uid, texts=(), names=()):
-    """删他的：影子记录里他说的那几句（按名字 / 原话认）→ 删了几行"""
+def forget(uid, texts=(), names=(), data_dir=None):
+    """删他的：影子记录里他说的那几句（按名字 / 原话认）→ 删了几行
+    11-10 v1.17.35 审查 V4-5：他私聊的那几行（conv = private_他的号）整行删 —— 以前只把 chat 清空，那一行还留着
+      「private_他的号 + 她回他的话 said + 模型对他那句话的概括 why」；群里的行照旧只去掉他说的那几句
+    data_dir（审查 V4-6 / V4-7）：给了 = 改那个目录里的 sticker_shadow.jsonl（备份副本 / 每日包解出来的 / 机器人没开时控制台删）"""
     texts = {str(t)[:60] for t in texts if t}
     names = {str(n)[:12] for n in names if n}
-    if not texts and not names:
+    fp = shadow_file() if data_dir is None else Path(data_dir) / "sticker_shadow.jsonl"
+    mine = f"private_{uid}" if str(uid or "").strip() else None
+    if not texts and not names and not mine:
         return 0
     try:
-        lines = shadow_file().read_text(encoding="utf-8").splitlines()
+        lines = fp.read_text(encoding="utf-8").splitlines()
     except OSError:
         return 0
     out, n = [], 0
@@ -401,6 +406,9 @@ def forget(uid, texts=(), names=()):
             r = json.loads(ln)
         except ValueError:
             continue
+        if mine and isinstance(r, dict) and r.get("conv") == mine:
+            n += 1
+            continue
         keep = [c for c in r.get("chat") or [] if not (c[0] in names or c[1] in texts)]
         if len(keep) != len(r.get("chat") or []):
             r["chat"] = keep
@@ -408,7 +416,7 @@ def forget(uid, texts=(), names=()):
         out.append(json.dumps(r, ensure_ascii=False))
     if n:
         try:
-            shadow_file().write_text("\n".join(out) + ("\n" if out else ""), encoding="utf-8")
+            fp.write_text("\n".join(out) + ("\n" if out else ""), encoding="utf-8")
         except OSError:
             return 0
     return n

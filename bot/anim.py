@@ -217,13 +217,35 @@ def proactive_ok():
     return ok and int(A.get("proactive") or 0) > 0 and _today()["proactive"] < int(A["proactive"])
 
 
-def block(mode, why="", can_img=False, proactive=False):
-    """给她看的「做动画」说明（只在有人要、或她自己想做的时候出现）"""
+def recent_prompts(conv=None, n=3):
+    """她最近做出来的几条动画的画面描述（新的在前；11-11 v1.17.36）
+    私聊里做的只在那个私聊里列（跟 talk_block 一样）；删了数据的那条没有描述 不列"""
+    out = []
+    for h in reversed(_load()["history"]):
+        c = str(h.get("conv") or "")
+        p = str(h.get("prompt") or "").strip()
+        if not h.get("ok") or not p or (c.startswith("private_") and c != str(conv or "")):
+            continue
+        out.append(p)
+        if len(out) >= n:
+            break
+    return out
+
+
+def block(mode, why="", can_img=False, proactive=False, conv=None):
+    """给她看的「做动画」说明（只在有人要、或她自己想做的时候出现）
+    11-11 v1.17.36（小明：「做视频跳不开一开始给的提示词 永远是在用键盘敲东西」）：
+    这里原来有一句示范画面（扑到超大的电脑键盘上打滚…镜头从上往下拉近）—— 她照着写 做出来的 14 条里 5 条是键盘、
+    一半是「趴在超大的 X 上 + 镜头慢慢拉近」。示范句去掉（E1：不给示范 会变口头禅）；只写要写清楚哪几样，
+    再给她看自己最近做过的几条（事实），这次换个不一样的。conv：这一轮的对话（私聊里做的只在那个私聊里列）"""
     sound = "带声音" if A.get("generate_audio") else "没有声音"
-    rules = ("画面描述一两句（80 字内）写清楚：主角、在哪、做什么动作、镜头怎么动"
-             "（比如：她扑到一个超大的电脑键盘上来回打滚 键帽被压得一闪一闪 镜头从上往下慢慢拉近）。"
+    rules = ("画面描述一两句（80 字内）写清楚：主角、在哪、做什么动作、镜头怎么动。"
              "描述里用「她」指你自己（做视频的模型不认识「大肥鱼」这个名字）。"
              "别画真人和名人、别的作品里的角色，别要画面里出现字。\n")
+    recent = recent_prompts(conv) if mode == "ok" or proactive else []
+    if recent:
+        rules += ("你最近做过的动画（系统记的画面描述，新的在前）：\n" + "\n".join(f"- {x}" for x in recent)
+                  + "\n这次的场景、动作、镜头别跟这几条重样。\n")
     if proactive:
         return ("\n# 做动画\n你可以做一个 5 秒的小动画（" + sound + "）发到群里 系统会真的去做 一两分钟后发出来："
                 "写一句配的话 再加一个 [[动画:画面描述]]（主角是你自己就写 [[动画:自己|画面]]）。" + rules
@@ -234,8 +256,8 @@ def block(mode, why="", can_img=False, proactive=False):
     if mode != "ok":
         return ""
     s = ("\n# 做动画（这一轮可以做）\n对方要是想让你做个动画/视频：在回复里加一个 [[动画:画面描述]]，"
-         f"系统会真的去做（5 秒 {sound}），一两分钟后自动发出来 —— 所以这次可以说「在做了 等我一两分钟」；"
-         "不写这个标记就别答应。只做一个。\n" + rules
+         f"系统会真的去做（5 秒 {sound}），一两分钟后自动发出来；不写这个标记就不会做，那就别答应。只做一个。"
+         "画什么：他说了要什么就照他说的，没说就跟正在聊的事有关。\n" + rules
          + "主角是你自己：写 [[动画:自己|画面]]（会拿你的头像当参考 保证长得像你 场景随便换）；"
          "想让某张表情包里的角色动起来：[[动画:表情包名字|画面]]。\n")
     if can_img:

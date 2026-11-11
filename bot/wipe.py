@@ -16,6 +16,8 @@
     - 注意力存档 data/attention/（10-30 影子模式）：带他 QQ 号的行删
     - 影子日志 data/court、data/ambiguity、data/cooling（10-30 阶段 0：法庭 / 歧义 / 冷却）：带他 QQ 号或名字的行删
     - 每日生活 data/life（日程里写着的他的名字、等着回他的那一轮）、qqevents.json / sing_state.json / announce.json 里他的那项（11-02 v1.17.1）
+    - 别的模块自己管的文件（11-10 v1.17.35 审查 V4-6 / V4-7：side_files）：说到做到 commit.json、control.json 里他的「别接我的话」、
+      恶作剧 prank_state.json、生日 congrats.json、表情包词典 / 表情包库影子记录 —— 控制台离线删、备份副本 / 每日包里的也删
     - 每天的 data 包（daily/data_*.zip）、记忆卫生迁移前的整份备份（memhyg_*）、迁移记录和报告、读坏另存的 .bad-*：
       按上面一样的规矩改一遍（10-28 审查 memory-3：以前这些里他的东西原样都在 拿出来放回 data 就全回来了）
   记一笔什么时候删的（data/wiped.json 只有 QQ 号和时间）：重启补看漏掉的消息时 不会把删之前的又捡回来
@@ -312,6 +314,31 @@ def facts_about(m, names, uid="", mids=None):
     return len([f for f in dead if f.get("status") == "active"])
 
 
+def _unmark(h, uid, names):
+    """一条聊天记录 / 存档行上的记号里的他 → 改了没有（11-10 v1.17.35 审查 V4-3：以前只改 text，这几个记号原样留着 ——
+    别人引用他 / 刚 @ 完他接着说的那几句还标着他的名片，她回他的每一句还挂着他的 QQ 号，who_tag 照样拼出「（回复 他）」给模型看）
+    别人那句的 re（回复谁）/ to（接着跟谁说）/ fake（名片像谁）存的是名片：整个字段就是他的名字 → re / to 换「某人」、fake 拿掉
+      （整个字段一模一样才算，所以叠词 / 常用词名字也认 —— 跟 _about 认 who 一个口径；名片里夹着他名字的照 scrub 的规矩换）
+    她那句的 to 存的是她回的那个人的 QQ 号：是他 → 拿掉这个字段（re 是她引用的那条消息的号 不是人 不动）"""
+    ch = False
+    if h.get("role") == "user":
+        for k in ("re", "to", "fake"):
+            v = h.get(k)
+            if not isinstance(v, str) or not v:
+                continue
+            v2 = "某人" if v.strip() in (names or ()) else scrub(v, names or ())
+            if v2 != v:
+                if k == "fake":
+                    h.pop(k)
+                else:
+                    h[k] = v2
+                ch = True
+    elif h.get("to") is not None and str(h.get("to")) == str(uid):
+        h.pop("to")
+        ch = True
+    return ch
+
+
 def conv_mem(m, uid, names, texts, mids=None):
     """就地改一个群（或者别人私聊）的记忆：删他的话、抹掉别人话里的他、删关于他的记忆和外号
     群：提到他的前情提要整段删（他在场 里面都是他说的事）；别人的私聊：前情提要里只把名字换成「某人」"""
@@ -344,6 +371,7 @@ def conv_mem(m, uid, names, texts, mids=None):
                     if s2 != h["sys"]:
                         h["sys"] = s2
                         rep["scrubbed"] += 1
+            _unmark(h, uid, names)         # re / to / fake 里的他（11-10 v1.17.35 审查 V4-3；要在上面看完 to 是不是他之后）
             keep.append(h)
         m[fld] = keep
     cs = m.get("corrections")              # 本人更正过的事（11-02 v1.17.3 挂在前情提要后面的）：他说的 / 提到他的 删掉
@@ -447,6 +475,9 @@ def archives(data, uid, names, texts):
                 e["text"] = t2
                 ln = json.dumps(e, ensure_ascii=False)
                 changed = True
+            if _unmark(e, uid, names):     # re / to 里的他（11-10 v1.17.35 审查 V4-3）
+                ln = json.dumps(e, ensure_ascii=False)
+                changed = True
             out.append(ln)
         if changed:
             _write_lines(p, out)
@@ -500,6 +531,14 @@ def traces(data, uid, names):
                 rep["social"] = rep.get("social", 0) + hit
             except OSError:
                 pass
+    p = data / "share_once.json"                               # 他私聊里同意群里说一次的那件（11-09 v1.17.33 cross.py）：只存消息号 也删
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(d, dict) and d.pop(str(uid), None) is not None:
+            p.write_text(json.dumps(d, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            rep["share_once"] = 1
+    except (OSError, ValueError):
+        pass
     for kind in ("court", "ambiguity", "cooling", "social"):    # 影子日志（10-30 阶段 0：法庭 / 歧义 / 冷却；11-01 社交细节）：带着他的 QQ 号 / 名字的行删掉
         for p in sorted((data / kind).glob("*.jsonl")):
             lines = _read_lines(p)
@@ -889,6 +928,47 @@ def _scrub_memhyg(data, uid, names):
     return n
 
 
+# ───────────── 别的模块自己管的那几个文件（11-10 v1.17.35 审查 V4-6 / V4-7）─────────────
+def side_files(data, uid, names, texts):
+    """data 这个目录里、归别的模块管的那几个文件里的他：
+      commit.json（说到做到：答应他的、给他的到点的事、他的私聊）、control.json（他的「别接我的话」、当群管时留的名字和原话 ——
+      老板定的屏蔽 / 标成机器人不动）、prank_state.json（恶作剧记录 / 免整名单）、congrats.json（他说过的生日、给他发过的记录）、
+      sticker_dict.json（表情包词典里他发图时 / 接话时的那几句）、sticker_shadow.jsonl（表情包库影子记录：他私聊的行、群里他说的那几句）
+    怎么删在各模块自己的 forget 里（跟机器人在线删用的是同一个函数，这里传 data_dir = 只改这个目录里的文件、不碰内存）；
+    这里只管「一共有哪几个」—— 控制台离线删（run_offline）和备份副本 / 每日包（_wipe_copy）都走这一份清单
+    （以前：离线删在 panel.py 里另列了一份 漏了后三个；备份副本一个都不管 —— 删过数据的人的约定原话和生日在 14 天的每日包里原样留着）
+    机器人在线删（bot._wipe_person）仍旧一个个调各模块的 forget（要连内存里记着的一起清）：往这里加文件时那边也要加
+    没有这个文件 → 跳过（不新建）；公开版的空壳（forget 不收 data_dir）→ 跳过；出错 / 一直打不开 → 记进这一次的「没删到」"""
+    import importlib
+    import inspect
+    data, uid = Path(data), str(uid)
+    names, texts = {n for n in (names or ()) if n}, set(texts or ())
+    strong = {n for n in names if not _weak_name(n)}
+    todo = (("commit.json", "commit", "forget_person", lambda f: f(uid, strong, weak=names - strong, data_dir=data)),
+            ("control.json", "control", "forget_person", lambda f: f(uid, data_dir=data)),
+            ("prank_state.json", "prank", "forget_person", lambda f: f(uid, data_dir=data)),
+            ("congrats.json", "congrats", "forget", lambda f: f(uid, data_dir=data)),
+            ("sticker_dict.json", "stickerdict", "forget", lambda f: f(uid, texts, names, data_dir=data)),
+            ("sticker_shadow.jsonl", "stickerlib", "forget", lambda f: f(uid, texts, names, data_dir=data)))
+    rep = {}
+    for fname, mod, fn, call in todo:
+        if not (data / fname).exists():
+            continue
+        try:
+            f = getattr(importlib.import_module(mod), fn)
+            if "data_dir" not in inspect.signature(f).parameters:
+                continue
+            got = call(f)
+        except Exception:
+            _busy(data / fname)
+            continue
+        if got is False:                   # prank：打不开 → False
+            _busy(data / fname)
+        elif got and got is not True:
+            rep[mod] = got
+    return rep
+
+
 # ───────────── 备份里的他（10-28 审查 memory-3）─────────────
 def _snapshot(d):
     import hashlib
@@ -921,6 +1001,7 @@ def _wipe_copy(d, uid, names, texts=(), imgs=(), mids=()):
     private_files(d, uid)
     archives(d, uid, names, texts)
     misc(d, uid, names, texts, imgs)
+    side_files(d, uid, names, texts)             # 说到做到 / 控制台规则 / 恶作剧 / 生日 / 表情包那几个文件（11-10 v1.17.35 审查 V4-7）
     return _snapshot(d) != before
 
 
@@ -950,9 +1031,18 @@ def backups(root, uid, names=(), texts=(), imgs=(), mids=()):
     root = backup_20261024：daily/data_*.zip 和 memhyg_*（迁移前整份 data/memory 的拷贝）都按删数据一样的规矩改一遍"""
     root, uid = Path(root), str(uid)
     rep = {"backup_zips": 0, "backup_copies": 0, "backup_fail": 0}
-    for d in sorted(root.glob("memhyg_*")):
+    # 11-08 v1.17.31（复核 I-10 / PM-6）：以前只扫 memhyg_*，改代码前的备份带着整份 data（1102_before_*）、迁移留下的
+    # uidfix_* 都删不到 —— 回滚一放回去 他就复活了。现在 root 下所有带 memory\ 或 data\memory\ 的目录都扫（daily 另算）
+    seen = set()
+    for d in sorted(root.iterdir()) if root.is_dir() else []:
+        if not d.is_dir() or d.name == "daily":
+            continue
+        target = d if (d / "memory").is_dir() else (d / "data") if (d / "data" / "memory").is_dir() else None
+        if target is None or str(target) in seen:
+            continue
+        seen.add(str(target))
         try:
-            if d.is_dir() and _wipe_copy(d, uid, names, texts, imgs, mids):
+            if _wipe_copy(target, uid, names, texts, imgs, mids):
                 rep["backup_copies"] += 1
         except Exception:
             rep["backup_fail"] += 1
@@ -1156,6 +1246,7 @@ def run_offline(data, uid, backup_dirs=()):
     rep.update(pf)
     rep.update(archives(data, uid, c["names"], c["texts"]))
     rep.update(misc(data, uid, c["names"], c["texts"], c["imgs"], backup_dirs))
+    rep.update(side_files(data, uid, c["names"], c["texts"]))    # 生日 / 表情包词典 / 表情包库影子记录…（11-10 v1.17.35 审查 V4-6：以前离线删漏了）
     rep.update(backups(data.parent / "backup_20261024", uid, c["names"], c["texts"], c["imgs"], c.get("mids")))   # 10-28 审查 memory-3
     ok = mark(data, uid)
     for _ in range(3):                     # 控制台这边记在内存里没用（机器人那边不知道）：多等几下再写（10-28 Gemini 第二轮复查）

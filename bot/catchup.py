@@ -12,7 +12,7 @@
       几分钟 → 开头顺口交代一下现在才看到（怎么说她自己定 10-30 v1.15.3 不再给示范句）
       几小时 → 先交代现在才看到 事情可能已经过去了 还要紧再回
       隔天   → 简短说一句才看到 + 一句回应
-      那段时间正好是她的睡觉时间 → 也可以说刚睡醒
+      那段时间正好是她的睡觉时间 → 也可以说刚睡醒（11-10 v1.17.35：夜猫子模式开着 = 她不睡 → 不给这句）
 """
 import time
 from datetime import datetime
@@ -73,6 +73,16 @@ def _slept(t_from, t_to, tz=None, sleep=(3, 8)):
     return False
 
 
+def _owl():
+    """夜猫子模式开着吗（11-10 v1.17.35 审查 V8-1：开着 = 她不睡 → 晚回不给「那段时间在睡 / 可以说刚睡醒」——
+    以前只看钟点，夜猫子开着也给，跟同一轮「# 现在」的熬夜中打架。问 clock（唯一出口）；问不了 → 当关着 = 老行为）"""
+    try:
+        import clock
+        return bool(clock.owl())
+    except Exception:
+        return False
+
+
 def late_note(oldest, newest, now=None, scene="private", tz=None, cause="offline", sleep=(3, 8)):
     """回得晚的时候加进提示词的一段话（没晚就返回空）
     cause：offline = 下线期间的（可以说刚才掉线了）；missed = 在线但漏回的（别说掉线 就说刚看到）
@@ -96,7 +106,7 @@ def late_note(oldest, newest, now=None, scene="private", tz=None, cause="offline
     else:
         s = (f"\n【隔了很久才回】这几条消息{when} 现在才看到。"
              "简短说一句才看到 再回一句就好 别像刚收到一样热情地展开。")
-    if wait >= 1800 and _slept(oldest, now, tz, sleep):
+    if wait >= 1800 and _slept(oldest, now, tz, sleep) and not _owl():
         s += "那段时间正好是你睡觉的点 也可以说刚睡醒。"
     s += "别说具体是什么故障。"
     if scene == "group":

@@ -32,8 +32,18 @@ DEFAULTS = {"enabled": True, "gif_gap_min": 120, "daily_max": 6, "wait_sec": 180
             "wave_sec": 300, "lead_delay": [4, 12]}
 C = dict(DEFAULTS)
 
-BDAY_SELF = re.compile(r"(?:今天|今儿|今日)?(?:是|就是)?我(?:的)?(?:\d{1,4}\s*岁)?(?:的)?生日|"
-                       r"我(?:今天|今儿)?(?:过|满)?(?:\d{1,4}\s*岁)?生日(?:啦|了|耶|呀|哦)?|今天我(?:过)?生日|我(?:今天)?满\s*\d{1,4}\s*岁(?:了|啦)")
+# （11-10 v1.17.35 审查 V8-4）以前「今天 / 是 / 的」全是可选的：话里有「我生日 / 我的生日」就当成今天生日 ——
+#   「我生日快到了」「我生日是 3 月」「等我生日再说」「我妈把我生日记错了」都回写死的「生日快乐」+ 动图、还把今天记成他的生日
+#   （之后他真生日那天反而被当成「他另一天也说过」不带头）。现在：说的是今天才算 ——
+#   带「今天 / 今儿 / 今日」的（今天我生日 / 我今天生日 / 今天是我 18 岁生日 / 我今天满 18 岁了）、或者整句就是「我过生日啦」「我生日了」；
+#   「生日」后面得是这句话的边或者接着说别的（空格标点 / 啦了耶 / 你我大家都也…）——「今天我生日礼物到了」「今天是我生日的前一天」不算
+_BD_DAY = r"(?:今天|今儿|今日)"
+_BD_END = (r"(?:啦|了|耶|呀|哦|咯|啊|嘛|呢|哈|诶|欸)*"
+           r"(?=$|[^0-9A-Za-z\u4e00-\u9fff]|[你我他她咱大都也还却但可没不就好真太竟居结所然而求请想要有来快谁怎])")
+BDAY_SELF = re.compile(_BD_DAY + r"(?:是|就是|可是|也是|正是|正好是|刚好是)?我(?:的)?(?:\d{1,4}\s*岁)?(?:的)?(?:过)?生日" + _BD_END + "|"
+                       r"我" + _BD_DAY + r"(?:是|就是)?(?:过|满)?(?:\d{1,4}\s*岁)?(?:的)?生日" + _BD_END + "|"
+                       r"^[\W哈嘿耶啊哇呜]*我(?:过)?生日(?:啦|了|耶|呀|哦|咯)+\W*$|"
+                       r"(?:" + _BD_DAY + r"我|我" + _BD_DAY + r")满\s*\d{1,4}\s*岁")
 BDAY_OTHER = re.compile(r"今天(?:是)?\s*(?:@\S{1,20}|[^\s，,。！!？?]{1,12}?)\s*(?:的)?生日(?!快乐)")
 NEWS = re.compile(r"我(?:考研|考公|考编|考博)?上岸了|(?:我|终于)(?:考|过|通过)了.{0,6}?(?:考试|四级|六级|驾照|科目[一二三四]|雅思|托福|答辩|面试|笔试)|"
                   r"我?(?:拿到|收到)(?:了)?\s*offer|我?转正了|我?升职了|我毕业了|我?脱单了|我?订婚了|我?结婚了|我?领证了|"
@@ -266,15 +276,33 @@ def mark_sent(act, gif, now=None):
     save(d)
 
 
-def forget(uid):
-    """删数据：他说过的生日、发过的记录里带他的"""
+def forget(uid, data_dir=None):
+    """删数据：他说过的生日、发过的记录里带他的
+    data_dir（11-10 v1.17.35 审查 V4-6 / V4-7）：给了 = 改那个目录里的 congrats.json（备份副本 / 每日包解出来的 / 机器人没开时控制台删）；
+    没有这个文件 / 读坏了 / 没有他的 → 不写；不碰内存里等着发的"""
     uid = str(uid)
-    d = load()
+    fp = None if data_dir is None else Path(data_dir) / "congrats.json"
+    if fp is not None:
+        try:
+            d = json.loads(fp.read_bytes().decode("utf-8-sig"))
+        except (FileNotFoundError, ValueError):
+            return 0
+        if not isinstance(d, dict) or not isinstance(d.get("claims", {}), dict) or not isinstance(d.get("gif", {}), dict):
+            return 0
+        d0 = json.dumps(d, sort_keys=True, ensure_ascii=False, default=str)
+    else:
+        d = load()
     n = len(d.get("claims", {}).pop(uid, []) or [])
     before = len(d.get("sent") or [])
     d["sent"] = [s for s in d.get("sent") or [] if f":{uid}:" not in s.get("key", "") and s.get("conv") != f"private_{uid}"]
     n += before - len(d["sent"])
     d.get("gif", {}).pop(f"private_{uid}", None)
+    if fp is not None:
+        if json.dumps(d, sort_keys=True, ensure_ascii=False, default=str) != d0:
+            tmp = fp.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(fp)
+        return n
     for k in [k for k in _state["pend"] if k[1] == uid or k[0] == f"private_{uid}"]:
         _state["pend"].pop(k, None)
     save(d)

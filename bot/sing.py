@@ -9,7 +9,7 @@
     → 先把她别的话发完 → 剪好那段（ffmpeg 转 24k 单声道 wav 头尾淡入淡出）当语音发 → 聊天记录里记成 [[唱:歌名]]
   点的歌歌单里没有（10-26 小明）：去网易云/B站找完全对得上的原唱 截 online_sec（默认 12 秒）高潮唱（music.py）
     找不到就直说没找到 —— 绝不拿歌单里的歌顶替（以前「唱雨爱」她放了 Let Me Go）
-  只说「唱首歌」没点名：先问对方想听什么（不唱）；问她会唱什么：报歌单里那几首
+  只说「唱首歌」没点名：先问对方想听什么（不唱）；问她会唱什么：照实情 —— 录好的那几首随时能唱、别的点了名现找（11-11 v1.17.37：以前写「就报这几首」她说只会两首）
   限制：同一个对话 gap_sec（默认 120 秒）内只唱一次、每天最多 daily_max（默认 30）次；
         有人说「别唱了」→ 这个对话 6 小时不唱；QQ 不收太长的语音 → 自动剪成 short_sec（默认 60 秒）再发一次
   点歌升级（11-01 v1.16.0）：
@@ -54,6 +54,7 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _cfg = dict(DEFAULTS)
 _permits = {}                 # 对话 -> {"until", "left"}：这一轮有人要她唱 才能唱
+_owed = {}                    # 对话 -> (时刻, 答应过的那句)：这一轮能唱是因为她答应过他、提醒她兑现（他没点歌 11-11 v1.17.37）
 _wait_left = {}               # 对话 -> 还要等几秒才能再唱（「wait」那条告诉她真实的数 10-31 v1.15.15）
 _wait_why = {}                # 对话 -> 「wait」是因为什么（"full" = 这个对话里给人唱的整首还在后台弄 11-02 v1.17.1；"full_q" = 他在问那首整首好了没 v1.17.3）
 _full_conv = {}               # 对话 -> 正在后台弄的整首数（11-02 v1.17.1：这时候这个对话里再点歌先等整首发出去）
@@ -658,14 +659,14 @@ def full_job_in(conv):
     return max(got, key=lambda x: float(x[1].get("t") or 0)) if got else None
 
 
-def plan(conv, scene, texts, her_last="", her_t=0, force=False, by="", log=print):
+def plan(conv, scene, texts, her_last="", her_t=0, force=False, by="", log=print, full=False):
     """这一轮跟唱歌有没有关系（正文在 _plan）
     11-03 v1.17.13（Codex F5）：回复的那一轮（by = 这一轮说话的人、不是 force）不是 sing / talk → 回复那几轮给的、没用掉的唱歌许可收掉
       （「这一轮有人要她唱 才能唱」—— 以前返回 None / wait 的那一轮不收：上一轮剩的许可 300 秒内她在无关的一轮写了标记照样唱）
       talk 照旧给许可（唱不唱她自己看）。不收的：到点唱（_task_say 不带 by：它 force 给的、别的到点的事那一轮也不收）、
       拿不准没人选唱第一个（take_choice 给的 没有 by）、整首（_full_ok 另一套）—— 这几条拿到许可马上就用 别被同时进来的一轮收走
       上一轮刹车停下、没唱成的（他又补了一句 下一轮一起回 → bot 那边 hold）：留给他自己的下一轮一次（别人那几轮也不收）"""
-    m = _plan(conv, scene, texts, her_last, her_t, force, by, log)
+    m = _plan(conv, scene, texts, her_last, her_t, force, by, log, full)
     if not force and by and m not in ("sing", "talk"):
         pm = _permits.get(conv)
         if isinstance(pm, dict) and pm.get("by"):
@@ -696,7 +697,7 @@ def hold(conv, uid, now=None):
     return n
 
 
-def _plan(conv, scene, texts, her_last="", her_t=0, force=False, by="", log=print):
+def _plan(conv, scene, texts, her_last="", her_t=0, force=False, by="", log=print, full=False):
     """这一轮跟唱歌有没有关系 → None / sing（让她唱）/ talk（聊到唱歌）/ none（一首都不会）/ wait（刚唱过）/ cap / muted / off
     force：她答应过要唱、到点了（承诺表）—— 当成有人点名要（10-31 v1.15.17）
     by：这一轮说话的人（11-01 v1.16.0：记下谁点的歌；她问了要哪个版本 只认点歌的人选）"""
@@ -786,7 +787,9 @@ def _plan(conv, scene, texts, her_last="", her_t=0, force=False, by="", log=prin
             _choice[conv] = ch
         return "wait"
     gap = int(_cfg.get("ask_gap_sec", 20)) if asked else int(_cfg.get("gap_sec", 120))   # 有人点名要：只隔 ask_gap_sec（10-31 v1.15.15）
-    if now - cs.get("last", 0) < gap:
+    # 11-09 v1.17.34（小明：「要了整首但是还是不唱 … 我们又没有排队的请求」）：明说要整首的补许可（full）不管这个间隔 ——
+    #   整首在后台录、几分钟后才发 不会跟刚才那段连着刷；以前刚唱完那段 20 秒内他要整首 → wait → 整首丢了、她只能说「等会儿」
+    if not full and now - cs.get("last", 0) < gap:
         _wait_left[conv] = max(1, int(gap - (now - cs.get("last", 0))))
         if pick and ch:
             _choice[conv] = ch                         # 选了但现在还不能唱：问的那次留着（到点照样唱第一个 / 过会儿再选）
@@ -848,30 +851,56 @@ def block(mode, texts=None, conv=None):
     if mode == "wait" and conv and _wait_why.get(conv) == "full":
         return ("\n# 唱歌\n对方想听你唱歌 但你给人唱的一首整首还在录（录好了系统自己发出去）：这会儿先不唱别的 让他等整首发出去再点。"
                 "别写唱歌标记；你是会唱歌的 别说你不会、别说没这功能。\n")
-    if mode == "wait":
+    if mode == "wait":                     # 11-09 v1.17.34：只写事实（以前写了「嗓子、声音都好好的」—— 她照着编出「嗓子都哑了」）
         left = _wait_left.get(conv) if conv else None
-        return ("\n# 唱歌\n对方想听你唱歌 但你上一首刚发出去" + (f"：还差 {left} 秒才能再唱" if left else "") +
-                " —— 只是两首之间要隔一下（嗓子、声音都好好的 不是唱不了）。这次先不唱 让他过一会儿再点。"
-                "别写唱歌标记；你是会唱歌的 别说你不会、别说没这功能。\n")
+        return ("\n# 唱歌\n对方想听你唱歌；你上一首刚发出去" + (f"，系统还差 {left} 秒才发下一首" if left else "，系统两首之间要隔一会儿") +
+                " —— 只是两首之间的间隔 不是唱不了；这一轮写了唱歌标记也不会发歌。\n")
     pool = songs()
     joined = " ".join(t for t in his_words(texts)[-3:] if t)
     hit = next((x for x in pool if any(n and n in joined for n in [x.get("name")] + list(x.get("aliases") or []))), None)
-    known = ("你会唱的（有人问你会唱什么 就报这几首）：\n" + _list(pool) + "\n") if pool else "你自己录好的歌：还没有。\n"
+    known = repertoire(pool, online)          # 11-11 v1.17.37：以前「你会唱的（有人问你会唱什么 就报这几首）」—— 她说只会两首（其实点名的都能现找）
+    ow = _owed.pop(conv, None) if conv else None
+    if ow and time.time() - float(ow[0]) > 120:
+        ow = None
     how = ("单独一行写 [[唱:歌名]]（知道是谁唱的就写 [[唱:歌名 - 歌手]]）。上面你会的就唱那首；"
            + ("你没学过的 系统会去网易云/B站找原唱 唱十来秒高潮 —— 照他点的歌名写 千万别换成你会的那几首。" if online
               else "你没学过的就直说这首还不会 别换成你会的那几首。"))
     s = "\n# 唱歌\n" + known
-    if mode == "sing":
+    if mode == "sing" and ow:
+        s += (f"这一轮他没点歌；能唱是因为你答应过他：{str(ow[1])[:60]}（见「你说过的话」那节）。"
+              f"要兑现就单独一行写唱歌标记：答应的是哪首就写哪首；答应的没说哪首 唱哪首你自己定。{how}\n"
+              "前后可以各说一句很短的话；别写歌词 别描述自己在唱。\n")
+    elif mode == "sing":
         s += ("对方想听你唱。\n"
               f"- 他点了歌名：{how}" + (f"（他点的是你会的《{hit.get('name')}》）" if hit else "") + "\n"
               "- 他没说唱哪首（只说「唱首歌」「唱一个」）：先问他想听什么 这次别唱\n"
               "前后可以各说一句很短的话；别写歌词 别描述自己在唱。\n")      # 11-02 v1.17.3 E1：以前写了例句「咳咳 献丑了」她照抄
     else:
-        s += (f"这轮有人聊到唱歌：有人问你会唱什么 就报你会的；有人点了歌名让你唱 {how}"
+        s += (f"这轮有人聊到唱歌：有人问你会唱什么 照上面的实情说；有人点了歌名让你唱 {how}"
               "只是聊到唱歌 就正常聊。\n")
     s += "有人问歌是谁唱的、谁做的 就照括号里的出处说 别编。\n"
     s += _net_note(conv)
     return s
+
+
+def repertoire(pool=None, online=None):
+    """她会唱什么（事实 11-11 v1.17.37）：自己录好的那几首 + 开着现找的话 点了名的别的歌也能唱
+    小明 11-11：「人是猫和肥鱼摸鱼不要写死 每次别人问就说会这两首 她什么都可以唱」"""
+    pool = songs() if pool is None else pool
+    online = bool(_cfg.get("online", True)) if online is None else bool(online)
+    s = ("你自己录好的翻唱（随时能唱）：\n" + _list(pool) + "\n") if pool else "你自己录好的翻唱：还没有。\n"
+    if online:
+        s += ("别的歌：有人点了歌名，系统会去网易云/B站现找原唱、换成你的声音唱一段（找得到就能唱，找不到才唱不了）"
+              "—— 你会唱的不止录好的这几首。\n")
+    else:
+        s += "别的歌：还不会（现找原唱关着）。\n"
+    return s
+
+
+def owed_note(conv, what):
+    """这一轮给唱歌许可是因为她答应过他（bot 那边 commit.owed_song 给的）→ 唱歌那节照这个写（11-11 v1.17.37）"""
+    if conv:
+        _owed[conv] = (time.time(), str(what or ""))
 
 
 def _net_note(conv):
@@ -1060,12 +1089,15 @@ def full_busy_in(conv):
     return bool(_full_conv.get(str(conv)))
 
 
-def full_plan(conv, uid, texts, circle, smode, now=None, log=print):
+def full_plan(conv, uid, texts, circle, smode, now=None, log=print, owed=""):
     """这一轮跟唱整首有没有关系 → None（没关系 / 关着）/ {"state", "circle", "rule", "daily", "used", "beg_min"}
     state：grant（给许可）/ beg（第一次 先不答应 等他再求）/ begged（他又求了：给许可）/ cap（今天的名额用完）/ none（别人家的鱼 不唱整首）
            / busy（他上一首整首还在弄）
     smode：sing.plan 这一轮的结果 —— 不是 "sing"（刚唱过 / 说过别唱 / 今天唱够了…）就照原来的规矩 不管整首；
-    「他又求了」那次可能没带「唱」字（plan 没给许可）→ begged + need_permit=True（bot 那边用 plan(force=True) 补许可）"""
+    「他又求了」那次可能没带「唱」字（plan 没给许可）→ begged + need_permit=True（bot 那边用 plan(force=True) 补许可）
+    owed（11-09 v1.17.34）：她答应过给他唱整首、还没唱（说到做到那条的原话）→ 他这一轮没提也当他要（不用他再求；
+      歌名看那条原话里的《》、没有就看这个对话 6 小时内唱过的那首；都没有 → None 别硬给）
+    smode 是两首之间的间隔挡掉的 wait（不是整首在录）：照样给、要补许可（bot 那边 plan(force=True, full=True) 不管间隔）"""
     if not full_on():
         return None
     now = float(now or time.time())
@@ -1084,6 +1116,12 @@ def full_plan(conv, uid, texts, circle, smode, now=None, log=print):
         _which.pop(k, None)
         wh = None
     ask = full_ask(texts)
+    owe_song = ""
+    if owed and not ask and not pend and not wh:       # 答应过的整首（11-09 v1.17.34）
+        m = re.search(r"《([^》]{1,40})》", str(owed))
+        owe_song = (m.group(1).strip() if m else "") or last_song(conv, now, within=6 * 3600)
+        if not owe_song:
+            return None
     try:
         daily = int(rule.get("daily", 1))
     except (TypeError, ValueError):
@@ -1099,7 +1137,9 @@ def full_plan(conv, uid, texts, circle, smode, now=None, log=print):
         log(f"[唱歌] {conv} {uid} 又求了一次整首（{circle}）→ 这次答应")
         return dict(base, state="begged", need_permit=smode != "sing")
     named = False
-    if not ask:
+    if not ask and owe_song:
+        base.update(song=owe_song, owed=True)
+    elif not ask:
         if not wh:
             return None                  # 没要整首：照原来的规矩
         if CANCEL.search(j) or NEG.search(j):
@@ -1115,12 +1155,13 @@ def full_plan(conv, uid, texts, circle, smode, now=None, log=print):
         _which.pop(k, None)              # 又说了一次要整首：照这句来
     need = False
     if smode != "sing":
-        if smode not in (None, "talk"):
-            return None                  # 现在本来就不能唱（刚唱过 / 说过别唱 / 唱够了 / 关着）：照原来的规矩（那边的状态会告诉她为什么）
+        gap_wait = smode == "wait" and _wait_why.get(str(conv)) not in ("full", "full_q")   # 只是两首之间的间隔（11-09 v1.17.34）
+        if smode not in (None, "talk") and not gap_wait:
+            return None                  # 现在本来就不能唱（整首在录 / 说过别唱 / 唱够了 / 关着）：照原来的规矩（那边的状态会告诉她为什么）
         # 11-02 v1.17.11：「我想听整首」没带「唱」字 → 以前这里直接 None：没整首许可、却有聊唱歌的许可
         # → 她嘴上答应整首、写了标记、系统把刚才那段原样又发一遍。现在也算点歌：补一个许可（bot 那边 plan(force=True)）
         need = True
-    if not named and _anaphoric(texts):  # 只说了「整首」没报歌名：多半是刚才那首
+    if not named and not base.get("owed") and _anaphoric(texts):  # 只说了「整首」没报歌名：多半是刚才那首
         song = last_song(conv, now, within=1800)   # 半小时内唱过的那首
         if song:
             base["song"] = song
@@ -1137,7 +1178,7 @@ def full_plan(conv, uid, texts, circle, smode, now=None, log=print):
         return dict(base, state="busy", need_permit=need)
     if daily >= 0 and used >= daily:
         return dict(base, state="cap", need_permit=need)
-    if rule.get("beg"):
+    if rule.get("beg") and not base.get("owed"):      # 答应过的：不用他再求
         _beg[k] = {"t": now, "said": j[-80:]}
         log(f"[唱歌] {conv} {uid} 要整首（{circle}）→ 第一次先不答应 等他再求（{base['beg_min']} 分钟内）")
         return dict(base, state="beg", need_permit=need)
@@ -1193,6 +1234,8 @@ def full_block(fp):
     song = str(fp.get("song") or "")
     mark = (f"他要的是你刚才唱的那首的整首：单独一行写 [[唱:{song}]]（这次系统给的是整首 不是十来秒）。" if song
             else "唱的时候照常单独一行写 [[唱:歌名]]（这次系统给的是整首 不是十来秒）。")
+    if fp.get("owed") and song:          # 11-09 v1.17.34：答应过的整首
+        mark = f"你答应过给他唱《{song}》的整首、还没唱：要唱就单独一行写 [[唱:{song}]]（这次系统给的是整首 不是十来秒）。"
     if st == "which":
         return "\n# 唱整首\n他想听整首 但没说是哪首、你最近也没唱过：先问他要哪首；这一轮别写唱歌标记。\n"
     if st == "beg":
@@ -1200,6 +1243,8 @@ def full_block(fp):
                 f"（{fp.get('beg_min', 10)} 分钟内他再求，就答应）。这一轮别唱整首（唱一段可以，照常写标记就是一段）。\n")
     if st == "begged":
         return f"\n# 唱整首\n他又求了：这次答应，唱整首。{slow}{mark}\n"
+    if st == "grant" and fp.get("owed"):
+        return f"\n# 唱整首\n{slow}{mark}\n"
     if st == "grant":
         if c in TOP:
             s = "你们关系最好，整首随时给他唱，不用他求。" + ("嘴上可以不承认是特意给他唱的。" if rule.get("tsundere") else "")
@@ -1655,8 +1700,13 @@ def last_song(conv, now=None, within=None):
 
 
 def history_line(song):
+    """聊天记录里记的那句；网上现找的、换声开着却没换成（服务没开 / 出错 / 正忙）→ 后面记一笔 [原唱录音：…]
+    （11-11 v1.17.41 小明：「刚刚唱歌她直接把未处理过的直接发了出来」—— 发的是原唱 她不知道；bot.to_messages 挪出来另起一条系统记录）"""
     if song.get("online"):
-        return f"[[唱:{song.get('name')}" + (f" - {song['artist']}" if song.get("artist") else "") + "]]"
+        s = f"[[唱:{song.get('name')}" + (f" - {song['artist']}" if song.get("artist") else "") + "]]"
+        if (_cfg.get("cover") or {}).get("enabled") and not song.get("fy"):
+            s += " [原唱录音：换声那边当时用不了 没换成你的声音 是原唱歌手自己的声音]"
+        return s
     return f"[[唱:{song.get('name')}]]"
 
 

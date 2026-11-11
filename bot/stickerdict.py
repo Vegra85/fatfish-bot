@@ -559,8 +559,10 @@ def edit(sid, fix=None, redo=None):
     return True
 
 
-def forget(uid, texts=(), names=()):
-    """删数据：他发表情包时记下的上下文删掉；别人发的那几次里 他说的话（前文 / 接的那句）和提到他名字的也去掉；返回删了几处"""
+def forget(uid, texts=(), names=(), data_dir=None):
+    """删数据：他发表情包时记下的上下文删掉；别人发的那几次里 他说的话（前文 / 接的那句）和提到他名字的也去掉；返回删了几处
+    data_dir（11-10 v1.17.35 审查 V4-6 / V4-7）：给了 = 改那个目录里的 sticker_dict.json（备份副本 / 每日包解出来的 / 机器人没开时控制台删）；
+    没有这个文件 / 读坏了 / 没有他的 → 不写；不碰内存里的那份"""
     uid = str(uid)
     pre = {str(t).strip()[:40] for t in texts or () if str(t).strip()}
     nm = [str(x) for x in names or () if len(str(x)) >= 2]
@@ -569,8 +571,22 @@ def forget(uid, texts=(), names=()):
         x = str(x or "")
         return bool(x) and (x.strip()[:40] in pre or any(n in x for n in nm))
     n = 0
-    d = load()
+    fp = None if data_dir is None else Path(data_dir) / "sticker_dict.json"
+    if fp is not None:
+        try:
+            d = json.loads(fp.read_bytes().decode("utf-8-sig"))
+        except (FileNotFoundError, ValueError):
+            return 0
+        if not isinstance(d, dict) or not isinstance(d.get("items"), dict):
+            return 0
+    else:
+        d = load()
     for v in d["items"].values():
+        if not isinstance(v, dict):
+            continue
+        if f"private_{uid}" in (v.get("convs") or ()):     # 这张图在哪些对话里见过：他的私聊（= 他的 QQ 号）拿掉（11-10 v1.17.35 审查 V4-6）
+            v["convs"] = [x for x in v["convs"] if x != f"private_{uid}"]
+            n += 1
         before = len(v.get("ctx") or [])
         v["ctx"] = [c for c in v.get("ctx") or [] if c.get("uid") != uid]
         n += before - len(v["ctx"])
@@ -585,6 +601,12 @@ def forget(uid, texts=(), names=()):
             if bad(c.get("said")):
                 c["said"] = ""
                 n += 1
+    if fp is not None:
+        if n:
+            tmp = fp.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(fp)
+        return n
     for conv in [c for c in _pending if c == f"private_{uid}"]:
         _pending.pop(conv, None)
     save(force=True)
