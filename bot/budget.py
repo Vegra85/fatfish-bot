@@ -127,6 +127,8 @@ def allow(kind, owner=False, conv="", uid="", now=None):
         return True, ""
     if kind in FULL_KINDS and control.full_on(now):
         return True, "火力全开"
+    if kind in ("private", "direct") and _cfg.get("never_skip_sought", True):
+        return True, "找她的不省（11-07 v1.17.25 不玩消失）"   # 小明 11-07：「不聊要给用户警告 不能直接玩消失」
     now = now or time.time()
     u = usage()
     w = curve(u)

@@ -302,6 +302,39 @@ def is_human(uid):
     return str(uid) in (rules().get("humans") or {})
 
 
+# ───── 夜猫子模式（11-07 v1.17.25 小明：「设置一个开关控制睡觉 就叫夜猫子模式 默认开启」）─────
+# 开着 = 她不睡：作息里该睡 / 在睡觉 / 刚起床那几个钟点都算熬夜（clock.state）；她嘴上说要睡也不记成睡着（commit 不挡消息）
+# 开关：data/control.json 的 night_owl {on, t, by}（控制台「快捷操作 → 作息」点）；没点过 → config behavior.night_owl（默认 true）
+_owl_cfg = {"m": None, "v": True}
+
+
+def _owl_default():
+    p = ROOT / "config.json"
+    try:
+        m = p.stat().st_mtime
+        if m != _owl_cfg["m"]:
+            cfg = json.loads(p.read_text(encoding="utf-8-sig")) or {}
+            _owl_cfg.update(m=m, v=bool((cfg.get("behavior") or {}).get("night_owl", True)))
+    except Exception:
+        pass
+    return bool(_owl_cfg["v"])
+
+
+def night_owl():
+    """夜猫子模式开着吗（开着 = 她不睡）"""
+    v = rules().get("night_owl")
+    if isinstance(v, dict) and "on" in v:
+        return bool(v.get("on"))
+    if isinstance(v, bool):
+        return v
+    return _owl_default()
+
+
+def set_night_owl(on, by="控制台"):
+    """控制台开 / 关夜猫子模式（记进 control.json：重启后照旧）"""
+    _edit(lambda d: d.__setitem__("night_owl", {"on": bool(on), "t": time.time(), "by": str(by or "")[:20]}))
+
+
 def _edit(fn):
     """读 control.json → fn(d) 改 → 原子写回（机器人这边改：自动认出的 AI、火力全开…）
     整个读改写包一把跨进程的锁（11-03 v1.17.13 Codex F11）：控制台和机器人两个进程都走这里 —— 以前各读各的、

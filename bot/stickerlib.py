@@ -24,7 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 DEFAULTS = {"enabled": True, "shadow": True, "min_conf": 60, "min_people": 2, "max_items": 300, "cands": 8,
-            "gap_min": 5, "daily": 150}
+            "gap_min": 5, "daily": 150,
+            "every_n": 5, "send_gap_min": 10, "same_hours": 6}   # 转正以后（shadow: false 11-06 v1.17.19）：她回 5 轮最多跟 1 张、两张隔 10 分钟、同一张 6 小时内不重复
 C = dict(DEFAULTS)
 _lock = threading.Lock()
 _D = {"d": None}
@@ -77,6 +78,9 @@ def load():
                 d = {}
             d.setdefault("items", {})
             d.setdefault("days", {})
+            for k in ("sent", "n", "recent"):        # 转正以后的限频（11-06 v1.17.19）：每个对话上次发的 / 她回了几轮 / 每张上次发的时间
+                if not isinstance(d.get(k), dict):
+                    d[k] = {}
             _D["d"] = d
         return _D["d"]
 
@@ -103,15 +107,17 @@ def people(e):
     return len({str(c.get("uid")) for c in (e.get("ctx") or []) if c.get("uid")})
 
 
-def eligible(e):
-    """词典条目 → 够不够格收进她的库（理由）"""
+def eligible(e, in_lib=False):
+    """词典条目 → 够不够格收进她的库（理由）
+    in_lib（已经在库里的 挑图时用）：不看把握 —— 11-06 v1.17.22：重新认以后把握低了（DeepSeek 打分偏低）就不给挑了；
+    把握只管收不收新的，收进来的只看适不适合自己发 / 截图照片擦边"""
     if not e:
         return False, "没这张"
     dp = e.get("deep") or {}
     if not e.get("fix"):
         if not dp:
             return False, "还没深度认"
-        if float(dp.get("conf") or 0) < float(C["min_conf"]):
+        if not in_lib and float(dp.get("conf") or 0) < float(C["min_conf"]):
             return False, "把握不够"
         if dp.get("ok") is False:
             return False, "认图时说不适合自己发"
@@ -179,9 +185,10 @@ async def steal(sid, url, fetch, e=None, log=print):
 def candidates(entries, k=None):
     """库里的 → [(sid, 词典条目)] 按热度（次数 + 群数）取前 k 张；词典条目不够格了的跳过"""
     out = []
+    recent = _recent_sids()                     # 转正以后：6 小时内发过的不再给它挑（11-06 v1.17.19）
     for sid in load()["items"]:
         e = entries.get(sid)
-        if not e or not eligible(e)[0]:
+        if not e or not eligible(e, in_lib=True)[0] or sid in recent:
             continue
         heat = int(e.get("n", 0)) + 3 * len(e.get("convs") or [])
         out.append((heat, sid, e))
@@ -197,10 +204,12 @@ def _desc(e):
 
 
 def ready(conv, now=None):
-    """这个对话现在能不能做一次影子挑图（开关 / 库里有图 / 间隔 / 一天上限）"""
-    if not on() or not C.get("shadow", True) or not load()["items"]:
+    """这个对话现在能不能挑一次图（开关 / 库里有图 / 间隔 / 一天上限；转正以后还要限频允许 —— 发不了就不白问模型）"""
+    if not on() or not load()["items"]:
         return False
     now = float(now or time.time())
+    if live() and send_block(conv, now=now):
+        return False
     if now - _last.get(conv, 0) < float(C["gap_min"]) * 60:
         return False
     day = time.strftime("%Y-%m-%d", time.localtime(now))
@@ -247,6 +256,79 @@ async def shadow_pick(conv, chat, said, entries, llm, log=print, now=None):
         pass
     log(f"[表情包库·影子] {conv}：" + (f"会发「{row['name'] or sid[:12]}」（{row['why'][:30]}）" if sid else f"不发（{row['why'][:30]}）"))
     return row
+
+
+# ───────────── 转正（11-06 v1.17.19 小明 选：shadow: false = 挑中了真发；限频是 小明 定的）─────────────
+def live():
+    return on() and not C.get("shadow", True)
+
+
+def note_reply(conv, now=None):
+    """她在这个对话回了一轮（转正以后才数：回够 every_n 轮才能再跟一张）"""
+    d = load()
+    d["n"][str(conv)] = int(d["n"].get(str(conv), 0)) + 1
+    if len(d["n"]) > 500:
+        for k in list(d["n"])[:100]:
+            d["n"].pop(k, None)
+    save()
+
+
+def _recent_sids(now=None):
+    if not live():
+        return set()
+    now = float(now or time.time())
+    win = float(C["same_hours"]) * 3600
+    return {s for s, t in (load()["recent"] or {}).items() if now - float(t or 0) < win}
+
+
+def rename(sid, name):
+    """词典重新认好了 → 库里这张的名字跟着改（11-06 v1.17.21：以前收进来时的名字一直不变 —— 认错的「芙宁娜扣盆」改不过来）"""
+    it = load()["items"].get(str(sid))
+    nm = str(name or "").strip()[:30]
+    if not it or not nm or it.get("name") == nm:
+        return False
+    it["name"] = nm
+    save()
+    return True
+
+
+def file_of(sid):
+    it = load()["items"].get(str(sid)) or {}
+    p = lib_dir() / str(it.get("file") or "")
+    return p if it.get("file") and p.is_file() else None
+
+
+def send_block(conv, sid=None, now=None):
+    """能不能发（不能 → 原因；能 → 空）：这个对话上一张以后她回够了几轮、隔够了几分钟；这张 6 小时内没发过；图还在"""
+    now = float(now or time.time())
+    d = load()
+    last = d["sent"].get(str(conv)) or {}
+    if last:
+        n = int(d["n"].get(str(conv), 0))
+        if n < int(C["every_n"]):
+            return f"上一张以后她才回了 {n} 轮"
+        if now - float(last.get("t") or 0) < float(C["send_gap_min"]) * 60:
+            return f"离上一张还不到 {int(C['send_gap_min'])} 分钟"
+    if sid is not None:
+        if str(sid) in _recent_sids(now):
+            return f"这张 {int(C['same_hours'])} 小时内发过"
+        if file_of(sid) is None:
+            return "图找不到了"
+    return ""
+
+
+def mark_sent(conv, sid, now=None):
+    now = float(now or time.time())
+    d = load()
+    d["sent"][str(conv)] = {"t": round(now), "sid": str(sid)}
+    d["n"][str(conv)] = 0
+    d["recent"][str(sid)] = round(now)
+    keep = max(float(C["same_hours"]) * 3600, 86400)
+    d["recent"] = {s: t for s, t in d["recent"].items() if now - float(t or 0) < keep}
+    if len(d["sent"]) > 500:
+        for k in list(d["sent"])[:100]:
+            d["sent"].pop(k, None)
+    save()
 
 
 # ───────────── 控制台 ─────────────
@@ -296,7 +378,7 @@ def view(entries, limit=60):
     for sid, it in load()["items"].items():
         e = entries.get(sid) or {}
         items.append({"id": sid, "name": it.get("name") or (e.get("deep") or {}).get("name") or "", "t": it.get("t"),
-                      "n": e.get("n", 0), "people": people(e), "ok": eligible(e)[0]})
+                      "n": e.get("n", 0), "people": people(e), "ok": eligible(e, in_lib=True)[0]})
     items.sort(key=lambda x: -int(x["n"] or 0))
     good = sum(1 for v in lb.values() if v)
     return {"items": items, "rows": rows, "good": good, "bad": sum(1 for v in lb.values() if v is False),

@@ -705,7 +705,7 @@
  "stickerlib": {
   "_说明": "她自己的表情包库（C31 10-31 v1.15.14）：表情包词典里认清楚（把握 ≥ min_conf 或老板核对过）、群里 ≥ min_people 个人发过的 → 原图收进 bot\\data\\sticker_lib；shadow=true 时她每说一句让判断模型挑「接哪张 / 不接」只记不发（控制台「表情包词典」页最上面看 + 标）。gap_min 同一个地方几分钟最多挑一次 daily 一天最多挑几次 max_items 库里最多几张",
   "enabled": true,
-  "shadow": true,
+  "shadow": false,
   "min_conf": 60,
   "min_people": 2,
   "max_items": 300,
@@ -757,7 +757,7 @@
   "delete_days": 2,
   "cool_hours": 24,
   "court": true,
-  "delete_mode": "shadow",
+  "delete_mode": "auto",
   "court_timeout": 90,
   "case_msgs": 40,
   "court_daily": 10,

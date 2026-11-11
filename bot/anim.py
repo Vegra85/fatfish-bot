@@ -46,6 +46,8 @@ DEFAULTS = {
     "generate_audio": True,      # Seedance 2.0 mini 默认就带声音（不多算 token）
     "self_mode": "reference",    # 主角是她自己/表情包时：reference = 拿图当参考（长得像 场景随便换）；first_frame = 从这张图开始动
     "self_desc": "蓝色长卷发、戴白色女仆头饰、穿深蓝女仆裙和白围裙、身后有一条鲸鱼尾巴的Q版二次元女孩",
+    "text_style": "二次元卡通动画，不是真人实拍",   # 纯文字生成（没有参考图 / 第一帧）时加的画风；描述里自己写了画风就不加；空 = 不加
+    # ↑ 11-06 v1.17.20：不加的话做视频的模型默认画成真人照片风（11-05、11-06 两条都是真人猫娘）
     "price_cny_per_m": 23,       # 每百万 token 多少元（Seedance 2.0 mini 不含视频输入）
     "budget_cny": 190,           # 一共最多花这么多 花到就停
     "owner_daily": 20,
@@ -92,6 +94,10 @@ SELF_WORDS = {"自己", "我", "我自己", "本鱼", "大肥鱼", "头像"} | _
 NAME_WORDS = re.compile("|".join(["(蓝色)?大肥鱼", "本鱼", "肥鱼"] + [re.escape(x) for x in sorted(_cfg_names(), key=len, reverse=True)]))
 # ↑ 做视频的模型不认识她的名字 → 换成「她」
 USER_WORDS = {"这张图", "这张", "这图", "图", "那张图", "他的图", "对方的图", "刚才的图"}
+SHE = re.compile(r"她(?!们)")
+# ↑ 11-06 v1.17.20：block 里说了「描述里用『她』指你自己」—— 没写「自己|」但写了「她」= 主角是她（拿头像当参考）
+#   以前当成纯文字：做视频的模型不知道「她」是谁 画成了真人猫娘（11-05、11-06 她自己想做的两条；小明：「很诡异」）
+STYLE_WORDS = re.compile(r"写实|实拍|照片|真实感|电影感|3D|三维|像素|水墨|油画|黏土|定格|手绘|动画|动漫|卡通|二次元|漫画|Q版|画风|风格", re.I)
 _TOKENS = {"480p": 864 * 480, "720p": 1280 * 720, "1080p": 1920 * 1080}   # 每帧像素（估花费用）
 
 _st = None
@@ -259,19 +265,28 @@ def parse(spec):
         if a in USER_WORDS:
             return "user", "", b[:300]
         return "sticker", a, b[:300]
-    if NAME_WORDS.search(spec):
+    if NAME_WORDS.search(spec) or SHE.search(spec):   # 写了她的名字 / 写了「她」= 主角是她（「她们」不算）
         return "self", "", spec[:300]
     return "text", "", spec[:300]
 
 
 def video_prompt(kind, desc, mode):
-    """给视频模型的描述：主角是她时 写清楚长什么样、拿参考图/第一帧怎么用"""
+    """给视频模型的描述：主角是她时 写清楚长什么样、拿参考图/第一帧怎么用
+    纯文字生成（11-06 v1.17.20）：写了「她」但没有参考图（头像没准备好）→ 写清楚她长什么样；再加画风 text_style（描述里自己写了画风就不加）
+    从对方的图开始动：照原样"""
     p = NAME_WORDS.sub("她", desc or "").strip()
     if mode and kind in ("self", "sticker"):
         who = A.get("self_desc") if kind == "self" else "图片1里的角色"
         if mode == "reference":
             return f"参考图片1里的角色（{who}），保持她的长相、发型和衣服一致，生成这个画面：{p}"
         return f"第一帧里的这个角色（{who}）就是主角：{p}"
+    if mode:
+        return p
+    if SHE.search(p):
+        p = f"主角是一个{A.get('self_desc')}（下面说的「她」就是她）：{p}"
+    st = str(A.get("text_style") or "").strip()
+    if st and not STYLE_WORDS.search(p):
+        p += f"。画风：{st}"
     return p
 
 

@@ -80,6 +80,25 @@ SCHEDULE = [
     (12, 18, "下午", "醒了 在摸鱼 刷视频"),
     (18, 24, "晚上", "一天里最精神的时候 话会多一点"),
 ]
+# 夜猫子模式（11-07 v1.17.25 小明：「设置一个开关控制睡觉 就叫夜猫子模式 默认开启」）：开着 = 她不睡 ——
+#   该睡了 / 在睡觉 / 刚起床那几个钟点都算熬夜中（只给状态 E1）；她说了要睡（commit）也不算睡着；控制台「叫醒她」用不上
+OWL_SCHEDULE = [
+    (0, 8, "熬夜中", "夜猫子模式：不睡觉 精神还行 在刷视频或者打游戏"),
+    (8, 12, "上午", "醒着 在摸鱼 刷视频"),
+    (12, 18, "下午", "醒着 在摸鱼 刷视频"),
+    (18, 24, "晚上", "一天里最精神的时候 话会多一点"),
+]
+
+
+def owl():
+    """夜猫子模式开着吗（control.night_owl；读不了 → 当开着：默认就是开的）"""
+    try:
+        import control                  # 在函数里 import：control 也 import 了 clock
+        return bool(control.night_owl())
+    except Exception:
+        return True
+
+
 SLEEP_SRC = None      # 11-02 v1.17.5：bot.py 接 commit.sleep_state —— 她说了要睡（全局）→ (状态, 样子)；没睡 → None
 
 
@@ -129,6 +148,13 @@ def awake_until():
 
 
 def state():
+    if owl():                          # 夜猫子模式（11-07 v1.17.25）：不睡 —— 说过要睡、控制台叫醒都不看
+        n = now()
+        h = n.hour + n.minute / 60
+        for a, b, name, how in OWL_SCHEDULE:
+            if a <= h < b:
+                return name, how
+        return "晚上", ""
     if callable(SLEEP_SRC):            # 她说了要睡（全局 11-02 v1.17.5）：哪个钟点都算在睡觉
         try:
             st = SLEEP_SRC()

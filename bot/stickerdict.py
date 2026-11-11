@@ -161,6 +161,38 @@ def apply_edits():
     return redo
 
 
+def redo_due(limit=2, now=None, has_local=None, wait_sec=1800):
+    """标了「重新认」的：这次该认哪几张（11-06 v1.17.21：每次最多 limit 张 —— 以前标了几十张就一起开）
+    有原图的（has_local(id)：她的表情包库里存着）先认，没认成的 wait_sec 秒后再试；
+    只有链接的：同一个链接只试一次（多半过期了）—— 等下次有人发（seen 那边会认）"""
+    now = float(now or time.time())
+    d = load()
+    cand = []
+    for k, e in d["items"].items():
+        if not e.get("redo") or k in _inflight:
+            continue
+        try:
+            local = bool(has_local(k)) if has_local is not None else False
+        except Exception:
+            local = False
+        if local:
+            if now - float(e.get("redo_try") or 0) < float(wait_sec):
+                continue
+        elif not e.get("url") or e.get("redo_url") == e.get("url"):
+            continue
+        cand.append((0 if local else 1, -int(e.get("n") or 0), k))
+    cand.sort()
+    out = [k for _, _, k in cand[:max(0, int(limit))]]
+    for k in out:
+        e = d["items"][k]
+        e["redo_try"] = round(now)
+        if e.get("url"):
+            e["redo_url"] = e["url"]
+    if out:
+        save()
+    return out
+
+
 def _sid(sid):
     d = load()
     return d["alias"].get(str(sid), str(sid))
@@ -180,10 +212,11 @@ def text_for(e):
     if not dp or float(dp.get("conf") or 0) < 40:
         return None
     parts = []
+    me = "（画的是你）" if dp.get("self") else ""     # 11-06 v1.17.21
     if dp.get("name"):
-        parts.append(f"表情包「{dp['name']}」")
+        parts.append(f"表情包「{dp['name']}」{me}")
     else:
-        parts.append("表情包")
+        parts.append("表情包" + me)
     if dp.get("meaning"):
         parts.append("意思：" + dp["meaning"])
     if dp.get("usage"):
@@ -331,10 +364,48 @@ DEEP_MERGE = """你在整理一本「QQ 群表情包词典」。下面是一张�
  "ok": true / false（适不适合当一张普通表情包自己拿来发：截图、聊天记录、真人照片、擦边、带别人隐私的 → false）}
 看图结果和真人用法冲突时以真人用法为准；网上的资料对不上这张图就别用。"""
 
+# 11-06 v1.17.21（小明：「表情包收藏得不错但是注释不太对」）：深度认图以前不知道她长什么样 ——
+#   画她的表情包（蓝发女仆鲸鱼娘）认成了芙宁娜 / 三月七 / 斯卡蒂 / 散兵 / 柴郡 / 舰娘，再拿猜的名字上网查、照着写进词条；
+#   动图拼图角上的帧号「1、2、3、4、5、6」、角落的「AI生成」水印也当成了图里的字
+DEEP_LOOK_TEXT = "（动图拼成的那张：角上的小数字是帧的顺序，不是图里的字；角落里「AI生成」这种水印也不算字）"
+DEEP_LOOK_SELF = ("\n{who}\n画的要是她（对照上面她的长相：发色、女仆头饰、鲸鱼尾巴 / 像鲸鱼鳍的耳朵）→ 梗那行写「她本人（群里给她画的表情包）」，"
+                  "别往别的作品里长得像的角色上猜（蓝头发、穿女仆装的角色很多）；不是她就照常认。"
+                  "要对上她长相里至少两样明显的特征（发色发型、头饰、耳朵、尾巴这些）才算她；只对上一样（只是发色像、只是衣服像）不算。"
+                  "她的长相只拿来认她本人：别的角色、动物照常按你认得的写（是哪个表情包角色 / 哪种动物就写哪个），"
+                  "别因为她是鲸鱼娘就把蓝色的小动物、圆滚滚的小东西往鲸鱼上靠。")
+# ↑ 11-06 v1.17.23：v1.17.21 重新认的时候 猫猫虫咖波被认成了「软趴趴小鲸鱼」（以前没给她的长相时认得出是咖波）
+DEEP_MERGE_SELF = ("\n{who}\n看图结果的梗写的是「她本人」（画的是她）→ JSON 里多给 \"self\": true；name 别用别的角色的名字（按画面起，比如「鲸鱼女仆扣盆」），"
+                   "origin 写「群里给她画的表情包」，网上查到的别的角色的资料别用。不是她 → \"self\": false。")
+_FRAME_NUMS = re.compile(r"^\s*\d{1,2}(\s*[、,，.。\s]\s*\d{1,2}){2,}\s*$")
+_WATERMARK = re.compile(r"[（(]?\s*AI\s*生成\s*[)）]?", re.I)
 
-async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None):
+
+def look_prompt(frames="", who=""):
+    """给看图模型的提示：四行 + 帧号 / 水印不算字；who（她是谁、长什么样）→ 画的是她就认成她"""
+    p = DEEP_LOOK.format(frames=frames or "静态图") + "\n" + DEEP_LOOK_TEXT
+    who = str(who or "").strip()
+    return p + (DEEP_LOOK_SELF.format(who=who) if who else "")
+
+
+def merge_prompt(who=""):
+    who = str(who or "").strip()
+    return DEEP_MERGE + (DEEP_MERGE_SELF.format(who=who) if who else "")
+
+
+def clean_text(t):
+    """词条里的「字」：动图拼图的帧号（1、2、3、4、5、6）、单独的「AI生成」水印不算"""
+    t = str(t or "").strip()
+    q = "「」“”\"'"
+    if _FRAME_NUMS.match(t.strip(q)):
+        return ""
+    segs = [s for s in re.split(r"\s*[；;/|｜]\s*", t) if s.strip(q + " ") and not _WATERMARK.fullmatch(s.strip(q + " "))]
+    return "；".join(segs).strip()
+
+
+async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None, who=""):
     """深度认一张：look(b64, mime, prompt) 看图；llm(system, messages) 文字模型；search(q) → [{title, snippet}]；
-    fetch(url) → bytes。返回词条 dict 或 None"""
+    fetch(url) → bytes（url 可以是空的：调用的那边自己有原图 11-06 v1.17.21）；who：她是谁、长什么样（画的是她就认成她）。
+    返回词条 dict 或 None"""
     k = _sid(sid)
     if k in _inflight:
         return None
@@ -344,7 +415,7 @@ async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None
     e = d["items"].setdefault(k, {"n": 0, "first": round(now), "convs": [], "ctx": []})
     try:
         url = url or e.get("url") or ""
-        if not url or fetch is None:
+        if fetch is None:
             return None
         data = await fetch(url)
         if not data:
@@ -361,18 +432,22 @@ async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None
         _thumb(k, data)
         pdata, pmime, note = imgprep.prep(data, mime, 1280)
         _charge(now)       # 名额到这儿才扣：下载到了、认出是图（11-03 v1.17.13 Gemini 4-F9：以前一进来就扣 链接过期 / 下不来 / 不是图也算一张）
-        seen_raw = await look(base64.b64encode(pdata).decode(), pmime, DEEP_LOOK.format(frames=note or "静态图"))
+        seen_raw = await look(base64.b64encode(pdata).decode(), pmime, look_prompt(note, who))
         seen_raw = str(seen_raw or "").strip()
         if not seen_raw:
             return None
+        m0 = re.search(r"字[:：][ \t]*(.+)", seen_raw)
+        if m0:          # 帧号 / 水印先洗掉再往下走（11-06 v1.17.22：看图模型照样抄成字 → 合成时拿去起名「AI生成傲娇女孩」）
+            seen_raw = seen_raw[:m0.start(1)] + (clean_text(m0.group(1)) or "无") + seen_raw[m0.end(1):]
         found = []
         m_txt = re.search(r"字[:：]\s*(.+)", seen_raw)
         m_meme = re.search(r"梗[:：]\s*(.+)", seen_raw)
         q = ""
-        if m_meme and "不确定" not in m_meme.group(1):
+        me = bool(m_meme and "她本人" in m_meme.group(1))      # 画的是她：别拿「她本人」上网查（11-06 v1.17.21）
+        if m_meme and "不确定" not in m_meme.group(1) and not me:
             q = m_meme.group(1).strip()[:20] + " 表情包"
-        elif m_txt and m_txt.group(1).strip() not in ("无", "") and len(m_txt.group(1).strip()) >= 2:
-            q = m_txt.group(1).strip().replace("▢", "")[:20] + " 表情包 梗"
+        elif m_txt and clean_text(m_txt.group(1)) not in ("无", "") and len(clean_text(m_txt.group(1))) >= 2:
+            q = clean_text(m_txt.group(1)).replace("▢", "")[:20] + " 表情包 梗"     # 帧号 / 水印不拿去查（11-06 v1.17.21）
         if q and search is not None:
             try:
                 found = (await search(q) or [])[:5]
@@ -386,12 +461,16 @@ async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None
                 + ("\n".join(f"- {x.get('title', '')}：{str(x.get('snippet', ''))[:120]}" for x in found) or "（没查）")
                 + "\n【群里真人发它时】\n" + ("\n".join(ctx_lines) or "（没记到）")
                 + (f"\n【QQ 给的名字】{e.get('mface') or e.get('summary')}" if (e.get("mface") or e.get("summary")) else ""))
-        raw = await llm(DEEP_MERGE, [{"role": "user", "content": user}])
+        raw = await llm(merge_prompt(who), [{"role": "user", "content": user}])
         m = re.search(r"\{.*\}", str(raw or ""), re.S)
         js = json.loads(m.group(0)) if m else None
         if not isinstance(js, dict):
             return None
         entry = {k2: str(js.get(k2) or "")[:120] for k2 in ("name", "text", "scene", "origin", "meaning", "usage")}
+        entry["text"] = clean_text(entry["text"])
+        entry["name"] = _WATERMARK.sub("", entry["name"]).strip() or entry["name"]    # 名字里的「AI生成」也去掉（11-06 v1.17.22）
+        if js.get("self") is True or (me and js.get("self") is not False):
+            entry["self"] = True                     # 画的是她本人（给她看时标「画的是你」）
         try:
             entry["conf"] = max(0, min(100, int(float(js.get("conf") or 0))))
         except (TypeError, ValueError):
@@ -404,7 +483,8 @@ async def deep(sid, url, look, llm, search=None, fetch=None, log=print, now=None
         d = load()
         e = d["items"].setdefault(k, e)
         e["deep"] = entry
-        e.pop("redo", None)
+        for x in ("redo", "redo_try", "redo_url"):
+            e.pop(x, None)
         save(force=True)
         log(f"[表情包词典] 认好了 {k[:16]}：「{entry.get('name')}」{entry.get('meaning', '')[:30]}（把握 {entry['conf']}）")
         return entry
@@ -471,6 +551,8 @@ def edit(sid, fix=None, redo=None):
     if redo is not None:
         if redo:
             e["redo"] = True
+            e.pop("redo_try", None)
+            e.pop("redo_url", None)
         else:
             e.pop("redo", None)
     save()

@@ -1474,6 +1474,7 @@ def quick_view(hb=None, info=None):
         vm, sm = [], []
     return {"budget_reset": budget.reset_state(now, max(1, int((cfg().get("budget") or {}).get("window_hours") or 24))),
             "awake_until": aw if aw > now else 0, "voice_muted": len(vm), "sing_muted": len(sm),
+            "night_owl": bool(control.night_owl()),       # 夜猫子模式（11-07 v1.17.25）
             "brakes": int(info.get("brakes") or 0) if "brakes" in info else
             (int(hb.get("brakes") or 0) if hb.get("fresh") else None),
             "consolidating": bool(info.get("consolidating")) if "consolidating" in info else
@@ -1722,7 +1723,7 @@ def qzone_act(b):
 def quick_action(b):
     """快捷操作：机器人开着就让它做（它那边马上生效）；没开 能直接改文件的就改文件"""
     what = str(b.get("what") or "")
-    if what not in ("budget_reset", "budget_clear", "mood_reset", "wake", "wake_off", "unmute", "brakes_clear"):
+    if what not in ("budget_reset", "budget_clear", "mood_reset", "wake", "wake_off", "unmute", "brakes_clear", "owl_on", "owl_off"):
         return {"ok": False, "error": "不认识的快捷操作"}
     r = bot_api("quick", {"what": what, "hours": b.get("hours")})
     if r is not None:
@@ -1753,6 +1754,9 @@ def quick_action(b):
                                                                  "why": "控制台：心情回到平常", "conf": 100}])[-40:]
                 jwrite(p, m2)
             return {"ok": True, "offline": True, "msg": "心情回到平常了"}
+        if what in ("owl_on", "owl_off"):  # 夜猫子模式（11-07 v1.17.25）：机器人没开 直接改 control.json
+            control.set_night_owl(what == "owl_on", "控制台")
+            return {"ok": True, "offline": True, "msg": "夜猫子模式开了：她不睡了" if what == "owl_on" else "夜猫子模式关了：按作息睡（北京时间 3–8 点）"}
         if what in ("wake", "wake_off"):
             h = max(0.25, min(12.0, float(b.get("hours") or 1)))
             until = time.time() + h * 3600

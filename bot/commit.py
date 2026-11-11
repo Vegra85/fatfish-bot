@@ -25,6 +25,7 @@ KINDS = {"sleep": ("睡觉", "all"), "away": ("离开", "all"), "lurk": ("潜水
          "ignore": ("不理", "person"), "novoice": ("不发语音", "mod"), "nosticker": ("不发表情包", "mod"),
          "nosing": ("不唱", "mod"), "promise": ("答应", "promise")}
 AWAY = ("sleep", "away", "lurk")
+BYE = __import__("re").compile(r"(?!x)x")    # 11-07 v1.17.25：bot.py 不玩消失那段用（公开版说到做到关着 用不上）
 C = {"enabled": False, "tasks": {"enabled": False, "max_tokens": 300}}
 
 

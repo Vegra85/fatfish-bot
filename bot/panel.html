@@ -845,7 +845,7 @@ function kpi(ic, label, value, sub, series, title, attr = "") {
 function quickCard(o) {
   const q = o.quick; if (!q) return "";
   const b = o.budget || {}, h = o.her || {}, m = o.mood || {};
-  const rs = q.budget_reset, aw = q.awake_until, sleeping = /睡/.test(h.state || "");
+  const rs = q.budget_reset, aw = q.awake_until, sleeping = /睡/.test(h.state || ""), owl = q.night_owl !== false;
   const online = o.bot === "online";
   const card = (ic, title, now, btns) => `<div class="q"><div class="k">${icon(ic)}${title}</div><b>${now}</b><div class="row">${btns}</div></div>`;
   const btn = (what, label, tip, {hours, dis = false, primary = false} = {}) =>
@@ -858,10 +858,12 @@ function quickCard(o) {
         + (rs ? btn("budget_clear", "恢复按实际算", `按最近 ${b.window_hours || 24} 小时实际花的钱算（现在实际是 ${money(b.spent_all)}）`) : ""))}
       ${card("heart", "心情", `${m.value != null ? Math.round(m.value) : "—"} <span class="small muted">${esc(m.label || "")}</span>`,
         btn("mood_reset", "回到平常", "心情回到基准线（70）、各种情绪清零；时间线上会记一笔"))}
-      ${card(sleeping || aw ? "moon" : "sun", "作息", `${esc(h.state || "—")}${aw ? ` <span class="small muted">（叫醒到 ${bjhm(aw)}）</span>` : ""}`,
-        aw ? btn("wake_off", "让她接着睡", "回到按作息：该睡就睡")
-          : btn("wake", "叫醒她 1 小时", "她在睡觉时（北京时间 5~12 点）回得迷糊、字少：叫醒后正常聊（到点自己接着睡）", {hours: 1, dis: !sleeping})
-            + btn("wake", "3 小时", "叫醒 3 小时", {hours: 3, dis: !sleeping}))}
+      ${card(sleeping || aw || owl ? "moon" : "sun", "作息", `${esc(h.state || "—")}${owl ? ` <span class="small muted">（夜猫子模式：不睡）</span>` : aw ? ` <span class="small muted">（叫醒到 ${bjhm(aw)}）</span>` : ""}`,
+        (owl ? btn("owl_off", "关掉夜猫子", "关掉以后按作息睡：北京时间 3–8 点在睡觉（有人找她就醒）", {primary: false})
+          : btn("owl_on", "开夜猫子模式", "她不睡：夜里也随时回（默认就是开的）", {primary: true}))
+        + (owl ? "" : aw ? btn("wake_off", "让她接着睡", "回到按作息：该睡就睡")
+          : btn("wake", "叫醒她 1 小时", "她在睡觉时（北京时间 3~8 点）回得迷糊、字少：叫醒后正常聊（到点自己接着睡）", {hours: 1, dis: !sleeping})
+            + btn("wake", "3 小时", "叫醒 3 小时", {hours: 3, dis: !sleeping})))}
       ${card("mic", "别发语音 / 别唱了", q.voice_muted || q.sing_muted ? `${num(q.voice_muted)} 个聊天不发语音 · ${num(q.sing_muted)} 个不唱` : '<span class="muted">没有</span>',
         btn("unmute", "都放开", "有人说了「别发语音」（12 小时）/「别唱了」（6 小时）：现在就放开", {dis: !(q.voice_muted || q.sing_muted)}))}
       ${card("bot", "对聊刹车", q.brakes == null ? '<span class="muted">机器人没开</span>' : q.brakes ? `${num(q.brakes)} 个人刹车中` : '<span class="muted">没有</span>',
