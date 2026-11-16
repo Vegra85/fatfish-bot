@@ -5,9 +5,12 @@
   她在群里说完话后的一小会儿里（默认 150 秒），有人发了一条没 @ 别人、没引用别人的消息：
     先看几个信号打分 —— 紧跟着她说的、用「你」、在提问、跟她刚说的话有重合的词、
                         是她刚回过的人、她刚点名的人；中间又有别人插进来、光发张图 就扣分
-    分高 → 当成在跟她说（不用 @ 也接）
+    分高、而且有「强信号」（接了她自己说的词 / 她刚点了他的名）→ 当成在跟她说（不用 @ 也接）
     分低 → 不是跟她说的（还是按原来的节奏 偶尔插一嘴）
-    拿不准 → 让模型看一眼最近几条判断「是不是在跟她说话」（几十个 token 很便宜）
+    其余（包括光靠「你 + 在问 + 紧跟着她」凑够分的）→ 让模型看最近十几条判断「这句是对谁说的」
+      （11-11 v1.18.1：群里几个人互相用「你」说话、她又一直在插嘴 → 每句都「紧跟着她」、越接越像在跟她说；
+       问模型也不再问「是不是跟她说」（是 / 否 她在场时容易答是），改成从名单里挑一个人）
+    火力全开（v1.18.1 起）只让她更爱插嘴 / 窗口更长，不再降低「是不是在跟她说」的门槛
   防止跟另一个机器人对聊停不下来：同一个人不 @ 她、她连着接话最多几轮（默认 5 轮）
     之后要有人 @ 她 / 叫她名字 / 引用她 才重新算；10 分钟没接也重新算
 """
@@ -44,14 +47,14 @@ def configure(cfg):
 
 
 def _eff():
-    """火力全开时：窗口更长、打分门槛更低、连着接的轮数更多（更容易认出别人插进来是在跟她说）"""
+    """火力全开时：窗口更长、连着接的轮数更多。
+    11-11 v1.18.1：不再降低打分门槛 —— 「是不是在跟她说」是判断对不对的事，跟她想不想多说两句无关
+    （火力全开那 3 小时里接话门槛 4 → 3、中间那档几乎不问模型，她把别人之间的「你」都当成在叫她）"""
     if not control.full_on():
         return _cfg
     f = control.full_cfg()
     c = dict(_cfg)
     c["window_sec"] = max(float(_cfg["window_sec"]), float(f["followup_window_sec"]))
-    c["yes_score"] = min(float(_cfg["yes_score"]), float(f["yes_score"]))
-    c["no_score"] = min(float(_cfg["no_score"]), float(f["no_score"]))
     c["max_turns"] = max(int(_cfg["max_turns"]), int(f["max_turns"]))
     c["owner_max_turns"] = max(int(_cfg["owner_max_turns"]), int(f["max_turns"]))
     c["ask_model"] = True
@@ -127,13 +130,14 @@ def check(gid, uid, name, text, now, history, only_pic=False, is_owner=False, al
     others = [h for h in after if str(h.get("uid")) != str(uid)]
     first = not any(str(h.get("uid")) == str(uid) for h in after)
 
-    s, why = 0.0, []
+    s, why, strong = 0.0, [], False
     if str(uid) in answered:
         s += 2
         why.append("她刚回的就是他")
     nicks = {_short(name)} | ({alias} if alias else set())
     if any(n and len(n) >= 2 and n in my_text for n in nicks):
         s += 2
+        strong = True
         why.append("她刚点了他的名")
     if "你们" in text:
         s += 0.5
@@ -144,9 +148,20 @@ def check(gid, uid, name, text, now, history, only_pic=False, is_owner=False, al
         s += 1
         why.append("在问")
     common = _bigrams(text) & _bigrams(my_text)
-    if common:
-        s += 2.5 if len(common) >= 2 else 1
-        why.append("接了她的词「" + "、".join(sorted(common)[:3]) + "」")
+    # 她这句里的词是从别人那儿接来的（11-11：恐惧说「蒸馏」→ 她接「蒸馏」→ 小明 对恐惧说「蒸馏已经帮你写好了」被当成接她的词）
+    # → 只算她自己的词；接来的那些只当弱信号
+    echo = set()
+    for h in hist:
+        if h.get("role") == "user" and t0 - 180 <= float(h.get("ts") or 0) <= t0 + 1:
+            echo |= _bigrams(h.get("text") or "")
+    own = common - echo
+    if own:
+        s += 2.5 if len(own) >= 2 else 1
+        strong = True
+        why.append("接了她的词「" + "、".join(sorted(own)[:3]) + "」")
+    elif common:
+        s += 0.5
+        why.append("对上的词「" + "、".join(sorted(common)[:3]) + "」是她从别人那接来的")
     # 跟别人刚说的话对得上、比跟她的还像 → 多半在回那个人（10-30：「你已经说过好几遍修好再说了」是冲洄的「修吧，弄好再说」）
     mine_b = _bigrams(text)
     best, best_h = set(), None
@@ -186,12 +201,14 @@ def check(gid, uid, name, text, now, history, only_pic=False, is_owner=False, al
         s -= 1.5
         why.append("只发了图")
     reason = "、".join(why) or "没什么信号"
-    if s >= float(cfg["yes_score"]):
+    if s >= float(cfg["yes_score"]) and (strong or only_pic or not cfg.get("ask_model", True)):
         if only_pic and random.random() >= float(cfg["pic_prob"]):
             return "no", reason + "（图 这次不接）", s
         return "yes", reason, s
     if s <= float(cfg["no_score"]) or only_pic or not cfg.get("ask_model", True):
         return "no", reason, s
+    if s >= float(cfg["yes_score"]):
+        reason += "（光靠这些不算数 让模型看是对谁说的）"
     return "ask", reason, s
 
 
@@ -203,9 +220,11 @@ def took(gid, uid, now=None):
     return n
 
 
-JUDGE_SYSTEM = ("你在旁观一个 QQ 群。群里有个成员叫「{bot}」（是个 AI）。判断最后一条消息是不是在跟{bot}说话："
-                "接她刚才的话、回答她、反问她、跟她抬杠、叫她做事 都算「是」；"
-                "在跟别人说话、跟大家说、自言自语、只是发个反应 算「否」。只回答一个字：是 或 否")
+JUDGE_SYSTEM = ("你在旁观一个 QQ 群。群里有个成员叫「{bot}」（是个 AI）。判断最后一条消息是在对谁说话。"
+                "先看他前面在跟谁聊、在回谁的话、在问谁的事：几个人互相说话时，话里的「你」通常指正在跟他聊的那个人，不一定是{bot}。"
+                "接{bot}刚才的话、回答她、反问她、跟她抬杠、叫她做事 → {bot}；"
+                "跟大家说、自言自语、只是发个反应 → 大家。"
+                "只回答一个名字（从给的名单里挑），不要解释")
 
 
 def _ago(sec):
@@ -213,23 +232,52 @@ def _ago(sec):
     return f"{sec}秒前" if sec < 60 else f"{sec // 60}分钟前"
 
 
-async def judge(llm, history, name, text, now, bot="大肥鱼", log=print):
-    """拿不准的时候 让模型看最近几条判断。返回 True/False（出错当 False）"""
-    lines = []
-    for h in [h for h in (history or []) if h.get("ts")][-8:]:
-        who = bot if h.get("role") == "assistant" else (h.get("name") or "某人")
+def _clean(out):
+    return re.sub(r"^[\s「」『』\"'“”‘’()（）\[\]【】*:：,，.。!！]+", "", out or "").strip()
+
+
+async def judge(llm, history, name, text, now, bot="大肥鱼", log=print, want_target=False, default=False):
+    """拿不准的时候 让模型看最近十几条判断这句是对谁说的（11-11 v1.18.1：从名单里挑一个人 以前只问是 / 否）。
+    返回 True/False（是不是对她说）；want_target=True → (True/False, 对谁说的)。
+    出错 / 答得认不出 → default（叫过她之后接着说的那种 外面传 True）"""
+    hist = [h for h in (history or []) if h.get("ts")][-12:]
+    lines, names = [], []
+    for h in hist:
+        mine = h.get("role") == "assistant"
+        who = bot if mine else (h.get("name") or "某人")
+        if not mine and who not in names and who != name:
+            names.append(who)
+        tag = ""
         if h.get("re"):
-            who += f"（回复 {h['re']}）"
-        lines.append(f"[{_ago(now - h['ts'])}] {who}: {(h.get('text') or '')[:120]}")
+            tag = f"（回复 {h['re']}）"
+        elif h.get("to"):
+            tag = f"（对 {h['to']} 说）"
+        lines.append(f"[{_ago(now - h['ts'])}] {who}{tag}: {(h.get('text') or '')[:120]}")
     lines.append(f"[刚刚] {name}: {text[:160]}   ← 判断这一条")
+    cands = list(reversed(names))[:6] + [bot, "大家"]
+    lines.append("名单：" + "、".join(cands))
+
+    def ret(v, to=""):
+        return (v, to) if want_target else v
     try:
         out = await llm(JUDGE_SYSTEM.format(bot=bot), [{"role": "user", "content": "\n".join(lines)}],
-                        temperature=0, max_tokens=4)
+                        temperature=0, max_tokens=16)
     except Exception as e:
         log("[接话] 判断失败:", repr(e)[:100])
-        return False
-    # 10-28 审查 intake-6：先去掉开头的引号、标点；「不是」「不」「否」开头的一律算否（以前「不是」里有「是」被当成了是）
-    out = re.sub(r"^[\s「」『』\"'“”‘’()（）\[\]【】*:：,，.。!！]+", "", out or "")
+        return ret(default)
+    out = _clean(out)
+    if bot and bot in out[:len(bot) + 4]:
+        return ret(True, bot)
+    # 认得出名单里的别人 / 大家 → 不是对她说的（长的名字先比 免得「小明」认成「明」）
+    for c in sorted(cands, key=len, reverse=True):
+        if c and c != bot and out.startswith(c):
+            return ret(False, c)
+    # 老样子的回答（是 / 否）也认（10-28 审查 intake-6：「不是」「不」「否」开头的一律算否 以前「不是」里有「是」被当成了是）
     if re.match(r"否|不", out):
-        return False
-    return out.startswith("是") or (out[:3].find("是") >= 0 and "否" not in out[:3] and "不是" not in out[:4])
+        return ret(False)
+    if out.startswith("是") or (out[:3].find("是") >= 0 and "否" not in out[:3] and "不是" not in out[:4]):
+        return ret(True, bot)
+    if bot and bot in out:
+        return ret(True, bot)
+    log("[接话] 判断的回答认不出:", out[:30])
+    return ret(default)

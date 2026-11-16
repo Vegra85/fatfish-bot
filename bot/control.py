@@ -392,8 +392,8 @@ def bot_ok(gid, uid, now=None):
 FULL_DEFAULTS = {
     "follow_window_sec": 300,     # 叫过她之后 多久内接着说的算对她说（平时 behavior.follow_window_sec 120）
     "followup_window_sec": 300,   # 她说完多久内的话考虑是不是在接她（平时 followup.window_sec 150）
-    "yes_score": 3.0,             # 接话打分：到这个直接接（平时 4）
-    "no_score": 0.5,              # 不到这个直接不接 中间的让模型看一眼（平时 1.5）
+    "yes_score": 3.0,             # 不再用（11-11 v1.18.1：火力全开不改「是不是在跟她说」的判断 只让她更爱插嘴）
+    "no_score": 0.5,              # 不再用（同上）
     "max_turns": 10,              # 不 @ 她最多连着接几轮（平时 5）
     "interject_mult": 2.5,        # 平时随便插一嘴的概率 × 这个
     "cooldown_sec": 60,           # 两次插话至少隔几秒（平时 150）

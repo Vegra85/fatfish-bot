@@ -1165,6 +1165,14 @@ IMAGE_NOTE = ("\n# 关于图片\n聊天里的图会写成 [图片：描述] —�
               "你看得很细 但说的时候只挑一个点 不要把描述复述出来；已经回过的图别再提。\n")
 
 
+# 她自己插话 / 加入别人的对话（11-11 v1.18.1 小明 定的五条：「你可以作为独立的个体加入」—— 只写什么时候开口 不写怎么说）
+BYSTANDER_NOTE = ("你是旁边的人、自己想插一句，不是被问的那个：别人话里的「你」「你们」说的不是你，"
+                  "提到他们用名字或者「他」，别替他们回答问他们的事。"
+                  "这几种时候才开口：聊到你了（提到你、在聊你这样的 AI 机器人）；聊到你懂的、在意的；"
+                  "你知道一件他们不知道、又正好对得上的事；正热闹、你有个合适的玩笑。"
+                  "两个人在吵架、或者在说他们俩的私事 → 别插。都不是就只写 [[不说]]。")
+
+
 def state_rules(group):
     return ("\n# 每次回复都要（格式）\n"
             "回复的最后单独一行输出：%%STATE%%{\"favor\": <-3到3>}（下面这些字段按需加）\n"
@@ -1430,7 +1438,121 @@ def nudge_back_note(mem):
             "可以小小地傲娇一下 但别真生气、别不依不饶 —— 一句带过 接着好好聊他说的）\n")   # （11-11 v1.17.38 E1：不给现成的话）
 
 
-OWNER_PLACE = str(B.get("owner_place") or "").strip()     # 老板在哪（10-28 config behavior.owner_place 写地名：「伦敦」「东京」…）
+# ---- 主动找人去重（11-16 v1.18.2 小明：「查看主动消息去重 他一直给我和别人发重复的消息」）----
+# 查到的（11-11 ~ 11-16 的 154 条主动私聊、18 个人）：约 15 条是把问过的事又问一遍（两条隔十几个小时一字不差）——
+#   ① 她自己问出口、他没接的问题被记忆整理记成「心里挂着的事」→ 到点又去问；
+#   ② 普通的「好久没聊去找他」顺手问了某件挂着的事 → 系统不知道、没记问过 → 几小时后到点再问一遍；
+#   ③ 主动找人时她看不到自己之前主动发过什么、只看到「上次聊到：X」→ 隔天又拿 X 开头（他都说了不玩了）。
+PRO_DAYS = 7                        # 「最近主动发过的」看几天
+PRO_SIM = 0.5                       # 两句话头算「一样」的线（下面 pro_similar；拿 11-11 ~ 11-16 的主动消息试过：≥0.5 的都是真重复）
+PRO_STOP = {"了没", "你那", "那个", "上次", "还没", "没呀", "什么", "怎么", "咋样", "到底", "后来", "本鱼", "你上", "次说",
+            "一下", "你是", "是不", "不是", "你还", "你这", "这会", "会儿", "在吗", "没啊", "了吗", "问他", "他的"}
+NARRATION = re.compile(r"\s*[（(][^（）()]{6,}[）)]\s*")     # 整条都在括号里的旁白（「（你刷到他 QQ 空间那条…）」）
+
+
+def _pro_bigrams(text, names=()):
+    s = re.sub(r"\[\[[^\]]*\]\]", "", str(text or ""))
+    for n in names:
+        if n:
+            s = s.replace(n, "")
+    s = re.sub(r"[^\w]|_", "", s)
+    return {s[i:i + 2] for i in range(len(s) - 1)} - PRO_STOP
+
+
+def pro_similar(a, b, names=()):
+    """两句话是不是同一个话头（字的两两组合重了多少 / 短的那句；名字、语气词不算）。太短（< 3 组）的不比 → 0"""
+    x, y = _pro_bigrams(a, names), _pro_bigrams(b, names)
+    if min(len(x), len(y)) < 3:
+        return 0.0
+    return len(x & y) / min(len(x), len(y))
+
+
+def pro_names(hist):
+    """拿来比话头时要去掉的称呼：他在聊天记录里的名字 + 她主动消息开头老叫他的那个（「小明 …」「明崽 …」这种）"""
+    names = {str(h.get("name") or "").strip() for h in hist or [] if h.get("role") == "user"}
+    heads = [str(h.get("text") or "").split(" ")[0] for h in hist or [] if h.get("role") == "assistant" and h.get("pro")]
+    names |= {w for w in heads if 0 < len(w) <= 6 and heads.count(w) >= 2}
+    return sorted((n for n in names if n), key=len, reverse=True)
+
+
+def pro_recent(hist, now=None, days=PRO_DAYS, n=4):
+    """最近 days 天里她主动发给他的（e["pro"] 有值的那几条；连着的几段算一条）+ 他后来回的第一句（没回 → None）"""
+    now = now or time.time()
+    out = []
+    hist = hist or []
+    for i, h in enumerate(hist):
+        if h.get("role") != "assistant" or not h.get("pro") or now - float(h.get("ts") or 0) > days * 86400:
+            continue
+        reply = None
+        for k in hist[i + 1:]:
+            if k.get("role") == "user":
+                reply = str(k.get("text") or "")
+                break
+            if k.get("role") == "assistant" and k.get("pro"):
+                break
+        out.append((h, reply))
+    return out[-n:]
+
+
+def pro_recent_block(hist, now=None):
+    """主动找他 / 追一句时给她看：最近几次主动找他说了什么、他怎么回的（状态 不是台词；E1 不给现成的话）"""
+    rec = pro_recent(hist, now)
+    if not rec:
+        return ""
+    lines = []
+    for h, reply in rec:
+        r = f"他回了「{reply[:24]}」" if reply is not None else "他没回"
+        lines.append(f"- {clock.ago(h.get('ts'))}：「{str(h.get('text') or '')[:40]}」→ {r}")
+    return ("\n# 你最近几次主动找他说的（状态 不是台词）\n" + "\n".join(lines) +
+            "\n这次别再用这些话头开口：问过的事别换个说法再问一遍；他答过的就当知道了；他没接的就是这会儿不想聊那个 —— 换个别的，"
+            "实在没有新的可说就只写 [[不说]]。\n")
+
+
+def pro_repeat(text, hist, now=None, n=3):
+    """这句跟最近 n 条主动消息是同一个话头 → 返回那条的原话（发之前最后一道闸）；不像 → \"\""""
+    names = pro_names(hist)
+    for h, _ in reversed(pro_recent(hist, now, n=n)):
+        if pro_similar(text, h.get("text"), names) >= PRO_SIM:
+            return str(h.get("text") or "")
+    return ""
+
+
+def pro_mark_loops(mem, now=None):
+    """心里挂着的事里，最近 PRO_DAYS 天主动消息已经问过的（不管是到点问的、还是普通找他时顺手问的；
+    也包括「她先问了、记忆整理后来才把这个问题记成挂念」的）→ 记成问过了（到点不再问一遍）。返回改了几条"""
+    try:
+        loops = soul.open_loops(mem)
+    except Exception:
+        return 0
+    hist = mem.get("history") or []
+    rec = pro_recent(hist, now, n=20)
+    if not loops or not rec:
+        return 0
+    names = pro_names(hist)
+    k = 0
+    for lp in loops:
+        if lp.get("asked"):
+            continue
+        hit = next((h for h, _ in rec if pro_similar(lp.get("text"), h.get("text"), names) >= PRO_SIM), None)
+        if hit:
+            lp["asked"] = float(hit.get("ts") or 0) or time.time()
+            k += 1
+    return k
+
+
+def drop_narration(segs):
+    """主动消息里整条都在括号里的旁白去掉（11-16 v1.18.2：两次把「（你刷到他 QQ 空间那条…）」当成话发了出去）→ (剩下的, 去掉的)"""
+    keep, gone = [], []
+    for s in segs or []:
+        lines = str(s).split("\n")
+        ok = [x for x in lines if not NARRATION.fullmatch(stickers.strip(voice.strip(x)) or "")]
+        gone += [x for x in lines if x not in ok]
+        if "".join(ok).strip():
+            keep.append("\n".join(ok).strip() if len(ok) < len(lines) else s)
+    return keep, gone
+
+
+OWNER_PLACE =str(B.get("owner_place") or "").strip()     # 老板在哪（10-28 config behavior.owner_place 写地名：「伦敦」「东京」…）
 
 
 def _place_block(speaker, is_owner, query, group):
@@ -5510,7 +5632,7 @@ class FatFish:
                     ls.pop(k, None)
 
         gid = str(ev.get("group_id", ""))
-        follow = follow_ask = gated = False
+        follow = follow_ask = gated = eng_ask = False
         owner = bool(OWNER_QQ) and uid == OWNER_QQ
         kind = "private" if mtype == "private" else "direct"     # 省 token 按哪一档算
         grole, isbot = "", False                 # 群身份（QQ 给的 owner/admin/member）、是不是别人家的 AI
@@ -5654,7 +5776,7 @@ class FatFish:
                     eng, crowd = False, "叫过她 但她上一句之后别人也说话了；"
             if catch is not None or limited:
                 pass                       # 补回：只看有没有人 @/叫/引用她 其他的不算
-            elif not trigger and not to_other and not eng \
+            elif not trigger and not to_other and not (eng and only_pic) \
                     and not (self._fishy(name) and self._lookalike(gid)):
                 # 没点她名 但可能是在接她刚才的话（她刚说完、说的是「你」、接了她的词…）
                 peek = load_mem(key, scene)
@@ -5662,6 +5784,11 @@ class FatFish:
                                     bool(OWNER_QQ) and uid == OWNER_QQ, (peek.get("alias") or {}).get(name))
                 if crowd:
                     fu = (fu[0], crowd + (fu[1] or "没什么信号"), fu[2])
+                if eng and fu[0] != "yes":
+                    # 叫过她之后接着说的（11-11 v1.18.1）：不再默认算对她说 —— 11-11「@她的名字 不是对你说的」之后
+                    # 小明 对别人说的三句全被当成跟她说。没有强信号就让模型看是对谁说的（模型出错 / 超时 → 照旧当成对她说）
+                    fu = ("ask", "叫过她之后接着说的；" + (fu[1] or "没什么信号"), fu[2])
+                    eng_ask = True
                 if fu[0] == "ask":
                     follow_ask = peek.get("history") or []
             if catch is not None or limited:
@@ -5672,8 +5799,9 @@ class FatFish:
                     self.engaged[(gid, uid)] = now + self._gl("fw")
                     self.engaged_t0[(gid, uid)] = now
                 followup.reset(gid, uid)
-            elif eng:
-                # 叫过她之后接着发的话算对她说（她上一句之后还没别人插话）；但光发一张图/表情包 不一定要接
+            elif eng and (only_pic or fu[0] == "yes"):
+                # 叫过她之后接着发的话：有强信号（接了她自己的词 / 她刚点了他的名）才直接算对她说、别的交给模型（v1.18.1）；
+                # 光发一张图/表情包 不一定要接
                 trigger = (not only_pic) or random.random() < float(B.get("group_image_reply_prob", 0.3))
                 addressed = trigger
             elif not to_other and getattr(sing, "picking", lambda *a: False)(key, uid, text):
@@ -5918,12 +6046,9 @@ class FatFish:
                          at_me=at_me, called=called, trigger=bool(trigger), ts=now, text=text[:200])
             return
         if follow_ask and not trigger:
-            ok, why = budget.allow("follow", owner, key, uid)
-            if not ok:                     # 省 token：连「是不是在跟她说」都先不问模型了
-                log(f"[省token] 群{gid} {name}「{text[:20]}」可能在接她的话 这次不看（{why}）")
-                return
+            # 11-11 v1.18.1（小明：判断准不准不拿钱换）：「这句是对谁说的」一律问模型 不再过省 token 那一掷
             asyncio.create_task(self._follow_judge(follow_ask, key, scene, gid, uid, name, text, now,
-                                                   ev.get("message_id"), fu[1]))
+                                                   ev.get("message_id"), fu[1], eng=eng_ask, owner=owner))
             return
         if not trigger:
             return
@@ -5936,7 +6061,8 @@ class FatFish:
                 return
         pic_only = bool(segs) and all(x.get("type") in ("image", "mface", "face", "reply") for x in segs)
         self._enqueue(key, scene, gid, uid, name, ev.get("message_id"), at_me, called, addressed, follow, now,
-                      last=(plain or text, pic_only))       # 最后一条长什么样 → 攒多久（10-27 晚）
+                      last=(plain or text, pic_only),       # 最后一条长什么样 → 攒多久（10-27 晚）
+                      to="" if addressed or scene != "group" else (re_to if re_to and re_to != "你" else (cont_to or "")))
 
     # ---- 群管说话算数（10-26）----
     async def _group_cmd(self, ev, gid, uid, name, text, grole, isbot, at_me, called, quoted_me, re_to, segs,
@@ -6571,32 +6697,77 @@ class FatFish:
         except Exception as e:
             log("[群管] 校对禁言状态出错:", repr(e)[:120])
 
-    async def _follow_judge(self, hist, key, scene, gid, uid, name, text, now, msg_id, why):
-        """拿不准是不是在接她的话：让模型看最近几条判断 是的话照常攒一攒再回"""
+    async def _follow_judge(self, hist, key, scene, gid, uid, name, text, now, msg_id, why, eng=False, owner=False):
+        """拿不准是不是在接她的话：让模型看最近十几条判断这句是对谁说的（v1.18.1 从名单里挑人）。
+        是对她说的 → 照常攒一攒再回；不是 → 交给「加入」那一关（她作为旁边的人 要不要插一句）
+        eng = 叫过她之后接着说的：模型出错 / 超时 → 照旧当成对她说"""
+        bot_label = GROUP_CARD or BOT_NAME
         try:
-            ok = await asyncio.wait_for(followup.judge(jllm("followup", key, 8, [uid]), hist, name, text, now, BOT_NAME, log), 8)
+            res = await asyncio.wait_for(followup.judge(jllm("followup", key, 8, [uid]), hist, name, text, now, bot_label,
+                                                        log, want_target=True, default=eng), 8)
         except Exception:
-            ok = False
+            res = eng
+        ok, target = res if isinstance(res, tuple) else (bool(res), "")
+        if attention is not None and hasattr(attention, "verdict"):
+            try:
+                attention.verdict(gid, msg_id, uid, "eng" if eng else "ask", ok, target, why, time.time())
+            except Exception as e:
+                log("[注意力] 记判断出错:", repr(e)[:80])
         if not ok:
-            log(f"[接话] 群{gid} {name}「{text[:30]}」→ 模型看了 不是跟她说的（{why}）")
+            log(f"[接话] 群{gid} {name}「{text[:30]}」→ 模型看了 是在跟{'「' + target + '」' if target else '别人'}说 不是跟她（{why}）")
+            await self._maybe_join(key, scene, gid, uid, name, text, msg_id, target, owner)
             return
+        if not eng:
+            ok2, why2 = budget.allow("follow", owner, key, uid)
+            if not ok2:
+                log(f"[省token] 群{gid} {name}「{text[:20]}」模型看了是在接她的话 这次不接（{why2}）")
+                return
         n = followup.took(gid, uid)
         stats.add("followups")
         log(f"[接话] 群{gid} {name}「{text[:30]}」→ 模型看了 是在跟她说 → 接（{why}；第{n}轮）")
         # 带上这句长什么样（10-28 审查 intake-7：以前没带 一律按「只发了图」多等两三秒；只有图的不会走到这儿）
         self._enqueue(key, scene, gid, uid, name, msg_id, False, False, True, True, time.time(), last=(text, False))
 
+    async def _maybe_join(self, key, scene, gid, uid, name, text, msg_id, target="", owner=False):
+        """不是对她说的那句：她作为旁边的人 要不要插一句（11-11 v1.18.1 小明：「接话」和「加入」两套标准）
+        先过跟平时插话一样的门（在攒别人的话 / 群里让她少说 / 日程在忙 / 政治话题 / 节奏 / 插话概率 / 省 token），
+        过了再让她自己看要不要开口（场景提示里写清她是旁边的人、哪些时候才开口，没话就 [[不说]]）"""
+        try:
+            now = time.time()
+            if key in self.pending_reply or control.group_mode(gid) != "normal" or life.quiet():
+                return
+            if politics is not None and politics.warm(own_words(text)):
+                return
+            if rhythm.is_active(gid):
+                hour = [t for t in self.gstate.get(gid, {}).get("times", []) if now - t < 3600]
+                go = len(hour) < self._gl("hour") and rhythm.want_reply(gid, False, now, False)
+            elif rhythm.cooling(gid):
+                go = False
+            else:
+                go = self.should_interject(gid, text)
+            if not go:
+                return
+            ok, why = budget.allow("chat", owner, key, uid)
+            if not ok:
+                log(f"[省token] 群{gid} {name}「{text[:20]}」想插一句 这次不插（{why}）")
+                return
+            log(f"[加入] 群{gid} {name}「{text[:30]}」是在跟{'「' + target + '」' if target else '别人'}说 → 她作为旁边的人看要不要插一句")
+            self._enqueue(key, scene, gid, uid, name, msg_id, False, False, False, False, now, last=(text, False),
+                          to=target or "")
+        except Exception as e:
+            log("[加入] 出错:", repr(e)[:120])
+
     QUEUE_MAX = 6                          # 一个群里最多排几个人等她回
     _qseq = 0                              # 排队计数：每排一次（新来 / 又说了一句）加一（10-28 审查 intake-1）
 
     def _enqueue(self, key, scene, gid, uid, name, msg_id, at_me, called, addressed, follow, now, late=None,
-                 texts=None, late_why="offline", last=None):
+                 texts=None, late_why="offline", last=None, to=""):
         """攒一攒再回（对方可能还在连着发）。late = (最早, 最近) 的消息时间：补回下线期间的消息时用
         群里好几个人同时找她：每人排一个位置 一个一个回（每条只回一个人、引用的就是那个人的话）"""
         self._qseq += 1
         person = {"uid": str(uid), "name": name, "msg_id": msg_id, "at_me": bool(at_me), "called": bool(called),
                   "addr": scene == "private" or bool(addressed), "follow": bool(follow), "t0": now, "t1": now,
-                  "seq": self._qseq}
+                  "seq": self._qseq, "to": "" if (at_me or called or addressed or follow) else str(to or "")}
         if at_me or called or addressed or follow:   # 找她的那一条（引用它 不引用他后来随手补的一句 10-31 v1.15.16）
             person["ask_mid"] = msg_id
         if late:
@@ -6659,6 +6830,8 @@ class FatFish:
                     x["ask_mid"] = person["ask_mid"]
                 for f in ("at_me", "called", "addr", "follow"):
                     x[f] = x.get(f, False) or person[f]
+                x["to"] = "" if (x.get("at_me") or x.get("called") or x.get("addr") or x.get("follow")) \
+                    else (person.get("to") or x.get("to") or "")
                 if person.get("texts"):
                     x["texts"] = person["texts"]
                 if person.get("late"):
@@ -6682,7 +6855,7 @@ class FatFish:
                                         0 if (x.get("at_me") or x.get("called") or x.get("addr")) else 1,
                                         x.get("t0", 0)))
         ctx.update(uid=head["uid"], name=head["name"], msg_id=head["msg_id"], at_me=head["at_me"],
-                   called=head["called"], addr=head["addr"], follow=head["follow"], head=head)
+                   called=head["called"], addr=head["addr"], follow=head["follow"], to=head.get("to") or "", head=head)
         if head.get("late"):
             ctx["late"], ctx["late_why"] = head["late"], head.get("late_why", "offline")
         else:
@@ -7304,9 +7477,17 @@ class FatFish:
                     log(f"[纠错] {key} 回「{name}」这一轮：{fixup.describe(fx)}")
 
             if scene == "group":
-                scene_txt = (f"你在一个 QQ 群里。刚跟你说话的是「{name}」"
-                             f"{'（他 @ 了你）' if at_me else ''}"
-                             f"{'（他没 @ 你 是在接你刚才的话）' if ctx.get('follow') and not (at_me or called) else ''}。"
+                if ctx.get("addr") or at_me or called:
+                    # 11-11 v1.18.1：「他没 @ 你」那种以前写成定论「是在接你刚才的话」→ 她把别人之间的「你」当成自己、编出「那个头像也是我」
+                    lead = (f"你在一个 QQ 群里。刚跟你说话的是「{name}」"
+                            + ("（他 @ 了你）" if at_me else "")
+                            + ("（他没 @ 你，看上下文多半是在接你的话；他话里的「你」要是其实在说别人，就只写 [[不说]]）"
+                               if ctx.get("follow") and not (at_me or called) else "") + "。")
+                else:
+                    to_who = str(ctx.get("to") or "")
+                    lead = (f"你在一个 QQ 群里。刚说话的是「{name}」"
+                            + (f"，他是在跟「{to_who}」说" if to_who and to_who != "大家" else "") + "，不是在跟你说。")
+                scene_txt = (lead +
                              "他可能连着发了好几条（文字、图） 把这几条当成一件事一起回。"
                              "群里还有别人，你只看得到最近这些聊天。"
                              "【群聊】只回最新的那个点 一句话最好 最多两条短的；"
@@ -7333,11 +7514,10 @@ class FatFish:
                                      if waiting else "") + "。")
                 if not (ctx.get("addr") or at_me or called):
                     if rhythm.is_active(gid):
-                        scene_txt += (f"你正在群里跟大家聊着（已经聊了{rhythm.minutes_in(gid)}分钟）。这几句没点你名："
-                                      "能自然接就接一句 不是跟你说的、或者没什么好说的 就只写 [[不说]]。")
+                        scene_txt += f"你正在群里跟大家聊着（已经聊了{rhythm.minutes_in(gid)}分钟）。这几句没点你名。"
                     else:
-                        scene_txt += ("没人叫你 是你自己刷到想插一嘴。真有话说就说 "
-                                      "没兴趣就只写 [[不说]]。")
+                        scene_txt += "没人叫你 是你自己刷到的。"
+                    scene_txt += BYSTANDER_NOTE
                 st = self.gstate.setdefault(gid, {"last": 0, "times": []})
                 st["last"] = time.time()
                 st["times"].append(time.time())
@@ -14029,6 +14209,7 @@ class FatFish:
         lp = float(m.get("last_proactive") or 0)
         since_pro = now - lp
         hist = m.get("history") or []
+        pro_mark_loops(m, now)             # （11-16 v1.18.2）挂着的事最近主动消息已经问过了 → 算问过（到点不再问一遍）
         # 上次主动找了他、他还没回（最后一句是她的 他之后没说过话）
         unanswered = bool(hist) and hist[-1].get("role") == "assistant" and lp > 0 and lp >= (m.get("last_active") or 0)
         nudge = final = 0
@@ -14087,12 +14268,30 @@ class FatFish:
                 qz_hint = qzone.for_private(uid, limit=1)
                 if qz_hint:
                     scene_txt += f"由头也可以是他 QQ 空间最近发的：{qz_hint[0].get('text', '')[:60]}（你刷到过）。"
+        scene_txt += pro_recent_block(hist, now)     # （11-16 v1.18.2）最近几次主动找他说了什么、他怎么回的
         system = build_system(m, scene_txt, "", is_owner, speaker=(uid, ""))
         system += voice.block(voice.plan_proactive(p.stem))
-        raw = await llm(system, [{"role": "user", "content": "（你去主动找他说话）"}],
-                        max_tokens=250)
-        raw, st = strip_state(raw)          # 修：以前这里会把 STATE 发出去
-        segs = split_reply(raw)
+        why_none = ""
+        for attempt in (0, 1):
+            raw = await llm(system, [{"role": "user", "content": "（你去主动找他说话）"}],
+                            max_tokens=250)
+            raw, st = strip_state(raw)          # 修：以前这里会把 STATE 发出去
+            if "[[不说]]" in str(raw or ""):    # （11-16 v1.18.2）没有新的可说 → 这次不找
+                segs, why_none = [], "她说没有新的可说"
+                break
+            segs, gone = drop_narration(split_reply(raw))      # （11-16 v1.18.2）整条括号旁白不发
+            if gone:
+                log(f"[主动] {uid} 去掉了旁白：{' / '.join(gone)[:60]}")
+            dup = pro_repeat(" ".join(segs), hist, now) if segs else ""
+            if not dup:
+                break
+            log(f"[主动] {uid} 写的「{' / '.join(segs)[:30]}」跟{'' if attempt else '之前'}主动发过的「{dup[:24]}」是同一个话头"
+                + (" → 让她换一个" if not attempt else " → 这次不发了"))
+            if attempt:
+                segs, why_none = [], "写来写去还是问过的话头"
+            else:
+                system += (f"\n（你刚写的这句跟你之前主动发过的「{dup[:40]}」是同一个话头 —— 换个别的由头，"
+                           "或者只写 [[不说]]）\n")
         late = self._proactive_stale(p.stem, uid, t_load) if segs else ""
         if late:                           # 等模型那几秒里情况变了（10-28 Codex）：这句不发
             log(f"[主动] {uid} 本来要{'追' if nudge else '找'}他一句 但{late} → 不发了：{' / '.join(segs)[:40]}")
@@ -14110,7 +14309,7 @@ class FatFish:
                 fresh["pro_fail_n"] = (0 if came else int(fresh.get("pro_fail_n") or 0)) + 1
                 fresh["pro_fail_at"] = time.time()
                 save_mem(fresh)
-            log(f"[主动] {uid} 本来要{'追' if nudge else '找'}他一句 但" + ("没发出去" if segs else "她没话说")
+            log(f"[主动] {uid} 本来要{'追' if nudge else '找'}他一句 但" + ("没发出去" if segs else (why_none or "她没话说"))
                 + f"（连着第 {fresh['pro_fail_n']} 次）→ 晚点再说")
             return                         # 也不 apply_state：没说出口的话不改心情 / 签名（跟 reply 里一样）
         if segs and sent:
@@ -14125,6 +14324,7 @@ class FatFish:
                             lp_["asked"] = due[0].get("asked") or time.time()
                 e = add_assistant(fresh, " ".join(stickers.strip(x) for x in sent))
                 e["pro"] = n_new                 # 第几条没人回的主动消息（1 = 主动找 2/3 = 追）：他回来时她知道自己追过
+                pro_mark_loops(fresh)            # （11-16 v1.18.2）这句顺手问到的挂念也记成问过了
                 fresh["last_proactive"] = time.time()
                 fresh["pro_streak"] = n_new
                 save_mem(fresh)
